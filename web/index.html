@@ -39,7 +39,7 @@
 
   <main id="views">
 
-    <!-- Dashboard -->
+    <!-- Home: overview + services -->
     <section id="view-dashboard" class="view">
       <div class="stat-grid">
         <div class="stat"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></div>
@@ -47,25 +47,47 @@
         <div class="stat"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></div>
         <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></div>
       </div>
-      <div class="section-head"><h2>Containers</h2><span id="container-count" class="muted"></span></div>
-      <div id="container-list" class="cards"></div>
+      <div class="section-head">
+        <h2>Services</h2>
+        <div class="row-inline">
+          <span id="container-count" class="muted"></span>
+          <button id="svc-viewmode" class="btn small" title="toggle technical view">⚙</button>
+        </div>
+      </div>
+      <div id="service-list"></div>
     </section>
 
     <!-- Vibe Code -->
     <section id="view-vibe" class="view hidden">
+      <div class="vibe-toolbar">
+        <div class="seg" id="mode-seg">
+          <button data-mode="chat">Chat</button>
+          <button data-mode="plan">Plan</button>
+          <button data-mode="agent" class="active">Agent</button>
+          <button data-mode="auto">Auto</button>
+        </div>
+        <div class="vibe-selects">
+          <select id="chat-model" class="select mini" title="model"></select>
+          <select id="chat-workspace" class="select mini" title="workspace"></select>
+        </div>
+      </div>
       <div id="chat-log" class="chat-log">
         <div class="chat-welcome">
           <div class="logo-big">⎈</div>
           <h2>Vibe Code</h2>
           <p class="muted">Chat with an AI engineer that works directly on your server.<br>
           Try: <em>“Which containers use the most memory?”</em></p>
-          <p id="vibe-no-ai" class="warn hidden">No AI key configured yet → Settings</p>
+          <p class="muted modes-hint">
+            <b>Chat</b> talk only · <b>Plan</b> read-only investigation ·
+            <b>Agent</b> asks before actions · <b>Auto</b> free rein</p>
+          <p id="vibe-no-ai" class="warn hidden">No AI key configured yet → More</p>
         </div>
       </div>
+      <div class="usage-row hidden" id="usage-row">
+        <span id="usage-text"></span>
+        <button id="chat-reset" class="btn small">clear</button>
+      </div>
       <div class="chat-input-row">
-        <label class="auto-toggle" title="Auto-approve commands">
-          <input type="checkbox" id="chat-auto"><span>auto</span>
-        </label>
         <textarea id="chat-input" rows="1" placeholder="Ask or instruct…"></textarea>
         <button id="chat-send" class="btn primary round">➤</button>
       </div>
@@ -92,44 +114,97 @@
       </div>
     </section>
 
+    <!-- Health: updates + checks -->
+    <section id="view-health" class="view hidden">
+      <div class="seg wide-seg" id="health-seg">
+        <button data-hview="updates" class="active">Updates</button>
+        <button data-hview="checks">Checks</button>
+      </div>
+
+      <div id="health-updates">
+        <div class="section-head">
+          <div class="row-inline">
+            <h2>Updates</h2>
+            <span id="updates-summary" class="muted"></span>
+          </div>
+          <button id="updates-refresh" class="btn small">Re-check</button>
+        </div>
+        <div class="filter-row" id="upd-filters">
+          <button class="chip-btn active" data-filter="all">All</button>
+          <button class="chip-btn" data-filter="updates">Updates</button>
+          <button class="chip-btn" data-filter="uptodate">Up to date</button>
+          <button class="chip-btn" data-filter="ignored">Ignored</button>
+        </div>
+        <div id="updates-list" class="cards"></div>
+        <div id="apt-section" class="hidden">
+          <div class="section-head"><h2>System packages</h2></div>
+          <div id="apt-list" class="cards"></div>
+        </div>
+      </div>
+
+      <div id="health-checks" class="hidden">
+        <div class="section-head">
+          <div class="row-inline">
+            <h2>Server checks</h2>
+            <span id="report-time" class="muted"></span>
+          </div>
+          <div class="row-inline">
+            <button id="report-analyze" class="btn small">✦ AI analysis</button>
+            <button id="report-run" class="btn small primary">Run now</button>
+          </div>
+        </div>
+        <div id="report-score" class="hidden"></div>
+        <div id="checks-list" class="cards"></div>
+        <p class="muted" style="margin-top:14px" id="report-schedule-note"></p>
+      </div>
+    </section>
+
     <!-- Apps -->
     <section id="view-apps" class="view hidden">
       <div class="section-head"><h2>App Store</h2><span class="muted">one-click deploys</span></div>
       <div id="app-list" class="cards"></div>
     </section>
 
-    <!-- Updates -->
-    <section id="view-updates" class="view hidden">
-      <div class="section-head">
-        <h2>Updates</h2>
-        <button id="updates-refresh" class="btn small">Re-check</button>
-      </div>
-      <div id="updates-summary" class="muted" style="margin-bottom:10px">Checking…</div>
-      <div id="updates-list" class="cards"></div>
-      <div id="apt-section" class="hidden">
-        <div class="section-head"><h2>System packages</h2></div>
-        <div id="apt-list" class="cards"></div>
-      </div>
-    </section>
-
-    <!-- Settings -->
+    <!-- More / Settings -->
     <section id="view-settings" class="view hidden">
-      <div class="section-head"><h2>AI provider</h2></div>
+      <div class="section-head"><h2>AI providers</h2></div>
       <div class="card form-card">
-        <label>Provider
-          <select id="ai-provider" class="select wide">
-            <option value="">– disabled –</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="openai">OpenAI-compatible</option>
-          </select>
+        <p class="muted" style="margin-bottom:10px">Bring your own keys — they never leave this server.
+        Enter <code>-</code> to remove a stored key.</p>
+        <label>Anthropic API key <input type="password" id="key-anthropic" placeholder="sk-ant-… "></label>
+        <label>OpenRouter API key <input type="password" id="key-openrouter" placeholder="sk-or-…"></label>
+        <label>OpenAI API key <input type="password" id="key-openai" placeholder="sk-…"></label>
+        <label>Default model
+          <select id="ai-default-model" class="select wide"></select>
         </label>
-        <label>API key <input type="password" id="ai-key" placeholder="sk-… (stored on your server)"></label>
-        <label>Model <input type="text" id="ai-model" placeholder="e.g. claude-sonnet-5"></label>
-        <label>Base URL (optional) <input type="text" id="ai-baseurl" placeholder="custom endpoint"></label>
         <button id="ai-save" class="btn primary">Save</button>
         <p id="ai-status" class="muted"></p>
       </div>
+
+      <div class="section-head"><h2>AI usage</h2></div>
+      <div class="card form-card"><div id="usage-summary" class="muted">–</div></div>
+
+      <div class="section-head"><h2>Workspaces</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:8px">Folders the Vibe agent may work in (one per line).</p>
+        <textarea id="workspaces-input" rows="3" spellcheck="false"></textarea>
+        <button id="workspaces-save" class="btn" style="margin-top:8px">Save workspaces</button>
+      </div>
+
+      <div class="section-head"><h2>Scheduled checks</h2></div>
+      <div class="card form-card">
+        <label class="row-label"><input type="checkbox" id="report-auto"> Run server checks automatically</label>
+        <label>Interval
+          <select id="report-interval" class="select wide">
+            <option value="60">hourly</option>
+            <option value="360">every 6 hours</option>
+            <option value="720">every 12 hours</option>
+            <option value="1440">daily</option>
+          </select>
+        </label>
+        <button id="report-config-save" class="btn">Save</button>
+      </div>
+
       <div class="section-head"><h2>Session</h2></div>
       <div class="card form-card">
         <button id="logout" class="btn danger">Sign out</button>
@@ -142,8 +217,8 @@
     <button class="tab active" data-view="dashboard"><span class="ico">▦</span>Home</button>
     <button class="tab" data-view="vibe"><span class="ico">✦</span>Vibe</button>
     <button class="tab" data-view="terminal"><span class="ico">❯_</span>Term</button>
+    <button class="tab" data-view="health"><span class="ico">♥</span><span id="health-badge" class="badge hidden"></span>Health</button>
     <button class="tab" data-view="apps"><span class="ico">◲</span>Apps</button>
-    <button class="tab" data-view="updates"><span class="ico">⟳</span><span id="upd-badge" class="badge hidden"></span>Updates</button>
     <button class="tab" data-view="settings"><span class="ico">⚙</span>More</button>
   </nav>
 </div>

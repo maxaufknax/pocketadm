@@ -34,6 +34,15 @@ def save_settings(settings: dict) -> None:
 
 settings = _load_settings()
 
+# migrate v1 single-provider settings to per-provider keys
+if "ai_api_key" in settings and "ai_keys" not in settings:
+    prov = settings.get("ai_provider") or "openrouter"
+    settings["ai_keys"] = {prov: settings.pop("ai_api_key")}
+    settings["ai_default"] = {"provider": prov, "model": settings.pop("ai_model", "")}
+    settings.pop("ai_provider", None)
+    settings.pop("ai_base_url", None)
+    save_settings(settings)
+
 
 def get_secret() -> bytes:
     """Signing secret for session tokens, generated on first run."""
@@ -45,22 +54,87 @@ def get_secret() -> bytes:
     return key
 
 
-def get_ai_config() -> dict:
-    """AI provider config. Env vars win; settings.json (set via UI) is fallback."""
-    return {
-        "provider": os.environ.get("AI_PROVIDER") or settings.get("ai_provider", ""),
-        "api_key": os.environ.get("AI_API_KEY") or settings.get("ai_api_key", ""),
-        "model": os.environ.get("AI_MODEL") or settings.get("ai_model", ""),
-        "base_url": os.environ.get("AI_BASE_URL") or settings.get("ai_base_url", ""),
-    }
+PROVIDERS = ("anthropic", "openrouter", "openai")
 
 
-def set_ai_config(provider: str, api_key: str, model: str, base_url: str = "") -> None:
-    settings["ai_provider"] = provider
-    if api_key:  # empty means "keep existing"
-        settings["ai_api_key"] = api_key
-    settings["ai_model"] = model
-    settings["ai_base_url"] = base_url
+def get_key(provider: str) -> str:
+    """API key for a provider. Env var wins over UI-stored settings."""
+    if os.environ.get("AI_PROVIDER") == provider and os.environ.get("AI_API_KEY"):
+        return os.environ["AI_API_KEY"]
+    env = os.environ.get(f"{provider.upper()}_API_KEY", "")
+    return env or settings.get("ai_keys", {}).get(provider, "")
+
+
+def set_keys(keys: dict[str, str]) -> None:
+    stored = settings.setdefault("ai_keys", {})
+    for prov, key in keys.items():
+        if prov in PROVIDERS and key:
+            stored[prov] = key
+        elif prov in PROVIDERS and key == "-":  # "-" clears a key
+            stored.pop(prov, None)
+    save_settings(settings)
+
+
+def configured_providers() -> list[str]:
+    return [p for p in PROVIDERS if get_key(p)]
+
+
+def get_ai_default() -> dict:
+    d = settings.get("ai_default") or {}
+    provider = os.environ.get("AI_PROVIDER") or d.get("provider", "")
+    if not provider or not get_key(provider):
+        avail = configured_providers()
+        provider = avail[0] if avail else ""
+    model = os.environ.get("AI_MODEL") or d.get("model", "") or DEFAULT_MODELS.get(provider, "")
+    return {"provider": provider, "model": model}
+
+
+def set_ai_default(provider: str, model: str) -> None:
+    settings["ai_default"] = {"provider": provider, "model": model}
+    save_settings(settings)
+
+
+def get_base_url(provider: str) -> str:
+    if os.environ.get("AI_PROVIDER") == provider and os.environ.get("AI_BASE_URL"):
+        return os.environ["AI_BASE_URL"]
+    return settings.get("ai_base_urls", {}).get(provider, "")
+
+
+# ---- misc user settings with defaults ----
+
+def get_ignored_images() -> list[str]:
+    return settings.get("ignored_images", [])
+
+
+def set_ignored_image(image: str, ignored: bool) -> None:
+    lst = set(settings.get("ignored_images", []))
+    (lst.add if ignored else lst.discard)(image)
+    settings["ignored_images"] = sorted(lst)
+    save_settings(settings)
+
+
+def get_workspaces() -> list[str]:
+    ws = settings.get("workspaces")
+    if ws:
+        return ws
+    host = os.path.isdir("/host")
+    defaults = ["/host/srv", "/host/home", "/host"] if host else ["/srv", os.path.expanduser("~")]
+    return [w for w in defaults if os.path.isdir(w)]
+
+
+def set_workspaces(paths: list[str]) -> None:
+    settings["workspaces"] = [p for p in paths if p.strip()]
+    save_settings(settings)
+
+
+def get_report_config() -> dict:
+    return {"interval_min": settings.get("report_interval_min", 360),
+            "auto": settings.get("report_auto", True)}
+
+
+def set_report_config(interval_min: int, auto: bool) -> None:
+    settings["report_interval_min"] = max(15, interval_min)
+    settings["report_auto"] = auto
     save_settings(settings)
 
 
