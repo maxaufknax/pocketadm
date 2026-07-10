@@ -1,0 +1,23 @@
+services:
+  helmsman:
+    build: .
+    image: helmsman:latest
+    container_name: helmsman
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    environment:
+      # - ADMIN_PASSWORD=change-me          # otherwise auto-generated on first run (see logs)
+      # - AI_PROVIDER=anthropic             # anthropic | openrouter | openai (or set via UI)
+      # - AI_API_KEY=sk-...
+      # - AI_MODEL=claude-sonnet-5
+      # - HOST_SSH=user@172.17.0.1          # optional: real host shell in the terminal
+      - HELMSMAN_WORKDIR=/host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /:/host:ro                          # host filesystem, read-only (metrics + AI context)
+      - helmsman_data:/data
+      # - ~/.ssh:/root/.ssh:ro              # optional: for HOST_SSH key auth
+
+volumes:
+  helmsman_data:

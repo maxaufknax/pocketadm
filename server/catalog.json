@@ -1,0 +1,124 @@
+{
+  "apps": [
+    {
+      "id": "portainer",
+      "name": "Portainer CE",
+      "icon": "🐳",
+      "category": "Management",
+      "description": "Web UI for managing Docker: containers, images, volumes, networks.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "9000"}],
+      "compose": "services:\n  portainer:\n    image: portainer/portainer-ce:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:9000\"\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n      - portainer_data:/data\nvolumes:\n  portainer_data:\n"
+    },
+    {
+      "id": "uptime-kuma",
+      "name": "Uptime Kuma",
+      "icon": "📈",
+      "category": "Monitoring",
+      "description": "Beautiful self-hosted uptime monitoring with notifications.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "3001"}],
+      "compose": "services:\n  uptime-kuma:\n    image: louislam/uptime-kuma:1\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3001\"\n    volumes:\n      - kuma_data:/app/data\nvolumes:\n  kuma_data:\n"
+    },
+    {
+      "id": "grafana",
+      "name": "Grafana",
+      "icon": "📊",
+      "category": "Monitoring",
+      "description": "Dashboards and visualization for metrics and logs.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "3000"}],
+      "compose": "services:\n  grafana:\n    image: grafana/grafana:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3000\"\n    volumes:\n      - grafana_data:/var/lib/grafana\nvolumes:\n  grafana_data:\n"
+    },
+    {
+      "id": "vaultwarden",
+      "name": "Vaultwarden",
+      "icon": "🔐",
+      "category": "Security",
+      "description": "Lightweight Bitwarden-compatible password manager server.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "8222"}],
+      "compose": "services:\n  vaultwarden:\n    image: vaultwarden/server:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:80\"\n    volumes:\n      - vw_data:/data\nvolumes:\n  vw_data:\n"
+    },
+    {
+      "id": "adguard-home",
+      "name": "AdGuard Home",
+      "icon": "🛡️",
+      "category": "Network",
+      "description": "Network-wide ad & tracker blocking DNS server.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "8083"}],
+      "compose": "services:\n  adguard:\n    image: adguard/adguardhome:latest\n    restart: unless-stopped\n    ports:\n      - \"53:53/udp\"\n      - \"53:53/tcp\"\n      - \"{{PORT}}:3000\"\n    volumes:\n      - adguard_work:/opt/adguardhome/work\n      - adguard_conf:/opt/adguardhome/conf\nvolumes:\n  adguard_work:\n  adguard_conf:\n"
+    },
+    {
+      "id": "jellyfin",
+      "name": "Jellyfin",
+      "icon": "🎬",
+      "category": "Media",
+      "description": "Free media server for movies, shows and music.",
+      "fields": [
+        {"key": "PORT", "label": "Web port", "default": "8096"},
+        {"key": "MEDIA", "label": "Media folder on server", "default": "/srv/media"}
+      ],
+      "compose": "services:\n  jellyfin:\n    image: jellyfin/jellyfin:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8096\"\n    volumes:\n      - jf_config:/config\n      - jf_cache:/cache\n      - {{MEDIA}}:/media:ro\nvolumes:\n  jf_config:\n  jf_cache:\n"
+    },
+    {
+      "id": "navidrome",
+      "name": "Navidrome",
+      "icon": "🎵",
+      "category": "Media",
+      "description": "Modern music server, compatible with Subsonic apps (Amperfy, Substreamer …).",
+      "fields": [
+        {"key": "PORT", "label": "Web port", "default": "4533"},
+        {"key": "MUSIC", "label": "Music folder on server", "default": "/srv/music"}
+      ],
+      "compose": "services:\n  navidrome:\n    image: deluan/navidrome:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:4533\"\n    volumes:\n      - nd_data:/data\n      - {{MUSIC}}:/music:ro\nvolumes:\n  nd_data:\n"
+    },
+    {
+      "id": "nextcloud",
+      "name": "Nextcloud",
+      "icon": "☁️",
+      "category": "Productivity",
+      "description": "Self-hosted files, calendar, contacts and more.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "8082"}],
+      "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MYSQL_ROOT_PASSWORD: helmsman-nc-root\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: helmsman-nc\n    volumes:\n      - nc_db:/var/lib/mysql\n  app:\n    image: nextcloud:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:80\"\n    environment:\n      MYSQL_HOST: db\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: helmsman-nc\n    volumes:\n      - nc_data:/var/www/html\n    depends_on:\n      - db\nvolumes:\n  nc_db:\n  nc_data:\n"
+    },
+    {
+      "id": "gitea",
+      "name": "Gitea",
+      "icon": "🍵",
+      "category": "Development",
+      "description": "Lightweight self-hosted Git service (like GitHub).",
+      "fields": [
+        {"key": "PORT", "label": "Web port", "default": "3030"},
+        {"key": "SSH_PORT", "label": "SSH port", "default": "2222"}
+      ],
+      "compose": "services:\n  gitea:\n    image: gitea/gitea:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3000\"\n      - \"{{SSH_PORT}}:22\"\n    volumes:\n      - gitea_data:/data\nvolumes:\n  gitea_data:\n"
+    },
+    {
+      "id": "code-server",
+      "name": "code-server",
+      "icon": "💻",
+      "category": "Development",
+      "description": "VS Code in the browser, running on your server.",
+      "fields": [
+        {"key": "PORT", "label": "Web port", "default": "8443"},
+        {"key": "PASSWORD", "label": "Login password", "default": "changeme"}
+      ],
+      "compose": "services:\n  code-server:\n    image: lscr.io/linuxserver/code-server:latest\n    restart: unless-stopped\n    environment:\n      - PASSWORD={{PASSWORD}}\n      - TZ=Europe/Berlin\n    ports:\n      - \"{{PORT}}:8443\"\n    volumes:\n      - cs_config:/config\nvolumes:\n  cs_config:\n"
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "icon": "🔗",
+      "category": "Automation",
+      "description": "Workflow automation (like Zapier, self-hosted).",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "5678"}],
+      "compose": "services:\n  n8n:\n    image: docker.n8n.io/n8nio/n8n:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:5678\"\n    volumes:\n      - n8n_data:/home/node/.n8n\nvolumes:\n  n8n_data:\n"
+    },
+    {
+      "id": "dozzle",
+      "name": "Dozzle",
+      "icon": "📜",
+      "category": "Monitoring",
+      "description": "Realtime log viewer for all your Docker containers.",
+      "fields": [{"key": "PORT", "label": "Web port", "default": "8888"}],
+      "compose": "services:\n  dozzle:\n    image: amir20/dozzle:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8080\"\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n"
+    }
+  ]
+}

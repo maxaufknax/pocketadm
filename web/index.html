@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0b0f14">
+<title>Helmsman</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ============ Login ============ -->
+<div id="login-screen" class="login hidden">
+  <div class="login-card">
+    <div class="logo-big">⎈</div>
+    <h1>Helmsman</h1>
+    <p class="muted">Your server, in your pocket.</p>
+    <form id="login-form">
+      <input type="password" id="login-password" placeholder="Admin password"
+             autocomplete="current-password" required>
+      <button type="submit" class="btn primary wide">Sign in</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ============ App shell ============ -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <span class="logo">⎈</span>
+    <span id="host-name" class="hostname">server</span>
+    <span class="spacer"></span>
+    <span id="conn-dot" class="dot ok" title="connected"></span>
+  </header>
+
+  <main id="views">
+
+    <!-- Dashboard -->
+    <section id="view-dashboard" class="view">
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></div>
+        <div class="stat"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></div>
+        <div class="stat"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></div>
+        <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></div>
+      </div>
+      <div class="section-head"><h2>Containers</h2><span id="container-count" class="muted"></span></div>
+      <div id="container-list" class="cards"></div>
+    </section>
+
+    <!-- Vibe Code -->
+    <section id="view-vibe" class="view hidden">
+      <div id="chat-log" class="chat-log">
+        <div class="chat-welcome">
+          <div class="logo-big">⎈</div>
+          <h2>Vibe Code</h2>
+          <p class="muted">Chat with an AI engineer that works directly on your server.<br>
+          Try: <em>“Which containers use the most memory?”</em></p>
+          <p id="vibe-no-ai" class="warn hidden">No AI key configured yet → Settings</p>
+        </div>
+      </div>
+      <div class="chat-input-row">
+        <label class="auto-toggle" title="Auto-approve commands">
+          <input type="checkbox" id="chat-auto"><span>auto</span>
+        </label>
+        <textarea id="chat-input" rows="1" placeholder="Ask or instruct…"></textarea>
+        <button id="chat-send" class="btn primary round">➤</button>
+      </div>
+    </section>
+
+    <!-- Terminal -->
+    <section id="view-terminal" class="view hidden">
+      <div class="term-toolbar">
+        <select id="term-context" class="select"><option value="local">Helmsman shell</option></select>
+        <button id="term-reconnect" class="btn small">Reconnect</button>
+      </div>
+      <div id="terminal" class="terminal"></div>
+      <div class="key-bar">
+        <button data-key="Escape">esc</button>
+        <button data-key="Tab">tab</button>
+        <button data-mod="ctrl" id="key-ctrl">ctrl</button>
+        <button data-seq="&#x1b;[A">↑</button>
+        <button data-seq="&#x1b;[B">↓</button>
+        <button data-seq="&#x1b;[D">←</button>
+        <button data-seq="&#x1b;[C">→</button>
+        <button data-seq="&#3;">^C</button>
+        <button data-seq="/">/</button>
+        <button data-seq="-">-</button>
+      </div>
+    </section>
+
+    <!-- Apps -->
+    <section id="view-apps" class="view hidden">
+      <div class="section-head"><h2>App Store</h2><span class="muted">one-click deploys</span></div>
+      <div id="app-list" class="cards"></div>
+    </section>
+
+    <!-- Updates -->
+    <section id="view-updates" class="view hidden">
+      <div class="section-head">
+        <h2>Updates</h2>
+        <button id="updates-refresh" class="btn small">Re-check</button>
+      </div>
+      <div id="updates-summary" class="muted" style="margin-bottom:10px">Checking…</div>
+      <div id="updates-list" class="cards"></div>
+      <div id="apt-section" class="hidden">
+        <div class="section-head"><h2>System packages</h2></div>
+        <div id="apt-list" class="cards"></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view hidden">
+      <div class="section-head"><h2>AI provider</h2></div>
+      <div class="card form-card">
+        <label>Provider
+          <select id="ai-provider" class="select wide">
+            <option value="">– disabled –</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai">OpenAI-compatible</option>
+          </select>
+        </label>
+        <label>API key <input type="password" id="ai-key" placeholder="sk-… (stored on your server)"></label>
+        <label>Model <input type="text" id="ai-model" placeholder="e.g. claude-sonnet-5"></label>
+        <label>Base URL (optional) <input type="text" id="ai-baseurl" placeholder="custom endpoint"></label>
+        <button id="ai-save" class="btn primary">Save</button>
+        <p id="ai-status" class="muted"></p>
+      </div>
+      <div class="section-head"><h2>Session</h2></div>
+      <div class="card form-card">
+        <button id="logout" class="btn danger">Sign out</button>
+      </div>
+      <p class="muted center" style="margin-top:24px">Helmsman · open source server command center</p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab active" data-view="dashboard"><span class="ico">▦</span>Home</button>
+    <button class="tab" data-view="vibe"><span class="ico">✦</span>Vibe</button>
+    <button class="tab" data-view="terminal"><span class="ico">❯_</span>Term</button>
+    <button class="tab" data-view="apps"><span class="ico">◲</span>Apps</button>
+    <button class="tab" data-view="updates"><span class="ico">⟳</span><span id="upd-badge" class="badge hidden"></span>Updates</button>
+    <button class="tab" data-view="settings"><span class="ico">⚙</span>More</button>
+  </nav>
+</div>
+
+<!-- ============ Modal ============ -->
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head"><h3 id="modal-title"></h3><button id="modal-close" class="btn small">✕</button></div>
+    <div id="modal-body" class="modal-body"></div>
+  </div>
+</div>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/xterm-addon-fit.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
