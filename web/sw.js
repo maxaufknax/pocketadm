@@ -1,5 +1,5 @@
 /* Helmsman service worker — cache the app shell, never cache API/WS. */
-const CACHE = "helmsman-v1";
+const CACHE = "helmsman-v2";
 const SHELL = ["/", "/style.css", "/app.js", "/manifest.webmanifest",
   "/vendor/xterm.js", "/vendor/xterm.css", "/vendor/xterm-addon-fit.js",
   "/icons/icon.svg"];

@@ -1,16 +1,82 @@
 """Update detection: docker images (registry digest comparison, no pull needed)
-and host apt packages (when accessible). Optional AI explanations."""
+and host apt packages (when accessible). Optional AI explanations.
+
+Updates are enriched with service metadata (friendly name, icon, category),
+a priority classification, image age and changelog links, and can be applied
+as a background job: pull with live progress, then recreate the containers.
+"""
 import asyncio
+import datetime
 import json
 import re
 import time
 
 import httpx
 
-from . import ai, dockerapi
+from . import ai, config, dockerapi, jobs
 
 _cache: dict = {"time": 0, "result": None}
 CACHE_TTL = 1800
+
+# Known services: substring of image name -> friendly metadata.
+# security=True marks software whose updates are typically security-relevant
+# (auth, proxies, password managers, databases, anything internet-facing).
+SERVICE_META = {
+    "traefik":      ("Traefik", "🚦", "Reverse Proxy", True),
+    "nginx":        ("Nginx", "🌐", "Web Server", True),
+    "caddy":        ("Caddy", "🌐", "Web Server", True),
+    "authentik":    ("Authentik", "🔑", "Authentication", True),
+    "authelia":     ("Authelia", "🔑", "Authentication", True),
+    "vaultwarden":  ("Vaultwarden", "🔐", "Passwords", True),
+    "postgres":     ("PostgreSQL", "🐘", "Database", True),
+    "mariadb":      ("MariaDB", "🗄️", "Database", True),
+    "mysql":        ("MySQL", "🗄️", "Database", True),
+    "redis":        ("Redis", "⚡", "Cache", True),
+    "mongo":        ("MongoDB", "🍃", "Database", True),
+    "wireguard":    ("WireGuard", "🕳️", "VPN", True),
+    "openssh":      ("OpenSSH", "🔒", "Remote Access", True),
+    "grafana":      ("Grafana", "📊", "Monitoring", False),
+    "prometheus":   ("Prometheus", "🔥", "Monitoring", False),
+    "uptime-kuma":  ("Uptime Kuma", "📈", "Monitoring", False),
+    "dozzle":       ("Dozzle", "📜", "Monitoring", False),
+    "portainer":    ("Portainer", "🐳", "Management", False),
+    "jellyfin":     ("Jellyfin", "🎬", "Media", False),
+    "navidrome":    ("Navidrome", "🎵", "Media", False),
+    "plex":         ("Plex", "🎬", "Media", False),
+    "nextcloud":    ("Nextcloud", "☁️", "Files & Sync", True),
+    "gitea":        ("Gitea", "🍵", "Development", False),
+    "code-server":  ("code-server", "💻", "Development", False),
+    "n8n":          ("n8n", "🔗", "Automation", False),
+    "home-assistant": ("Home Assistant", "🏠", "Smart Home", False),
+    "adguard":      ("AdGuard Home", "🛡️", "DNS / Adblock", True),
+    "pihole":       ("Pi-hole", "🛡️", "DNS / Adblock", True),
+    "open-webui":   ("Open WebUI", "🤖", "AI", False),
+    "ollama":       ("Ollama", "🤖", "AI", False),
+    "synapse":      ("Matrix Synapse", "💬", "Communication", True),
+    "mautrix":      ("Matrix Bridge", "💬", "Communication", False),
+    "element":      ("Element", "💬", "Communication", False),
+    "immich":       ("Immich", "📸", "Photos", False),
+    "paperless":    ("Paperless-ngx", "📄", "Documents", False),
+    "syncthing":    ("Syncthing", "🔄", "Files & Sync", False),
+    "minecraft":    ("Minecraft Server", "⛏️", "Games", False),
+    "watchtower":   ("Watchtower", "🗼", "Management", False),
+    "alpine":       ("Alpine Linux", "🏔️", "Base Image", False),
+    "debian":       ("Debian", "🌀", "Base Image", False),
+    "ubuntu":       ("Ubuntu", "🟠", "Base Image", False),
+    "python":       ("Python", "🐍", "Base Image", False),
+    "node":         ("Node.js", "🟢", "Base Image", False),
+}
+
+
+def service_meta(image: str) -> dict:
+    """Friendly name/icon/category for an image reference."""
+    base = image.split("@")[0].rsplit(":", 1)[0].lower()
+    for key, (label, icon, category, security) in SERVICE_META.items():
+        if key in base:
+            return {"label": label, "icon": icon, "category": category, "security": security}
+    name = base.rsplit("/", 1)[-1]
+    return {"label": name.replace("-", " ").replace("_", " ").title(),
+            "icon": "📦", "category": "Service", "security": False}
 
 ACCEPT = ("application/vnd.docker.distribution.manifest.list.v2+json, "
           "application/vnd.oci.image.index.v1+json, "
@@ -54,31 +120,71 @@ async def remote_digest(client: httpx.AsyncClient, registry: str, repo: str, tag
     return r.headers.get("docker-content-digest")
 
 
+def _classify_priority(meta: dict, exposed_publicly: bool, age_days: int | None) -> str:
+    if meta["security"]:
+        return "high"
+    if exposed_publicly or (age_days or 0) > 180:
+        return "medium"
+    return "low"
+
+
+def _links_for(image: str) -> dict:
+    registry, repo, tag = parse_image_ref(image)
+    links = {}
+    if registry == "registry-1.docker.io":
+        links["hub"] = (f"https://hub.docker.com/_/{repo[8:]}" if repo.startswith("library/")
+                        else f"https://hub.docker.com/r/{repo}")
+        if not repo.startswith("library/") and repo.count("/") == 1:
+            links["changelog"] = f"https://github.com/{repo}/releases"
+    elif registry == "ghcr.io":
+        links["hub"] = f"https://github.com/{repo}"
+        links["changelog"] = f"https://github.com/{'/'.join(repo.split('/')[:2])}/releases"
+    elif registry == "lscr.io":
+        links["changelog"] = f"https://github.com/linuxserver/docker-{repo.split('/')[-1]}/releases"
+    return links
+
+
 async def check_docker_updates(force: bool = False) -> list[dict]:
     now = time.time()
     if not force and _cache["result"] is not None and now - _cache["time"] < CACHE_TTL:
         return _cache["result"]
 
     containers = await dockerapi.list_containers(all_=False)
-    images: dict[str, list[str]] = {}
+    images: dict[str, dict] = {}
     for c in containers:
-        if not c["image"].startswith("sha256:"):
-            images.setdefault(c["image"], []).append(c["name"])
+        if c["image"].startswith("sha256:"):
+            continue
+        slot = images.setdefault(c["image"], {"used_by": [], "public": False})
+        slot["used_by"].append(c["name"])
+        if any(p.get("ip") in ("", "0.0.0.0", "::") for p in c["ports"]):
+            slot["public"] = True
 
+    ignored = set(config.get_ignored_images())
     results: list[dict] = []
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        async def check_one(image: str, used_by: list[str]) -> None:
-            entry = {"image": image, "used_by": used_by, "update_available": False,
-                     "current_digest": "", "remote_digest": "", "error": ""}
+        async def check_one(image: str, info_c: dict) -> None:
+            meta = service_meta(image)
+            entry = {"image": image, "used_by": info_c["used_by"], "update_available": False,
+                     "current_digest": "", "remote_digest": "", "error": "",
+                     "ignored": image in ignored, "age_days": None,
+                     "tag": parse_image_ref(image)[2], **meta, "links": _links_for(image)}
             try:
                 info = await dockerapi.inspect_image(image)
                 if not info:
                     entry["error"] = "image not found locally"
                     results.append(entry)
                     return
+                created = info.get("Created", "")
+                if created:
+                    try:
+                        dt = datetime.datetime.fromisoformat(created.split(".")[0] + "+00:00")
+                        entry["age_days"] = max(0, int((now - dt.timestamp()) / 86400))
+                    except ValueError:
+                        pass
                 local_digests = {d.split("@")[1] for d in info.get("RepoDigests", []) if "@" in d}
                 if not local_digests:
                     entry["error"] = "locally built image"
+                    entry["local_build"] = True
                     results.append(entry)
                     return
                 registry, repo, tag = parse_image_ref(image)
@@ -91,11 +197,15 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                     entry["update_available"] = remote not in local_digests
             except Exception as e:
                 entry["error"] = str(e)[:200]
+            entry["priority"] = _classify_priority(meta, info_c["public"], entry["age_days"])
             results.append(entry)
 
-        await asyncio.gather(*(check_one(img, names) for img, names in images.items()))
+        await asyncio.gather(*(check_one(img, inf) for img, inf in images.items()))
 
-    results.sort(key=lambda x: (not x["update_available"], x["image"]))
+    prio_rank = {"high": 0, "medium": 1, "low": 2}
+    results.sort(key=lambda x: (x["ignored"], not x["update_available"],
+                                prio_rank.get(x.get("priority", "low"), 2),
+                                -(x["age_days"] or 0), x["image"]))
     _cache.update(time=now, result=results)
     return results
 
@@ -117,17 +227,33 @@ async def check_apt_updates() -> dict:
         return {"available": False, "packages": []}
 
 
-async def pull_image(image: str) -> str:
-    """Pull the newer image. (Recreating the container is up to compose/user.)"""
-    proc = await asyncio.create_subprocess_exec(
-        "docker", "pull", image,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await asyncio.wait_for(proc.communicate(), 600)
-    text = out.decode("utf-8", "replace")[-3000:]
-    if proc.returncode != 0:
-        raise RuntimeError(text)
-    _cache["time"] = 0  # invalidate
-    return text
+def start_update_job(image: str, recreate: bool = True) -> jobs.Job:
+    """Pull the newer image as a background job with live progress, then
+    (optionally) recreate all containers running on it."""
+    meta = service_meta(image)
+
+    async def work(job: jobs.Job) -> None:
+        job.log(f"⬇ Pulling {image} …")
+        await dockerapi.pull_image_stream(image, job.log)
+        job.log("✓ Pull complete")
+        _cache["time"] = 0  # invalidate check cache
+        if not recreate:
+            job.finish(True, "Image updated. Containers keep running on the old "
+                             "image until they are recreated.")
+            return
+        containers = [c for c in await dockerapi.list_containers(all_=False)
+                      if c["image"] == image]
+        if not containers:
+            job.finish(True, "No running containers use this image — nothing to recreate.")
+            return
+        for c in containers:
+            job.log(f"♻ Recreating {c['name']} with the new image …")
+            new_id = await dockerapi.recreate_container(c["id"], job.log)
+            job.log(f"✓ {c['name']} is running again ({new_id})")
+        job.finish(True, f"✓ Update finished: {meta['label']} "
+                         f"({len(containers)} container{'s' if len(containers) > 1 else ''} recreated)")
+
+    return jobs.start(f"Update {meta['label']} ({image})", "update", work)
 
 
 EXPLAIN_SYSTEM = ("You explain software updates to self-hosting users who are not sysadmins. "
