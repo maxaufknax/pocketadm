@@ -6,7 +6,7 @@ services:
     container_name: helmsman-landing
     restart: unless-stopped
     volumes:
-      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./public:/usr/share/nginx/html:ro
     networks:
       - homeserver_net
 
