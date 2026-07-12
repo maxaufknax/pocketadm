@@ -1,0 +1,17 @@
+services:
+  helmsman-demo:
+    build: .
+    image: ghcr.io/maxaufknax/helmsman:latest
+    container_name: helmsman-demo
+    restart: unless-stopped
+    ports:
+      - "${HELMSMAN_PORT:-8091}:8080"
+    environment:
+      - HELMSMAN_DEMO=1        # public read-only playground; password is "demo"
+    # NOTE: no docker.sock / host mount — demo mode serves canned sample data,
+    # so a public demo can't touch a real host.
+    volumes:
+      - helmsman_demo_data:/data
+
+volumes:
+  helmsman_demo_data:

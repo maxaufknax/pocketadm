@@ -60,6 +60,37 @@ def uptime_seconds() -> float:
         return float(f.read().split()[0])
 
 
+def net_counters() -> tuple[int, int]:
+    """Total rx/tx bytes across all non-loopback, non-virtual interfaces.
+    /proc/net/dev is host-wide inside the container (net ns not shared, but
+    the container's eth0 mirrors all Helmsman traffic; when running natively
+    this covers real NICs)."""
+    rx = tx = 0
+    try:
+        with open("/proc/net/dev") as f:
+            for line in f.readlines()[2:]:
+                name, rest = line.split(":", 1)
+                name = name.strip()
+                if name == "lo" or name.startswith(("veth", "br-", "docker")):
+                    continue
+                nums = rest.split()
+                rx += int(nums[0])
+                tx += int(nums[8])
+    except (OSError, ValueError, IndexError):
+        pass
+    return rx, tx
+
+
+def snapshot_light() -> dict:
+    """Cheap snapshot for the metrics collector (no hostname/disk stat spam)."""
+    return {
+        "cpu_percent": cpu_percent(),
+        "memory_percent": memory()["percent"],
+        "disk_percent": disk()["percent"],
+        "load1": loadavg()[0],
+    }
+
+
 def hostname() -> str:
     for path in ("/host/etc/hostname",):
         if os.path.exists(path):

@@ -13,7 +13,7 @@ import time
 
 import httpx
 
-from . import ai, config, dockerapi, jobs
+from . import ai, config, dockerapi, jobs, snapshots
 
 _cache: dict = {"time": 0, "result": None}
 CACHE_TTL = 1800
@@ -23,6 +23,7 @@ CACHE_TTL = 1800
 # (auth, proxies, password managers, databases, anything internet-facing).
 SERVICE_META = {
     "traefik":      ("Traefik", "🚦", "Reverse Proxy", True),
+    "nginx-proxy-manager": ("Nginx Proxy Manager", "🚦", "Reverse Proxy", True),
     "nginx":        ("Nginx", "🌐", "Web Server", True),
     "caddy":        ("Caddy", "🌐", "Web Server", True),
     "authentik":    ("Authentik", "🔑", "Authentication", True),
@@ -34,8 +35,13 @@ SERVICE_META = {
     "redis":        ("Redis", "⚡", "Cache", True),
     "mongo":        ("MongoDB", "🍃", "Database", True),
     "wireguard":    ("WireGuard", "🕳️", "VPN", True),
+    "headscale":    ("Headscale", "🕳️", "VPN", True),
     "openssh":      ("OpenSSH", "🔒", "Remote Access", True),
+    "loki":         ("Grafana Loki", "🪵", "Monitoring", False),
+    "promtail":     ("Promtail", "🪵", "Monitoring", False),
     "grafana":      ("Grafana", "📊", "Monitoring", False),
+    "node-exporter": ("Node Exporter", "📊", "Monitoring", False),
+    "cadvisor":     ("cAdvisor", "📊", "Monitoring", False),
     "prometheus":   ("Prometheus", "🔥", "Monitoring", False),
     "uptime-kuma":  ("Uptime Kuma", "📈", "Monitoring", False),
     "dozzle":       ("Dozzle", "📜", "Monitoring", False),
@@ -60,6 +66,18 @@ SERVICE_META = {
     "syncthing":    ("Syncthing", "🔄", "Files & Sync", False),
     "minecraft":    ("Minecraft Server", "⛏️", "Games", False),
     "watchtower":   ("Watchtower", "🗼", "Management", False),
+    "unbound":      ("Unbound", "🛡️", "DNS", True),
+    "ntfy":         ("ntfy", "🔔", "Notifications", False),
+    "searxng":      ("SearXNG", "🔎", "Search", False),
+    "onlyoffice":   ("OnlyOffice", "📝", "Office", False),
+    "documentserver": ("OnlyOffice", "📝", "Office", False),
+    "webtop":       ("Webtop", "🖥️", "Remote Desktop", False),
+    "chroma":       ("ChromaDB", "🧠", "AI", False),
+    "freshrss":     ("FreshRSS", "📰", "Productivity", False),
+    "stirling":     ("Stirling PDF", "🪄", "Utilities", False),
+    "homepage":     ("Homepage", "🗂️", "Utilities", False),
+    "memos":        ("Memos", "📝", "Productivity", False),
+    "vectorim":     ("Element", "💬", "Communication", False),
     "alpine":       ("Alpine Linux", "🏔️", "Base Image", False),
     "debian":       ("Debian", "🌀", "Base Image", False),
     "ubuntu":       ("Ubuntu", "🟠", "Base Image", False),
@@ -69,12 +87,17 @@ SERVICE_META = {
 
 
 def service_meta(image: str) -> dict:
-    """Friendly name/icon/category for an image reference."""
+    """Friendly name/icon/category for an image reference.
+
+    Matches the image *basename* first so that e.g. grafana/loki is Loki and
+    not Grafana; only falls back to the full path (for org-level families
+    like mautrix/*) if no basename entry fits."""
     base = image.split("@")[0].rsplit(":", 1)[0].lower()
-    for key, (label, icon, category, security) in SERVICE_META.items():
-        if key in base:
-            return {"label": label, "icon": icon, "category": category, "security": security}
     name = base.rsplit("/", 1)[-1]
+    for candidates in (name, base):
+        for key, (label, icon, category, security) in SERVICE_META.items():
+            if key in candidates:
+                return {"label": label, "icon": icon, "category": category, "security": security}
     return {"label": name.replace("-", " ").replace("_", " ").title(),
             "icon": "📦", "category": "Service", "security": False}
 
@@ -164,10 +187,12 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         async def check_one(image: str, info_c: dict) -> None:
             meta = service_meta(image)
+            registry_, repo_, tag_ = parse_image_ref(image)
             entry = {"image": image, "used_by": info_c["used_by"], "update_available": False,
                      "current_digest": "", "remote_digest": "", "error": "",
                      "ignored": image in ignored, "age_days": None,
-                     "tag": parse_image_ref(image)[2], **meta, "links": _links_for(image)}
+                     "tag": tag_, "repo": f"{registry_}/{repo_}",
+                     **meta, "links": _links_for(image)}
             try:
                 info = await dockerapi.inspect_image(image)
                 if not info:
@@ -233,27 +258,93 @@ def start_update_job(image: str, recreate: bool = True) -> jobs.Job:
     meta = service_meta(image)
 
     async def work(job: jobs.Job) -> None:
-        job.log(f"⬇ Pulling {image} …")
-        await dockerapi.pull_image_stream(image, job.log)
-        job.log("✓ Pull complete")
-        _cache["time"] = 0  # invalidate check cache
-        if not recreate:
-            job.finish(True, "Image updated. Containers keep running on the old "
-                             "image until they are recreated.")
-            return
-        containers = [c for c in await dockerapi.list_containers(all_=False)
-                      if c["image"] == image]
-        if not containers:
-            job.finish(True, "No running containers use this image — nothing to recreate.")
-            return
-        for c in containers:
-            job.log(f"♻ Recreating {c['name']} with the new image …")
-            new_id = await dockerapi.recreate_container(c["id"], job.log)
-            job.log(f"✓ {c['name']} is running again ({new_id})")
-        job.finish(True, f"✓ Update finished: {meta['label']} "
-                         f"({len(containers)} container{'s' if len(containers) > 1 else ''} recreated)")
+        await _update_one(job, image, meta, recreate)
+        if job.status == "running":
+            job.finish(True)
 
     return jobs.start(f"Update {meta['label']} ({image})", "update", work)
+
+
+async def _update_one(job: jobs.Job, image: str, meta: dict, recreate: bool = True) -> None:
+    used_by = [c["name"] for c in await dockerapi.list_containers(all_=False)
+               if c["image"] == image]
+    try:
+        snap = await snapshots.create_snapshot(image, used_by)
+        if snap:
+            job.log(f"📸 Snapshot saved ({snap['image_id']}) — roll back anytime "
+                    f"from Health → Updates → Snapshots")
+    except Exception as e:
+        job.log(f"◌ Could not snapshot the current image ({type(e).__name__}) — "
+                f"continuing without a rollback point")
+    async with job.step(f"⬇ Pulling {image} …"):
+        await dockerapi.pull_image_stream(image, job.log)
+    job.log("✓ Pull complete")
+    _cache["time"] = 0  # invalidate check cache
+    if not recreate:
+        job.log("Image updated. Containers keep running on the old "
+                "image until they are recreated.")
+        return
+    containers = [c for c in await dockerapi.list_containers(all_=False)
+                  if c["image"] == image]
+    if not containers:
+        job.log("No running containers use this image — nothing to recreate.")
+        return
+    for c in containers:
+        async with job.step(f"♻ Recreating {c['name']} with the new image …"):
+            new_id = await dockerapi.recreate_container(c["id"], job.log)
+        job.log(f"✓ {c['name']} started ({new_id}) — waiting for it to settle …")
+        await _wait_healthy(job, new_id, c["name"])
+    job.log(f"✓ Update finished: {meta['label']} "
+            f"({len(containers)} container{'s' if len(containers) > 1 else ''} recreated)")
+
+
+async def _wait_healthy(job: jobs.Job, cid: str, name: str, timeout: int = 45) -> None:
+    """Post-recreate sanity: report state/health so the user knows it came back."""
+    deadline = time.monotonic() + timeout
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            d = await dockerapi.inspect_container(cid)
+        except Exception:
+            return
+        state = d.get("State", {})
+        status = state.get("Status", "?")
+        health = (state.get("Health") or {}).get("Status", "")
+        cur = f"{status}{' / ' + health if health else ''}"
+        if cur != last:
+            job.log(f"  {name}: {cur}")
+            last = cur
+        if status == "running" and health in ("", "healthy"):
+            return
+        if status in ("exited", "dead"):
+            job.log(f"⚠ {name} exited right after the update — check its logs "
+                    f"(the old container config was preserved).")
+            return
+        await asyncio.sleep(3)
+    job.log(f"  {name}: still starting after {timeout}s — that can be normal for big apps.")
+
+
+def start_update_all_job(images: list[str]) -> jobs.Job:
+    """Update several images sequentially in one job."""
+    async def work(job: jobs.Job) -> None:
+        ok, failed = 0, []
+        for i, image in enumerate(images, 1):
+            meta = service_meta(image)
+            job.log(f"—— [{i}/{len(images)}] {meta['label']} ——")
+            try:
+                await _update_one(job, image, meta, recreate=True)
+                ok += 1
+            except Exception as e:
+                failed.append(meta["label"])
+                job.log(f"✗ {meta['label']} failed: {type(e).__name__}: {e}")
+        _cache["time"] = 0
+        if failed:
+            job.finish(False, f"Finished: {ok} updated, {len(failed)} failed "
+                              f"({', '.join(failed)})")
+        else:
+            job.finish(True, f"✓ All {ok} updates applied")
+
+    return jobs.start(f"Update all ({len(images)} images)", "update", work)
 
 
 EXPLAIN_SYSTEM = ("You explain software updates to self-hosting users who are not sysadmins. "

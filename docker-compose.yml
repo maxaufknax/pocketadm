@@ -5,7 +5,7 @@ services:
     container_name: helmsman
     restart: unless-stopped
     ports:
-      - "8090:8080"
+      - "${HELMSMAN_PORT:-8090}:8080"
     environment:
       # - ADMIN_PASSWORD=change-me          # otherwise auto-generated on first run (see logs)
       # - AI_PROVIDER=anthropic             # anthropic | openrouter | openai (or set via UI)

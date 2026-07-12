@@ -4,6 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b0f14">
+<script>
+/* apply the saved theme before first paint (no flash) */
+(function () {
+  try {
+    var t = localStorage.getItem("helmsman_theme") || "auto";
+    if (t === "auto") {
+      t = matchMedia("(prefers-color-scheme: light)").matches ? "daybreak" : "deep-sea";
+    }
+    document.documentElement.dataset.theme = t;
+  } catch (e) {}
+})();
+</script>
 <title>Helmsman</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
@@ -22,9 +34,19 @@
     <form id="login-form">
       <input type="password" id="login-password" placeholder="Admin password"
              autocomplete="current-password" required>
+      <input type="text" id="login-totp" class="hidden" placeholder="6-digit 2FA code"
+             inputmode="numeric" autocomplete="one-time-code" maxlength="6">
       <button type="submit" class="btn primary wide">Sign in</button>
       <p id="login-error" class="error hidden"></p>
     </form>
+    <details class="install-hint">
+      <summary>New here? Install Helmsman on a server</summary>
+      <p class="muted">SSH into your server and run the one-line installer —
+      it sets up Docker (if needed) and Helmsman, then prints your admin password:</p>
+      <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash</pre>
+      <p class="muted">Afterwards open <code>http://&lt;server&gt;:8090</code> on your phone
+      and add it to your home screen.</p>
+    </details>
   </div>
 </div>
 
@@ -32,8 +54,10 @@
 <div id="app" class="app hidden">
   <header class="topbar">
     <span class="logo">⎈</span>
-    <span id="host-name" class="hostname">server</span>
+    <button id="host-name" class="hostname" title="switch server"><span id="host-name-text">server</span><span class="host-caret">▾</span></button>
     <span class="spacer"></span>
+    <button id="instruct-btn" class="iconbtn" title="instruct the agent">⌁</button>
+    <button id="notif-btn" class="iconbtn" title="notifications">🔔<span id="notif-badge" class="badge hidden"></span></button>
     <span id="conn-dot" class="dot ok" title="connected"></span>
   </header>
 
@@ -42,10 +66,11 @@
     <!-- Home: overview + services -->
     <section id="view-dashboard" class="view">
       <div class="stat-grid">
-        <div class="stat"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></div>
-        <div class="stat"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></div>
-        <div class="stat"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></div>
-        <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></div>
+        <button class="stat" data-metric="cpu"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></button>
+        <button class="stat" data-metric="mem"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></button>
+        <button class="stat" data-metric="disk"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></button>
+        <button class="stat" data-metric="net"><div class="stat-label">Internet</div><div class="stat-value" id="stat-net">–</div><div class="stat-sub" id="stat-net-sub"></div></button>
+        <button class="stat stat-wide" data-metric="load"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></button>
       </div>
       <div class="section-head">
         <h2>Services</h2>
@@ -59,36 +84,37 @@
 
     <!-- Vibe Code -->
     <section id="view-vibe" class="view hidden">
-      <div class="vibe-toolbar">
+      <div class="vibe-header">
+        <button id="chat-list-btn" class="btn small" title="your chats">☰ Chats</button>
+        <span id="chat-title" class="chat-title"></span>
+        <span class="spacer"></span>
+        <button id="chat-handoff" class="btn small" title="continue this chat on another device">🔗</button>
+        <button id="chat-new" class="btn small" title="start a new chat">＋ New</button>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+      <div class="run-status hidden" id="run-status">
+        <span class="run-pulse"></span>
+        <span id="run-status-text">Agent is working…</span>
+        <span class="spacer"></span>
+        <button id="chat-stop" class="btn small danger">⏹ Stop</button>
+      </div>
+      <div class="usage-row hidden" id="usage-row">
+        <span id="usage-text"></span>
+      </div>
+      <div class="vibe-controls">
         <div class="seg" id="mode-seg">
           <button data-mode="chat">Chat</button>
           <button data-mode="plan">Plan</button>
           <button data-mode="agent" class="active">Agent</button>
           <button data-mode="auto">Auto</button>
         </div>
-        <div class="vibe-selects">
-          <select id="chat-model" class="select mini" title="model"></select>
-          <select id="chat-workspace" class="select mini" title="workspace"></select>
-        </div>
+        <select id="chat-model" class="select mini" title="model"></select>
+        <button id="chat-workspace-btn" class="btn small ws-btn" title="working folder">📁 <span id="ws-label">…</span></button>
+        <button id="chat-thinking" class="btn small" title="extended thinking">💭</button>
       </div>
-      <div id="chat-log" class="chat-log">
-        <div class="chat-welcome">
-          <div class="logo-big">⎈</div>
-          <h2>Vibe Code</h2>
-          <p class="muted">Chat with an AI engineer that works directly on your server.<br>
-          Try: <em>“Which containers use the most memory?”</em></p>
-          <p class="muted modes-hint">
-            <b>Chat</b> talk only · <b>Plan</b> read-only investigation ·
-            <b>Agent</b> asks before actions · <b>Auto</b> free rein</p>
-          <p id="vibe-no-ai" class="warn hidden">No AI key configured yet → More</p>
-        </div>
-      </div>
-      <div class="usage-row hidden" id="usage-row">
-        <span id="usage-text"></span>
-        <button id="chat-reset" class="btn small">clear</button>
-      </div>
+      <div id="slash-hints" class="slash-hints hidden"></div>
       <div class="chat-input-row">
-        <textarea id="chat-input" rows="1" placeholder="Ask or instruct…"></textarea>
+        <textarea id="chat-input" rows="1" placeholder="Ask, instruct, or type / for commands…"></textarea>
         <button id="chat-send" class="btn primary round">➤</button>
       </div>
     </section>
@@ -129,17 +155,7 @@
           </div>
           <button id="updates-refresh" class="btn small">Re-check</button>
         </div>
-        <div class="filter-row" id="upd-filters">
-          <button class="chip-btn active" data-filter="all">All</button>
-          <button class="chip-btn" data-filter="updates">Updates</button>
-          <button class="chip-btn" data-filter="uptodate">Up to date</button>
-          <button class="chip-btn" data-filter="ignored">Ignored</button>
-        </div>
-        <div id="updates-list" class="cards"></div>
-        <div id="apt-section" class="hidden">
-          <div class="section-head"><h2>System packages</h2></div>
-          <div id="apt-list" class="cards"></div>
-        </div>
+        <div id="updates-list"></div>
       </div>
 
       <div id="health-checks" class="hidden">
@@ -161,12 +177,79 @@
 
     <!-- Apps -->
     <section id="view-apps" class="view hidden">
-      <div class="section-head"><h2>App Store</h2><span class="muted">one-click deploys</span></div>
-      <div id="app-list" class="cards"></div>
+      <div class="section-head"><h2>App Store</h2><span class="muted">one-tap installs for your server</span></div>
+      <div id="app-list"></div>
     </section>
 
     <!-- More / Settings -->
     <section id="view-settings" class="view hidden">
+      <div class="section-head"><h2>Server</h2></div>
+      <div id="server-identity" class="card ident-card"><div class="muted">Loading server details…</div></div>
+      <div class="card form-card">
+        <label>Display name in Helmsman
+          <input type="text" id="server-name" placeholder="My homeserver"></label>
+        <p class="muted" style="margin:-4px 0 8px">A friendly label shown in the app. It doesn’t rename the real server.</p>
+        <button id="server-name-save" class="btn">Save name</button>
+        <p id="server-status" class="muted"></p>
+      </div>
+
+      <div class="section-head">
+        <h2>People &amp; access</h2>
+        <span id="users-count" class="muted"></span>
+      </div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">The accounts your server is built on — who can sign in, who is an administrator, and the background service accounts that keep it running. <span id="users-manage-note"></span></p>
+        <div id="users-list"><div class="muted">Loading accounts…</div></div>
+        <div id="users-add" class="card-actions" style="margin-top:10px"></div>
+      </div>
+
+      <div class="section-head"><h2>Passwords</h2></div>
+      <div class="card form-card">
+        <div class="sec-title">Helmsman admin password</div>
+        <p class="muted" style="margin:2px 0 10px">The password you use to sign in to this app. To change a Linux user’s password, use <b>People &amp; access</b> above.</p>
+        <label>Current password
+          <input type="password" id="pw-current" placeholder="Current password" autocomplete="current-password"></label>
+        <label>New password
+          <input type="password" id="pw-new" placeholder="New password (min. 8 chars)" autocomplete="new-password"></label>
+        <button id="pw-save" class="btn">Change app password</button>
+        <p id="pw-status" class="muted"></p>
+      </div>
+
+      <div class="section-head"><h2>Appearance</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">Pick a look — saved on this device.
+        <b>Auto</b> follows your system’s light/dark setting.</p>
+        <div id="theme-grid" class="theme-grid"></div>
+      </div>
+
+      <div class="section-head"><h2>Security &amp; activity</h2></div>
+      <div class="card form-card">
+        <div class="sec-row">
+          <div>
+            <div class="sec-title">Two-factor authentication</div>
+            <div class="muted" id="twofa-state">…</div>
+          </div>
+          <button id="twofa-btn" class="btn small">…</button>
+        </div>
+        <hr class="sep">
+        <div class="sec-row">
+          <div>
+            <div class="sec-title">Active sessions</div>
+            <div class="muted">Sign out every other device (a password change does this too).</div>
+          </div>
+          <button id="revoke-sessions" class="btn small">Sign out others</button>
+        </div>
+        <hr class="sep">
+        <div class="sec-row">
+          <div>
+            <div class="sec-title">Activity log</div>
+            <div class="muted">Every action — including what the AI did — is recorded here.</div>
+          </div>
+          <button id="audit-open" class="btn small">View log</button>
+        </div>
+        <p id="sec-status" class="muted"></p>
+      </div>
+
       <div class="section-head"><h2>AI providers</h2></div>
       <div class="card form-card">
         <p class="muted" style="margin-bottom:10px">Bring your own keys — they never leave this server.
@@ -181,14 +264,122 @@
         <p id="ai-status" class="muted"></p>
       </div>
 
-      <div class="section-head"><h2>AI usage</h2></div>
-      <div class="card form-card"><div id="usage-summary" class="muted">–</div></div>
+      <div class="section-head">
+        <h2>Local AI</h2>
+        <span class="muted">private · no keys</span>
+      </div>
+      <div class="card form-card" id="localai-card">
+        <p class="muted" style="margin-bottom:10px">Run a model <b>on this server</b> — free, private, and offline.
+        Helmsman uses <b>Ollama</b> and picks models that fit your hardware. Local models then appear in the
+        chat model picker just like cloud ones.</p>
+        <div id="localai-body"><div class="muted">Checking for a local model runtime…</div></div>
+      </div>
 
-      <div class="section-head"><h2>Workspaces</h2></div>
+      <div class="section-head"><h2>AI usage</h2></div>
+      <div class="card form-card" id="usage-card">
+        <div class="usage-kpis">
+          <div class="usage-kpi"><b id="usage-today">–</b><span>today</span></div>
+          <div class="usage-kpi"><b id="usage-month">–</b><span>this month</span></div>
+          <div class="usage-kpi"><b id="usage-range-total">–</b><span id="usage-range-label">last 30 days</span></div>
+        </div>
+        <div class="usage-controls">
+          <div class="seg" id="usage-range-seg">
+            <button data-days="7">7d</button>
+            <button data-days="30" class="active">30d</button>
+            <button data-days="90">90d</button>
+          </div>
+          <div class="seg" id="usage-metric-seg">
+            <button data-umetric="cost" class="active">Cost</button>
+            <button data-umetric="tokens">Tokens</button>
+          </div>
+        </div>
+        <canvas id="usage-canvas" class="graph-canvas"></canvas>
+        <div id="usage-models" class="usage-models"></div>
+      </div>
+
+      <div class="section-head"><h2>Agent instructions &amp; memory</h2></div>
       <div class="card form-card">
-        <p class="muted" style="margin-bottom:8px">Folders the Vibe agent may work in (one per line).</p>
-        <textarea id="workspaces-input" rows="3" spellcheck="false"></textarea>
-        <button id="workspaces-save" class="btn" style="margin-top:8px">Save workspaces</button>
+        <div class="sec-title">✍️ Custom instructions</div>
+        <p class="muted" style="margin:2px 0 8px">Standing orders you write for the agent — how it should behave, rules to always or never follow. Added to the start of every conversation.</p>
+        <textarea id="agent-instructions" rows="4" spellcheck="false" placeholder="e.g. Always explain in simple terms. Never restart containers without asking. Prefer German."></textarea>
+        <button id="agent-instructions-save" class="btn" style="margin-top:8px">Save instructions</button>
+        <hr class="sep">
+        <div class="sec-title">🧠 Memory <span class="muted" style="font-weight:400">· the agent writes this itself</span></div>
+        <p class="muted" style="margin:2px 0 8px">What the agent has learned about your server across chats. It updates this on its own — edit or clear it anytime.</p>
+        <textarea id="agent-memory" rows="6" spellcheck="false" placeholder="(empty — the agent will fill this as it works)"></textarea>
+        <button id="agent-memory-save" class="btn" style="margin-top:8px">Save memory</button>
+        <p id="agent-status" class="muted"></p>
+      </div>
+
+      <div class="section-head"><h2>Agent tools</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">What the agent is allowed to do. Turn a tool off and the agent can’t use it at all.
+        <span style="color:var(--accent2)">Green</span> tools are read-only and run without asking; the rest need your approval (except in Auto mode).</p>
+        <div id="agent-tools" class="tool-toggles"><div class="muted">Loading tools…</div></div>
+      </div>
+
+      <div class="section-head"><h2>Default workspace</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">The folder new agent chats start in — usually where your server’s files and compose stacks live.</p>
+        <div class="ws-current">
+          <span class="tile-icon sm tint-1">📁</span>
+          <div style="flex:1;min-width:0">
+            <div id="default-ws-path" class="card-title">…</div>
+            <div class="card-sub">agent’s starting folder</div>
+          </div>
+          <button id="default-ws-change" class="btn small">Change</button>
+        </div>
+        <details class="adv-fold">
+          <summary>Advanced: allowed folders</summary>
+          <p class="muted" style="margin:8px 0">Safety boundary — the agent and folder picker may only touch these locations (one per line).</p>
+          <textarea id="workspaces-input" rows="3" spellcheck="false"></textarea>
+          <button id="workspaces-save" class="btn" style="margin-top:8px">Save allowed folders</button>
+        </details>
+      </div>
+
+      <div class="section-head">
+        <h2>Background agents</h2>
+        <span class="muted">Sentinel</span>
+      </div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">Little AI watchmen that check your server on a
+        schedule — even when the app is closed — and report to the 🔔 bell. They only ever
+        <b>look</b> (read-only): they never change anything on their own. Add an ntfy topic to
+        also get a push to your phone.</p>
+        <div id="loops-list"></div>
+        <div id="loops-add" class="loops-add"></div>
+        <p id="loops-status" class="muted"></p>
+      </div>
+
+      <div class="section-head">
+        <h2>Integrations</h2>
+        <span class="muted">🔒 secured</span>
+      </div>
+      <div class="card form-card">
+        <div class="integ-shield">
+          <span class="integ-shield-ico">🔒</span>
+          <div>Connect DNS providers and other APIs once, then let the agent manage them for you
+          (e.g. “add an A record for blog.example.com”). Your tokens are stored encrypted-at-rest
+          on this server with locked-down permissions, <b>never shown to the AI</b>, and injected
+          only at the moment a request is sent. Turn any connection off to instantly cut the
+          agent’s access.</div>
+        </div>
+        <div id="integrations-list"></div>
+        <div id="integration-form"></div>
+      </div>
+
+      <div class="section-head"><h2>App catalog</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">Helmsman’s App Store is served from an online
+        catalog so new apps appear without updating Helmsman. Point this at your own JSON to add
+        private apps. Leave blank to use only the built-in catalog.</p>
+        <label>Catalog URL
+          <input type="url" id="catalog-url" placeholder="https://…/catalog.json" autocapitalize="off"></label>
+        <div class="card-actions">
+          <button id="catalog-save" class="btn">Save</button>
+          <button id="catalog-refresh" class="btn small">⟳ Refresh now</button>
+        </div>
+        <p id="catalog-status" class="muted"></p>
       </div>
 
       <div class="section-head"><h2>Scheduled checks</h2></div>
@@ -209,7 +400,7 @@
       <div class="card form-card">
         <button id="logout" class="btn danger">Sign out</button>
       </div>
-      <p class="muted center" style="margin-top:24px">Helmsman · open source server command center</p>
+      <p class="muted center" style="margin-top:24px">Helmsman <span id="app-version"></span> · open source server command center</p>
     </section>
   </main>
 
