@@ -1,4 +1,4 @@
-# ⎈ Helmsman
+# ⎈ PocketADM
 
 **Your server, in your pocket.** An open-source, self-hosted command center for your server —
 installable as a mobile app (PWA), with an AI engineer built in.
