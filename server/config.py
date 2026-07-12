@@ -4,8 +4,14 @@ import os
 import secrets
 from pathlib import Path
 
+VERSION = "0.8.0"
+
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+# Demo mode: read-only public playground — any mutation is rejected, the
+# password is "demo", and Docker data is faked when no socket is mounted.
+DEMO = os.environ.get("HELMSMAN_DEMO", "").lower() in ("1", "true", "yes")
 
 # When running from a checkout (dev mode), fall back to ./data
 if not DATA_DIR.exists() and not os.environ.get("HELMSMAN_DATA"):
@@ -102,6 +108,49 @@ def get_base_url(provider: str) -> str:
 
 # ---- misc user settings with defaults ----
 
+def get_server_name() -> str:
+    return settings.get("server_name", "")
+
+
+def set_server_name(name: str) -> None:
+    settings["server_name"] = name.strip()[:40]
+    save_settings(settings)
+
+
+def get_onboarded() -> bool:
+    return bool(settings.get("onboarded"))
+
+
+def set_onboarded() -> None:
+    settings["onboarded"] = True
+    save_settings(settings)
+
+
+# ---- security: token generation + 2FA secret ----
+
+def get_auth_generation() -> int:
+    return int(settings.get("auth_generation", 0))
+
+
+def bump_auth_generation() -> int:
+    settings["auth_generation"] = get_auth_generation() + 1
+    save_settings(settings)
+    return settings["auth_generation"]
+
+
+def get_totp_secret() -> str:
+    return settings.get("totp_secret", "")
+
+
+def set_totp_secret(secret: str) -> None:
+    if secret:
+        settings["totp_secret"] = secret
+    else:
+        settings.pop("totp_secret", None)
+    save_settings(settings)
+
+
+
 def get_ignored_images() -> list[str]:
     return settings.get("ignored_images", [])
 
@@ -124,6 +173,88 @@ def get_workspaces() -> list[str]:
 
 def set_workspaces(paths: list[str]) -> None:
     settings["workspaces"] = [p for p in paths if p.strip()]
+    save_settings(settings)
+
+
+def get_default_workspace() -> str:
+    """The folder new agent chats start in. Falls back to the first workspace."""
+    dw = settings.get("default_workspace", "")
+    if dw and os.path.isdir(dw):
+        return dw
+    ws = get_workspaces()
+    return ws[0] if ws else ""
+
+
+def set_default_workspace(path: str) -> None:
+    settings["default_workspace"] = path.strip()
+    save_settings(settings)
+
+
+# ---- agent: custom instructions + disabled tools ----
+
+CUSTOM_INSTRUCTIONS_MAX = 4000
+
+
+def get_custom_instructions() -> str:
+    return settings.get("custom_instructions", "")
+
+
+def set_custom_instructions(text: str) -> None:
+    settings["custom_instructions"] = (text or "").strip()[:CUSTOM_INSTRUCTIONS_MAX]
+    save_settings(settings)
+
+
+def get_disabled_tools() -> list[str]:
+    return settings.get("disabled_tools", [])
+
+
+def set_tool_enabled(name: str, enabled: bool) -> None:
+    disabled = set(settings.get("disabled_tools", []))
+    (disabled.discard if enabled else disabled.add)(name)
+    settings["disabled_tools"] = sorted(disabled)
+    save_settings(settings)
+
+
+# ---- app catalog ----
+
+DEFAULT_CATALOG_URL = ("https://raw.githubusercontent.com/maxaufknax/helmsman/"
+                       "main/server/catalog.json")
+
+
+def get_catalog_url() -> str:
+    """Remote catalog source; '' disables remote fetching entirely."""
+    env = os.environ.get("HELMSMAN_CATALOG_URL")
+    if env is not None:
+        return env.strip()
+    return settings.get("catalog_url", DEFAULT_CATALOG_URL).strip()
+
+
+def set_catalog_url(url: str) -> None:
+    url = (url or "").strip()
+    settings["catalog_url"] = url
+    save_settings(settings)
+
+
+# ---- local AI (Ollama) ----
+
+def get_ollama_base() -> str:
+    """Last-known / user-set Ollama endpoint (host or URL). '' = auto-detect."""
+    return os.environ.get("OLLAMA_HOST") or settings.get("ollama_base", "")
+
+
+def set_ollama_base(base: str) -> None:
+    settings["ollama_base"] = (base or "").strip()
+    save_settings(settings)
+
+
+def get_ollama_network() -> str:
+    """Docker network Helmsman was joined to so it can reach an Ollama container
+    (reconnected on startup so it survives redeploys)."""
+    return settings.get("ollama_network", "")
+
+
+def set_ollama_network(network: str) -> None:
+    settings["ollama_network"] = (network or "").strip()
     save_settings(settings)
 
 

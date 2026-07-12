@@ -33,6 +33,12 @@ class Job:
         self._event.set()
         self._event = asyncio.Event()
 
+    def step(self, label: str) -> "_Step":
+        """Context manager: logs the label, then keeps emitting a live
+        'still working (Xs)' heartbeat every few seconds until the step ends,
+        so slow operations (big pulls, nextcloud recreates …) never look stuck."""
+        return _Step(self, label)
+
     def finish(self, ok: bool, line: str = "") -> None:
         if line:
             self.log(line)
@@ -60,6 +66,33 @@ class Job:
                 await asyncio.wait_for(event.wait(), timeout=15)
             except asyncio.TimeoutError:
                 yield ""  # keep-alive chunk
+
+
+class _Step:
+    def __init__(self, job: Job, label: str):
+        self.job = job
+        self.label = label
+        self._hb: asyncio.Task | None = None
+
+    async def __aenter__(self) -> "_Step":
+        self.job.log(self.label)
+        self._start = time.monotonic()
+        self._hb = asyncio.ensure_future(self._heartbeat())
+        return self
+
+    async def _heartbeat(self) -> None:
+        # client folds consecutive ⏳ lines into one live-updating line
+        await asyncio.sleep(6)
+        while True:
+            elapsed = int(time.monotonic() - self._start)
+            self.job.log(f"⏳ still working … ({elapsed}s)")
+            await asyncio.sleep(5)
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._hb:
+            self._hb.cancel()
+        if exc_type is None and time.monotonic() - self._start > 6:
+            self.job.log(f"  ✓ step finished after {int(time.monotonic() - self._start)}s")
 
 
 def start(title: str, kind: str, work: Callable[[Job], Awaitable[None]]) -> Job:

@@ -5,13 +5,11 @@
       "name": "Portainer CE",
       "icon": "🐳",
       "category": "Management",
+      "tagline": "Docker with a graphical interface",
       "description": "Web UI for managing Docker: containers, images, volumes, networks.",
+      "why": "If you ever want to look 'under the hood' of your server, Portainer shows every container in a friendly web interface — start, stop and inspect things without typing commands. Helmsman already covers the basics, so this is for power users.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "9000"
-        }
+        { "key": "PORT", "label": "Web port", "default": "9000" }
       ],
       "compose": "services:\n  portainer:\n    image: portainer/portainer-ce:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:9000\"\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n      - portainer_data:/data\nvolumes:\n  portainer_data:\n",
       "website": "https://www.portainer.io",
@@ -22,13 +20,11 @@
       "name": "Uptime Kuma",
       "icon": "📈",
       "category": "Monitoring",
+      "tagline": "Know immediately when something is down",
       "description": "Beautiful self-hosted uptime monitoring with notifications.",
+      "why": "Kuma pings your websites and services around the clock and sends you a message (Telegram, mail, …) the moment something stops responding — so you find out before your friends or family do.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "3001"
-        }
+        { "key": "PORT", "label": "Web port", "default": "3001" }
       ],
       "compose": "services:\n  uptime-kuma:\n    image: louislam/uptime-kuma:1\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3001\"\n    volumes:\n      - kuma_data:/app/data\nvolumes:\n  kuma_data:\n",
       "website": "https://uptime.kuma.pet"
@@ -38,13 +34,11 @@
       "name": "Grafana",
       "icon": "📊",
       "category": "Monitoring",
+      "tagline": "Pretty graphs for everything",
       "description": "Dashboards and visualization for metrics and logs.",
+      "why": "Grafana turns numbers (CPU, temperatures, visitors, power usage …) into beautiful live dashboards. It needs a data source like Prometheus to be really useful — an advanced but very popular tool.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "3000"
-        }
+        { "key": "PORT", "label": "Web port", "default": "3000" }
       ],
       "compose": "services:\n  grafana:\n    image: grafana/grafana:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3000\"\n    volumes:\n      - grafana_data:/var/lib/grafana\nvolumes:\n  grafana_data:\n",
       "website": "https://grafana.com",
@@ -55,21 +49,16 @@
       "name": "Vaultwarden",
       "icon": "🔐",
       "category": "Security",
+      "tagline": "Your own password manager",
       "description": "Lightweight Bitwarden-compatible password manager server.",
+      "why": "Store all your passwords on YOUR server instead of someone else's cloud. Works with the official Bitwarden apps on phone and browser — install those, point them at your server, done.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "8222"
-        }
+        { "key": "PORT", "label": "Web port", "default": "8222" }
       ],
       "compose": "services:\n  vaultwarden:\n    image: vaultwarden/server:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:80\"\n    volumes:\n      - vw_data:/data\nvolumes:\n  vw_data:\n",
       "website": "https://github.com/dani-garcia/vaultwarden",
       "clients": [
-        {
-          "name": "Bitwarden App (iOS/Android)",
-          "url": "https://bitwarden.com/download/"
-        }
+        { "name": "Bitwarden App (iOS/Android)", "url": "https://bitwarden.com/download/" }
       ]
     },
     {
@@ -77,13 +66,12 @@
       "name": "AdGuard Home",
       "icon": "🛡️",
       "category": "Network",
+      "tagline": "Block ads on every device at home",
       "description": "Network-wide ad & tracker blocking DNS server.",
+      "detect": ["adguard/adguardhome", "adguardhome"],
+      "why": "Set your router's DNS to this server and ads + trackers disappear on every phone, TV and laptop in your home — no app needed on the devices themselves.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "8083"
-        }
+        { "key": "PORT", "label": "Web port", "default": "8083" }
       ],
       "compose": "services:\n  adguard:\n    image: adguard/adguardhome:latest\n    restart: unless-stopped\n    ports:\n      - \"53:53/udp\"\n      - \"53:53/tcp\"\n      - \"{{PORT}}:3000\"\n    volumes:\n      - adguard_work:/opt/adguardhome/work\n      - adguard_conf:/opt/adguardhome/conf\nvolumes:\n  adguard_work:\n  adguard_conf:\n",
       "website": "https://adguard.com/adguard-home.html"
@@ -93,26 +81,17 @@
       "name": "Jellyfin",
       "icon": "🎬",
       "category": "Media",
+      "tagline": "Your personal Netflix",
       "description": "Free media server for movies, shows and music.",
+      "why": "Put your movies and series on the server and stream them to any TV, phone or laptop with the free Jellyfin apps — like Netflix, but it's your library and no subscription.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "8096"
-        },
-        {
-          "key": "MEDIA",
-          "label": "Media folder on server",
-          "default": "/srv/media"
-        }
+        { "key": "PORT", "label": "Web port", "default": "8096" },
+        { "key": "MEDIA", "label": "Media folder on server", "default": "/srv/media" }
       ],
       "compose": "services:\n  jellyfin:\n    image: jellyfin/jellyfin:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8096\"\n    volumes:\n      - jf_config:/config\n      - jf_cache:/cache\n      - {{MEDIA}}:/media:ro\nvolumes:\n  jf_config:\n  jf_cache:\n",
       "website": "https://jellyfin.org",
       "clients": [
-        {
-          "name": "Jellyfin App (iOS/Android/TV)",
-          "url": "https://jellyfin.org/downloads/"
-        }
+        { "name": "Jellyfin App (iOS/Android/TV)", "url": "https://jellyfin.org/downloads/" }
       ]
     },
     {
@@ -120,30 +99,18 @@
       "name": "Navidrome",
       "icon": "🎵",
       "category": "Media",
+      "tagline": "Your personal Spotify",
       "description": "Modern music server, compatible with Subsonic apps (Amperfy, Substreamer …).",
+      "why": "Stream your own MP3/FLAC collection to your phone like Spotify — with playlists, covers and offline apps. Your music, no monthly fee.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "4533"
-        },
-        {
-          "key": "MUSIC",
-          "label": "Music folder on server",
-          "default": "/srv/music"
-        }
+        { "key": "PORT", "label": "Web port", "default": "4533" },
+        { "key": "MUSIC", "label": "Music folder on server", "default": "/srv/music" }
       ],
       "compose": "services:\n  navidrome:\n    image: deluan/navidrome:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:4533\"\n    volumes:\n      - nd_data:/data\n      - {{MUSIC}}:/music:ro\nvolumes:\n  nd_data:\n",
       "website": "https://www.navidrome.org",
       "clients": [
-        {
-          "name": "Amperfy (iOS)",
-          "url": "https://apps.apple.com/app/amperfy-music/id1530145038"
-        },
-        {
-          "name": "Substreamer & more",
-          "url": "https://www.navidrome.org/docs/overview/#apps"
-        }
+        { "name": "Amperfy (iOS)", "url": "https://apps.apple.com/app/amperfy-music/id1530145038" },
+        { "name": "Substreamer & more", "url": "https://www.navidrome.org/docs/overview/#apps" }
       ]
     },
     {
@@ -151,21 +118,16 @@
       "name": "Nextcloud",
       "icon": "☁️",
       "category": "Productivity",
+      "tagline": "Your own Google Drive + Calendar",
       "description": "Self-hosted files, calendar, contacts and more.",
+      "why": "Photos, files, calendar and contacts synced across all your devices — like Google Drive/iCloud, but the data stays on your server. The official apps handle automatic photo backup from your phone.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "8082"
-        }
+        { "key": "PORT", "label": "Web port", "default": "8082" }
       ],
       "compose": "services:\n  db:\n    image: mariadb:11\n    restart: unless-stopped\n    environment:\n      MYSQL_ROOT_PASSWORD: helmsman-nc-root\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: helmsman-nc\n    volumes:\n      - nc_db:/var/lib/mysql\n  app:\n    image: nextcloud:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:80\"\n    environment:\n      MYSQL_HOST: db\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: helmsman-nc\n    volumes:\n      - nc_data:/var/www/html\n    depends_on:\n      - db\nvolumes:\n  nc_db:\n  nc_data:\n",
       "website": "https://nextcloud.com",
       "clients": [
-        {
-          "name": "Nextcloud App",
-          "url": "https://nextcloud.com/install/#install-clients"
-        }
+        { "name": "Nextcloud App", "url": "https://nextcloud.com/install/#install-clients" }
       ]
     },
     {
@@ -173,18 +135,12 @@
       "name": "Gitea",
       "icon": "🍵",
       "category": "Development",
+      "tagline": "Your own GitHub",
       "description": "Lightweight self-hosted Git service (like GitHub).",
+      "why": "Host your code repositories privately on your own server, with a familiar GitHub-style web interface. Mostly interesting if you write code.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "3030"
-        },
-        {
-          "key": "SSH_PORT",
-          "label": "SSH port",
-          "default": "2222"
-        }
+        { "key": "PORT", "label": "Web port", "default": "3030" },
+        { "key": "SSH_PORT", "label": "SSH port", "default": "2222" }
       ],
       "compose": "services:\n  gitea:\n    image: gitea/gitea:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3000\"\n      - \"{{SSH_PORT}}:22\"\n    volumes:\n      - gitea_data:/data\nvolumes:\n  gitea_data:\n",
       "website": "https://about.gitea.com"
@@ -194,18 +150,13 @@
       "name": "code-server",
       "icon": "💻",
       "category": "Development",
+      "tagline": "VS Code in your browser",
       "description": "VS Code in the browser, running on your server.",
+      "detect": ["code-server"],
+      "why": "A full programming editor that runs on the server and opens in any browser — edit projects from your iPad or a borrowed laptop. For developers.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "8443"
-        },
-        {
-          "key": "PASSWORD",
-          "label": "Login password",
-          "default": "changeme"
-        }
+        { "key": "PORT", "label": "Web port", "default": "8443" },
+        { "key": "PASSWORD", "label": "Login password", "default": "changeme" }
       ],
       "compose": "services:\n  code-server:\n    image: lscr.io/linuxserver/code-server:latest\n    restart: unless-stopped\n    environment:\n      - PASSWORD={{PASSWORD}}\n      - TZ=Europe/Berlin\n    ports:\n      - \"{{PORT}}:8443\"\n    volumes:\n      - cs_config:/config\nvolumes:\n  cs_config:\n",
       "website": "https://coder.com/docs/code-server"
@@ -215,13 +166,11 @@
       "name": "n8n",
       "icon": "🔗",
       "category": "Automation",
+      "tagline": "Connect your apps, automate chores",
       "description": "Workflow automation (like Zapier, self-hosted).",
+      "why": "Build little automations by drawing flowcharts: 'when I get a mail with an invoice, save it to Nextcloud and notify me'. No coding needed for most things.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "5678"
-        }
+        { "key": "PORT", "label": "Web port", "default": "5678" }
       ],
       "compose": "services:\n  n8n:\n    image: docker.n8n.io/n8nio/n8n:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:5678\"\n    volumes:\n      - n8n_data:/home/node/.n8n\nvolumes:\n  n8n_data:\n",
       "website": "https://n8n.io",
@@ -232,16 +181,119 @@
       "name": "Dozzle",
       "icon": "📜",
       "category": "Monitoring",
+      "tagline": "Live logs of everything",
       "description": "Realtime log viewer for all your Docker containers.",
+      "why": "When something misbehaves, Dozzle shows you the live 'diary' of every app on your server in a clean web view. Helmsman shows logs too — Dozzle is the deluxe version.",
       "fields": [
-        {
-          "key": "PORT",
-          "label": "Web port",
-          "default": "8888"
-        }
+        { "key": "PORT", "label": "Web port", "default": "8888" }
       ],
       "compose": "services:\n  dozzle:\n    image: amir20/dozzle:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8080\"\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n",
       "website": "https://dozzle.dev"
+    },
+    {
+      "id": "home-assistant",
+      "name": "Home Assistant",
+      "icon": "🏠",
+      "category": "Smart Home",
+      "tagline": "Control your whole smart home",
+      "description": "Open-source smart home hub: lights, sensors, automations, dashboards.",
+      "detect": ["home-assistant"],
+      "why": "Connects lamps, plugs, thermostats and sensors from almost every brand into one app — with automations like 'lights off when nobody is home'. All local, no cloud accounts.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "8123" }
+      ],
+      "compose": "services:\n  homeassistant:\n    image: ghcr.io/home-assistant/home-assistant:stable\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8123\"\n    volumes:\n      - ha_config:/config\n      - /etc/localtime:/etc/localtime:ro\nvolumes:\n  ha_config:\n",
+      "website": "https://www.home-assistant.io",
+      "clients": [
+        { "name": "Home Assistant App", "url": "https://companion.home-assistant.io" }
+      ]
+    },
+    {
+      "id": "paperless-ngx",
+      "name": "Paperless-ngx",
+      "icon": "📄",
+      "category": "Productivity",
+      "tagline": "Never lose a document again",
+      "description": "Scan, index and archive documents with OCR and full-text search.",
+      "why": "Photograph or scan your letters, invoices and contracts — Paperless reads the text, sorts them automatically and makes everything searchable. Your paper chaos becomes a searchable archive.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "8010" }
+      ],
+      "compose": "services:\n  broker:\n    image: redis:7\n    restart: unless-stopped\n  paperless:\n    image: ghcr.io/paperless-ngx/paperless-ngx:latest\n    restart: unless-stopped\n    depends_on:\n      - broker\n    ports:\n      - \"{{PORT}}:8000\"\n    environment:\n      PAPERLESS_REDIS: redis://broker:6379\n    volumes:\n      - pl_data:/usr/src/paperless/data\n      - pl_media:/usr/src/paperless/media\n      - pl_export:/usr/src/paperless/export\n      - pl_consume:/usr/src/paperless/consume\nvolumes:\n  pl_data:\n  pl_media:\n  pl_export:\n  pl_consume:\n",
+      "website": "https://docs.paperless-ngx.com",
+      "clients": [
+        { "name": "Paperless Mobile", "url": "https://github.com/astubenbord/paperless-mobile" }
+      ]
+    },
+    {
+      "id": "syncthing",
+      "name": "Syncthing",
+      "icon": "🔄",
+      "category": "Files & Sync",
+      "tagline": "Folders that sync themselves",
+      "description": "Continuous peer-to-peer file synchronization between devices.",
+      "why": "Pick folders on your laptop, phone and server — Syncthing keeps them identical automatically, directly between your devices. Great for backups without any cloud.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "8384" }
+      ],
+      "compose": "services:\n  syncthing:\n    image: lscr.io/linuxserver/syncthing:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8384\"\n      - \"22000:22000/tcp\"\n      - \"22000:22000/udp\"\n    volumes:\n      - st_config:/config\n      - st_data:/data\nvolumes:\n  st_config:\n  st_data:\n",
+      "website": "https://syncthing.net"
+    },
+    {
+      "id": "freshrss",
+      "name": "FreshRSS",
+      "icon": "📰",
+      "category": "Productivity",
+      "tagline": "All your news in one quiet place",
+      "description": "Self-hosted RSS feed reader and aggregator.",
+      "why": "Follow news sites, blogs and YouTube channels in one clean timeline — no algorithm, no ads, no doomscrolling. Works with many nice phone apps.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "8084" }
+      ],
+      "compose": "services:\n  freshrss:\n    image: freshrss/freshrss:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:80\"\n    volumes:\n      - fr_data:/var/www/FreshRSS/data\n      - fr_ext:/var/www/FreshRSS/extensions\nvolumes:\n  fr_data:\n  fr_ext:\n",
+      "website": "https://freshrss.org"
+    },
+    {
+      "id": "stirling-pdf",
+      "name": "Stirling PDF",
+      "icon": "🪄",
+      "category": "Utilities",
+      "tagline": "The Swiss army knife for PDFs",
+      "description": "Merge, split, compress, sign and convert PDFs in the browser.",
+      "why": "All those 'edit this PDF' websites — but private, on your own server: merge, split, compress, rotate, sign, convert to Word and 50 other tools. Nothing gets uploaded anywhere.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "8085" }
+      ],
+      "compose": "services:\n  stirling:\n    image: stirlingtools/stirling-pdf:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:8080\"\n    volumes:\n      - sp_data:/usr/share/tessdata\n      - sp_configs:/configs\nvolumes:\n  sp_data:\n  sp_configs:\n",
+      "website": "https://www.stirlingpdf.com"
+    },
+    {
+      "id": "homepage",
+      "name": "Homepage",
+      "icon": "🗂️",
+      "category": "Utilities",
+      "tagline": "A start page for your server",
+      "description": "Customizable dashboard with links and live widgets for all your services.",
+      "why": "One pretty browser start page with buttons to every app on your server, plus live info (downloads, disk space, weather). Set it as your browser homepage and everything is one click away.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "3010" }
+      ],
+      "compose": "services:\n  homepage:\n    image: ghcr.io/gethomepage/homepage:latest\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:3000\"\n    environment:\n      HOMEPAGE_ALLOWED_HOSTS: \"*\"\n    volumes:\n      - hp_config:/app/config\n      - /var/run/docker.sock:/var/run/docker.sock:ro\nvolumes:\n  hp_config:\n",
+      "website": "https://gethomepage.dev"
+    },
+    {
+      "id": "memos",
+      "name": "Memos",
+      "icon": "📝",
+      "category": "Productivity",
+      "tagline": "Quick notes, like a private Twitter",
+      "description": "Lightweight note-taking with markdown, tags and an API.",
+      "why": "Jot down thoughts, links and snippets in seconds — everything is saved on your server, searchable and taggable. Much lighter than a full wiki.",
+      "fields": [
+        { "key": "PORT", "label": "Web port", "default": "5230" }
+      ],
+      "compose": "services:\n  memos:\n    image: neosmemo/memos:stable\n    restart: unless-stopped\n    ports:\n      - \"{{PORT}}:5230\"\n    volumes:\n      - memos_data:/var/opt/memos\nvolumes:\n  memos_data:\n",
+      "website": "https://usememos.com"
     }
   ]
 }

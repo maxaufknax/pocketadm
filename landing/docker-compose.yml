@@ -1,0 +1,15 @@
+# Deploys the Helmsman landing page as a tiny static site behind the existing
+# reverse proxy. NPM proxies to it by container name on the shared network.
+services:
+  helmsman-landing:
+    image: nginx:alpine
+    container_name: helmsman-landing
+    restart: unless-stopped
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+    networks:
+      - homeserver_net
+
+networks:
+  homeserver_net:
+    external: true

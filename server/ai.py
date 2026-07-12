@@ -5,15 +5,18 @@ such as OpenRouter). Streams over WebSocket with a JSON event protocol:
 
   server -> client:
     {"type":"text","delta":str}                  assistant text chunk
+    {"type":"thinking","delta":str}              reasoning chunk (if enabled)
     {"type":"tool_request","id","name","args"}   needs approval
     {"type":"tool_start","id","name","args"}     executing now
     {"type":"tool_result","id","output"}
     {"type":"usage","turn":{...},"session":{...}}
+    {"type":"stopped"}                            turn cancelled by user
     {"type":"done"} | {"type":"error","message"}
   client -> server:
     {"type":"user","text":str}
-    {"type":"config","mode","provider","model","workdir"}   (any subset)
+    {"type":"config","mode","provider","model","workdir","thinking"}  (any subset)
     {"type":"approve","id":str,"approved":bool}
+    {"type":"stop"}
     {"type":"reset"}
 
 Modes:
@@ -21,21 +24,29 @@ Modes:
   plan  — read-only investigation (safe tools auto), proposes a plan
   agent — full tools, destructive/write actions need approval   (default)
   auto  — full tools, everything auto-approved
+
+The agent has a persistent memory file (like Claude Code's CLAUDE.md):
+its content is injected into every system prompt and the agent can update
+it with the update_memory tool — so it learns about this server over time.
 """
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 import httpx
 
-from . import config
+from . import audit, chats, config, integrations, localai
 
 MAX_TOOL_OUTPUT = 12000
 MAX_TURNS = 25
 DEFAULT_WORKDIR = os.environ.get(
     "HELMSMAN_WORKDIR", "/host" if os.path.isdir("/host") else os.path.expanduser("~"))
+
+MEMORY_FILE = config.DATA_DIR / "agent-memory.md"
+MEMORY_MAX_CHARS = 6000
 
 SYSTEM_PROMPT = """You are Vibe Code, the built-in AI engineer of Helmsman, a self-hosted \
 server management app. You work directly on the user's server through tools.
@@ -49,7 +60,10 @@ Guidelines:
 - For destructive actions (rm, docker rm, overwriting configs), state what you are about to do first.
 - When you finish a task, summarize in 1-3 sentences what you changed.
 - Answer in the language the user writes in.
-{mode_note}"""
+- When you learn something durable about this server (layout, conventions, the user's \
+preferences, recurring problems and their fixes), save it with update_memory so future \
+sessions know it. Keep memory short and factual; update or remove stale entries.
+{memory_section}{mode_note}"""
 
 MODE_NOTES = {
     "chat": "\nMode: CHAT — you have no tools in this mode. Answer from knowledge; "
@@ -94,23 +108,124 @@ TOOLS = [
         },
     },
     {
+        "name": "edit_file",
+        "description": "Replace an exact text snippet in a file. old_text must match exactly "
+                       "once (or set replace_all). Safer than rewriting whole files.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "old_text": {"type": "string"},
+                "new_text": {"type": "string"},
+                "replace_all": {"type": "boolean"},
+            },
+            "required": ["path", "old_text", "new_text"],
+        },
+    },
+    {
         "name": "list_dir",
-        "description": "List a directory on the server.",
+        "description": "List a directory on the server (name, type, size).",
         "parameters": {
             "type": "object",
             "properties": {"path": {"type": "string"}},
             "required": ["path"],
         },
     },
+    {
+        "name": "search_files",
+        "description": "Search file contents recursively (grep -rn). Returns matching "
+                       "lines with file:line prefixes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "regex / text to search"},
+                "path": {"type": "string", "description": "directory, default workdir"},
+                "glob": {"type": "string", "description": "filename filter like *.yml"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "fetch_url",
+        "description": "HTTP GET a URL (docs, changelogs, APIs). Returns text, truncated.",
+        "parameters": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "integration_request",
+        "description": "Call an API the user connected under Settings → Integrations "
+                       "(DNS providers like deSEC/IONOS/GoDaddy/Cloudflare, or any generic "
+                       "API). Auth headers are injected server-side; give the path relative "
+                       "to the integration's base URL.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "integration": {"type": "string", "description": "name of the configured integration"},
+                "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+                "path": {"type": "string", "description": "e.g. /domains/ or /zones"},
+                "body": {"type": "string", "description": "JSON body for write requests"},
+            },
+            "required": ["integration", "path"],
+        },
+    },
+    {
+        "name": "update_memory",
+        "description": "Update your persistent memory about this server (shown to you in "
+                       "every future session). mode 'append' adds a line/section, "
+                       "'replace' rewrites the whole memory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+                "mode": {"type": "string", "enum": ["append", "replace"]},
+            },
+            "required": ["content"],
+        },
+    },
 ]
 
-SAFE_TOOLS = {"read_file", "list_dir"}
+SAFE_TOOLS = {"read_file", "list_dir", "search_files", "fetch_url", "update_memory"}
 MODE_TOOLS = {
     "chat": [],
-    "plan": ["run_command", "read_file", "list_dir"],
+    "plan": ["run_command", "read_file", "list_dir", "search_files", "fetch_url"],
     "agent": [t["name"] for t in TOOLS],
     "auto": [t["name"] for t in TOOLS],
 }
+
+# providers selectable in a chat: the key-based cloud ones plus local Ollama
+CHAT_PROVIDERS = config.PROVIDERS + ("ollama",)
+
+
+def tool_docs() -> list[dict]:
+    """Tool overview for the settings UI, incl. on/off state."""
+    disabled = set(config.get_disabled_tools())
+    return [{"name": t["name"], "description": t["description"],
+             "safe": t["name"] in SAFE_TOOLS,
+             "mutates": t["name"] not in SAFE_TOOLS,
+             "enabled": t["name"] not in disabled} for t in TOOLS]
+
+
+def allowed_tools(mode: str) -> list[str]:
+    """Tools available in a mode after the user's on/off choices are applied."""
+    disabled = set(config.get_disabled_tools())
+    return [t for t in MODE_TOOLS.get(mode, []) if t not in disabled]
+
+
+# ------------------------------------------------------------- memory
+
+def read_memory() -> str:
+    try:
+        return MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
+    except OSError:
+        return ""
+
+
+def save_memory(content: str) -> None:
+    MEMORY_FILE.write_text(content[:MEMORY_MAX_CHARS * 4])
+
 
 # Approximate USD per 1M tokens (input, output) — for display only.
 STATIC_PRICING = {
@@ -140,11 +255,23 @@ def estimate_cost(provider: str, model: str, input_tok: int, output_tok: int) ->
 
 def system_prompt(workdir: str, mode: str) -> str:
     in_container = os.path.exists("/.dockerenv")
+    instructions = config.get_custom_instructions().strip()
+    instr_section = ""
+    if instructions:
+        instr_section = ("\nStanding instructions from the server owner — follow them "
+                         "unless they conflict with safety:\n<instructions>\n"
+                         + instructions[:config.CUSTOM_INSTRUCTIONS_MAX] + "\n</instructions>\n")
+    memory = read_memory().strip()
+    memory_section = ""
+    if memory:
+        memory_section = ("\nYour memory about this server (from previous sessions):\n"
+                          "<memory>\n" + memory[:MEMORY_MAX_CHARS] + "\n</memory>\n")
     return SYSTEM_PROMPT.format(
         where="inside the Helmsman container" if in_container else "directly on the host",
         workdir=workdir,
         host_note=(". The host filesystem is mounted read-only at /host"
                    if os.path.isdir("/host") else ""),
+        memory_section=instr_section + memory_section + integrations.prompt_section(),
         mode_note=MODE_NOTES.get(mode, ""),
     )
 
@@ -169,25 +296,104 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
                 text += f"\n[exit code: {proc.returncode}]"
             return _truncate(text) or "[no output]"
         if name == "read_file":
-            p = Path(args["path"])
-            if not p.is_absolute():
-                p = Path(workdir) / p
-            return _truncate(p.read_text(errors="replace"))
+            return _truncate(_resolve(args["path"], workdir).read_text(errors="replace"))
         if name == "write_file":
-            p = Path(args["path"])
-            if not p.is_absolute():
-                p = Path(workdir) / p
+            p = _resolve(args["path"], workdir)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(args["content"])
             return f"Wrote {len(args['content'])} bytes to {p}"
+        if name == "edit_file":
+            p = _resolve(args["path"], workdir)
+            text = p.read_text(errors="replace")
+            old, new = args["old_text"], args["new_text"]
+            n = text.count(old)
+            if n == 0:
+                return "Error: old_text not found in file (must match exactly, incl. whitespace)"
+            if n > 1 and not args.get("replace_all"):
+                return f"Error: old_text occurs {n} times — provide more context or set replace_all"
+            p.write_text(text.replace(old, new) if args.get("replace_all")
+                         else text.replace(old, new, 1))
+            return f"Replaced {n if args.get('replace_all') else 1} occurrence(s) in {p}"
         if name == "list_dir":
             p = Path(args.get("path") or workdir)
-            entries = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name))
-            return _truncate("\n".join(
-                (e.name + "/" if e.is_dir() else e.name) for e in entries) or "[empty]")
+            if not p.is_absolute():
+                p = Path(workdir) / p
+            lines = []
+            for e in sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name)):
+                try:
+                    size = "" if e.is_dir() else f"  {e.stat().st_size}"
+                except OSError:
+                    size = ""
+                lines.append((e.name + "/" if e.is_dir() else e.name) + size)
+            return _truncate("\n".join(lines) or "[empty]")
+        if name == "search_files":
+            path = args.get("path") or workdir
+            cmd = ["grep", "-rn", "-I", "--max-count=200", "-e", args["pattern"]]
+            if args.get("glob"):
+                cmd.append("--include=" + args["glob"])
+            cmd += ["--exclude-dir=.git", "--exclude-dir=node_modules",
+                    "--exclude-dir=.venv", path]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), 30)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return "[search timed out]"
+            return _truncate(out.decode("utf-8", "replace")) or "[no matches]"
+        if name == "fetch_url":
+            url = args["url"]
+            if not url.startswith(("http://", "https://")):
+                return "Error: only http(s) URLs"
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                r = await client.get(url, headers={"User-Agent": "Helmsman-Agent/1.0"})
+            text = r.text
+            if "text/html" in r.headers.get("content-type", ""):
+                text = re.sub(r"<(script|style)[\s\S]*?</\1>", " ", text)
+                text = re.sub(r"<[^>]+>", " ", text)
+                text = re.sub(r"\s{3,}", "\n", text)
+            return _truncate(f"[{r.status_code}] " + text.strip())
+        if name == "integration_request":
+            return await integrations.request(
+                args["integration"], args.get("method", "GET"),
+                args.get("path", ""), args.get("body", ""))
+        if name == "update_memory":
+            mode = args.get("mode", "append")
+            if mode == "replace":
+                save_memory(args["content"])
+            else:
+                current = read_memory()
+                save_memory((current.rstrip() + "\n" if current.strip() else "") +
+                            args["content"].strip() + "\n")
+            return f"Memory updated ({mode}), now {len(read_memory())} chars."
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {type(e).__name__}: {e}"
+
+
+def _tool_audit_detail(name: str, args: dict) -> str:
+    if name == "run_command":
+        return (args.get("command") or "")[:200]
+    if name == "integration_request":
+        return f"{args.get('method', 'GET')} {args.get('integration', '')}{args.get('path', '')}"
+    if name in ("write_file", "edit_file"):
+        return args.get("path", "")
+    if name == "update_memory":
+        return args.get("mode", "append") + " memory"
+    return (args.get("path") or "")[:200]
+
+
+def _sensitive_call(tc: dict) -> bool:
+    """Credential-touching writes always need a human tap, even in Auto mode."""
+    if tc.get("name") != "integration_request":
+        return False
+    method = (tc.get("args", {}).get("method") or "GET").upper()
+    return method not in ("GET", "HEAD", "OPTIONS")
+
+
+def _resolve(path: str, workdir: str) -> Path:
+    p = Path(path)
+    return p if p.is_absolute() else Path(workdir) / p
 
 
 def _truncate(text: str) -> str:
@@ -198,11 +404,19 @@ def _truncate(text: str) -> str:
 
 # ------------------------------------------------------------- providers
 # Internal message format:
-#   {"role":"user"|"assistant","content":str,"tool_calls":[{"id","name","args"}]?}
+#   {"role":"user"|"assistant","content":str,"tool_calls":[{"id","name","args"}]?,
+#    "thinking_blocks":[{"thinking","signature"}]?}
 #   {"role":"tool","tool_call_id":str,"content":str}
-# Adapters yield: ("text", delta) | ("tool_call", {...}) | ("usage", {...}) | ("stop", reason)
+# Adapters yield: ("text", delta) | ("thinking", delta) | ("thinking_block", {...})
+#                 | ("tool_call", {...}) | ("usage", {...}) | ("stop", reason)
 
 def _cfg_for(provider: str, model: str) -> dict:
+    if provider == "ollama":
+        base = localai.openai_base_sync()
+        if not base:
+            raise RuntimeError("No local model is running. Set one up under More → Local AI.")
+        return {"provider": "ollama", "api_key": "ollama",
+                "model": model or "", "base_url": base}
     key = config.get_key(provider)
     if not key:
         raise RuntimeError(f"No API key configured for {provider}. Add one under Settings → AI.")
@@ -215,7 +429,8 @@ def _filter_tools(tool_names: list[str]) -> list[dict]:
     return [t for t in TOOLS if t["name"] in tool_names]
 
 
-async def stream_anthropic(cfg: dict, messages: list, sysprompt: str, tool_names: list[str]):
+async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
+                           tool_names: list[str], thinking: bool = False):
     tools = [{"name": t["name"], "description": t["description"],
               "input_schema": t["parameters"]} for t in _filter_tools(tool_names)]
     api_messages = []
@@ -224,6 +439,9 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str, tool_names
             api_messages.append({"role": "user", "content": m["content"]})
         elif m["role"] == "assistant":
             blocks = []
+            for tb in m.get("thinking_blocks", []):
+                blocks.append({"type": "thinking", "thinking": tb["thinking"],
+                               "signature": tb["signature"]})
             if m.get("content"):
                 blocks.append({"type": "text", "text": m["content"]})
             for tc in m.get("tool_calls", []):
@@ -236,9 +454,12 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str, tool_names
                 {"type": "tool_result", "tool_use_id": m["tool_call_id"],
                  "content": m["content"]}]})
     body = {
-        "model": cfg["model"], "max_tokens": 4096, "system": sysprompt,
+        "model": cfg["model"], "max_tokens": 8192 if thinking else 4096,
+        "system": sysprompt,
         "messages": _merge_consecutive(api_messages), "stream": True,
     }
+    if thinking:
+        body["thinking"] = {"type": "enabled", "budget_tokens": 4000}
     if tools:
         body["tools"] = tools
     headers = {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"}
@@ -249,6 +470,7 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str, tool_names
             if resp.status_code >= 400:
                 raise RuntimeError(f"API error {resp.status_code}: {(await resp.aread()).decode()[:500]}")
             current_tool, tool_json, stop = None, "", "end"
+            think_text, think_sig, in_thinking = "", "", False
             usage = {"input": 0, "output": 0}
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -257,20 +479,33 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str, tool_names
                 t = ev.get("type")
                 if t == "message_start":
                     usage["input"] = ev["message"].get("usage", {}).get("input_tokens", 0)
-                elif t == "content_block_start" and ev["content_block"]["type"] == "tool_use":
-                    current_tool = {"id": ev["content_block"]["id"],
-                                    "name": ev["content_block"]["name"]}
-                    tool_json = ""
+                elif t == "content_block_start":
+                    btype = ev["content_block"]["type"]
+                    if btype == "tool_use":
+                        current_tool = {"id": ev["content_block"]["id"],
+                                        "name": ev["content_block"]["name"]}
+                        tool_json = ""
+                    elif btype == "thinking":
+                        in_thinking, think_text, think_sig = True, "", ""
                 elif t == "content_block_delta":
                     d = ev["delta"]
                     if d.get("type") == "text_delta":
                         yield ("text", d["text"])
                     elif d.get("type") == "input_json_delta":
                         tool_json += d["partial_json"]
-                elif t == "content_block_stop" and current_tool:
-                    current_tool["args"] = json.loads(tool_json or "{}")
-                    yield ("tool_call", current_tool)
-                    current_tool = None
+                    elif d.get("type") == "thinking_delta":
+                        think_text += d.get("thinking", "")
+                        yield ("thinking", d.get("thinking", ""))
+                    elif d.get("type") == "signature_delta":
+                        think_sig += d.get("signature", "")
+                elif t == "content_block_stop":
+                    if current_tool:
+                        current_tool["args"] = json.loads(tool_json or "{}")
+                        yield ("tool_call", current_tool)
+                        current_tool = None
+                    elif in_thinking:
+                        yield ("thinking_block", {"thinking": think_text, "signature": think_sig})
+                        in_thinking = False
                 elif t == "message_delta":
                     stop = ev["delta"].get("stop_reason") or stop
                     usage["output"] = ev.get("usage", {}).get("output_tokens", usage["output"])
@@ -295,12 +530,15 @@ def _merge_consecutive(msgs: list) -> list:
 
 
 def _openai_base(cfg: dict) -> str:
+    if cfg["provider"] == "ollama":
+        return cfg["base_url"]     # already the …:11434/v1 endpoint
     return cfg["base_url"] or (
         "https://openrouter.ai/api/v1" if cfg["provider"] == "openrouter"
         else "https://api.openai.com/v1")
 
 
-async def stream_openai(cfg: dict, messages: list, sysprompt: str, tool_names: list[str]):
+async def stream_openai(cfg: dict, messages: list, sysprompt: str,
+                        tool_names: list[str], thinking: bool = False):
     tools = [{"type": "function", "function": {
         "name": t["name"], "description": t["description"], "parameters": t["parameters"]}}
         for t in _filter_tools(tool_names)]
@@ -320,6 +558,8 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str, tool_names: l
             api_messages.append({"role": "user", "content": m["content"]})
     body = {"model": cfg["model"], "messages": api_messages, "stream": True,
             "stream_options": {"include_usage": True}}
+    if thinking and cfg["provider"] == "openrouter":
+        body["reasoning"] = {"effort": "medium"}
     if tools:
         body["tools"] = tools
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
@@ -343,6 +583,9 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str, tool_names: l
                     continue
                 choice = ev["choices"][0]
                 delta = choice.get("delta") or {}
+                reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                if reasoning:
+                    yield ("thinking", reasoning)
                 if delta.get("content"):
                     yield ("text", delta["content"])
                 for tc in delta.get("tool_calls") or []:
@@ -363,10 +606,11 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str, tool_names: l
             yield ("stop", "tool_use" if tool_calls else stop)
 
 
-def get_stream(cfg: dict, messages: list, sysprompt: str, tool_names: list[str]):
+def get_stream(cfg: dict, messages: list, sysprompt: str, tool_names: list[str],
+               thinking: bool = False):
     if cfg["provider"] == "anthropic":
-        return stream_anthropic(cfg, messages, sysprompt, tool_names)
-    return stream_openai(cfg, messages, sysprompt, tool_names)
+        return stream_anthropic(cfg, messages, sysprompt, tool_names, thinking)
+    return stream_openai(cfg, messages, sysprompt, tool_names, thinking)
 
 
 # ------------------------------------------------------------ model list
@@ -421,127 +665,19 @@ async def list_models() -> list[dict]:
             if not models:
                 models = [{"id": m, "name": m} for m in CURATED.get(provider, [])]
             out.append({"provider": provider, "models": models})
+    try:
+        if await localai.available():
+            local = await localai.model_options()
+            out.append({"provider": "ollama", "models": local, "local": True})
+    except Exception:
+        pass
     _model_cache.update(time=time.time(), result=out)
     return out
 
 
-# ------------------------------------------------------------- agent loop
-
-class ChatSession:
-    """One WebSocket = one conversation. Runs the agent loop with approvals."""
-
-    def __init__(self, ws):
-        self.ws = ws
-        self.messages: list = []
-        self.mode = "agent"
-        default = config.get_ai_default()
-        self.provider = default["provider"]
-        self.model = default["model"]
-        self.workdir = DEFAULT_WORKDIR
-        self.pending: dict[str, asyncio.Future] = {}
-        self.session_usage = {"input": 0, "output": 0, "cost": 0.0, "turns": 0}
-
-    async def send(self, **event) -> None:
-        await self.ws.send_text(json.dumps(event))
-
-    async def handle_client_message(self, msg: dict) -> None:
-        t = msg.get("type")
-        if t == "user":
-            await self.run_turn(msg.get("text", ""))
-        elif t == "config":
-            if msg.get("mode") in MODE_TOOLS:
-                self.mode = msg["mode"]
-            if msg.get("provider") in config.PROVIDERS:
-                self.provider = msg["provider"]
-            if "model" in msg:
-                self.model = msg["model"] or config.DEFAULT_MODELS.get(self.provider, "")
-            if msg.get("workdir"):
-                self.workdir = self._safe_workdir(msg["workdir"])
-        elif t == "approve":
-            fut = self.pending.pop(msg.get("id", ""), None)
-            if fut and not fut.done():
-                fut.set_result(bool(msg.get("approved")))
-        elif t == "reset":
-            self.messages = []
-            self.session_usage = {"input": 0, "output": 0, "cost": 0.0, "turns": 0}
-
-    def _safe_workdir(self, path: str) -> str:
-        allowed = config.get_workspaces() + [DEFAULT_WORKDIR]
-        resolved = os.path.realpath(path)
-        for root in allowed:
-            if resolved == os.path.realpath(root) or \
-               resolved.startswith(os.path.realpath(root) + os.sep):
-                return resolved if os.path.isdir(resolved) else self.workdir
-        return self.workdir
-
-    async def run_turn(self, user_text: str) -> None:
-        if not self.provider:
-            await self.send(type="error",
-                            message="No AI API key configured. Add one under Settings → AI.")
-            return
-        try:
-            cfg = _cfg_for(self.provider, self.model)
-        except RuntimeError as e:
-            await self.send(type="error", message=str(e))
-            return
-        self.messages.append({"role": "user", "content": user_text})
-        sysprompt = system_prompt(self.workdir, self.mode)
-        tool_names = MODE_TOOLS[self.mode]
-        turn_usage = {"input": 0, "output": 0}
-        try:
-            for _ in range(MAX_TURNS):
-                text_parts: list[str] = []
-                tool_calls: list[dict] = []
-                async for kind, payload in get_stream(cfg, self.messages, sysprompt, tool_names):
-                    if kind == "text":
-                        text_parts.append(payload)
-                        await self.send(type="text", delta=payload)
-                    elif kind == "tool_call":
-                        tool_calls.append(payload)
-                    elif kind == "usage":
-                        turn_usage["input"] += payload["input"]
-                        turn_usage["output"] += payload["output"]
-                self.messages.append({"role": "assistant",
-                                      "content": "".join(text_parts),
-                                      "tool_calls": tool_calls})
-                if not tool_calls:
-                    break
-                for tc in tool_calls:
-                    output = await self._run_tool_with_approval(tc)
-                    self.messages.append({"role": "tool", "tool_call_id": tc["id"],
-                                          "content": output})
-            cost = estimate_cost(cfg["provider"], cfg["model"],
-                                 turn_usage["input"], turn_usage["output"])
-            self.session_usage["input"] += turn_usage["input"]
-            self.session_usage["output"] += turn_usage["output"]
-            self.session_usage["turns"] += 1
-            if cost is not None:
-                self.session_usage["cost"] += cost
-            _persist_usage(cfg, turn_usage, cost)
-            await self.send(type="usage",
-                            turn={**turn_usage, "cost": cost, "model": cfg["model"]},
-                            session=self.session_usage)
-            await self.send(type="done")
-        except Exception as e:
-            await self.send(type="error", message=str(e))
-
-    async def _run_tool_with_approval(self, tc: dict) -> str:
-        auto = self.mode == "auto" or (self.mode in ("agent", "plan") and tc["name"] in SAFE_TOOLS)
-        if not auto:
-            fut: asyncio.Future = asyncio.get_running_loop().create_future()
-            self.pending[tc["id"]] = fut
-            await self.send(type="tool_request", id=tc["id"], name=tc["name"], args=tc["args"])
-            try:
-                approved = await asyncio.wait_for(fut, timeout=600)
-            except asyncio.TimeoutError:
-                approved = False
-            if not approved:
-                await self.send(type="tool_result", id=tc["id"], output="[denied by user]")
-                return "The user declined this action. Ask how they want to proceed."
-        await self.send(type="tool_start", id=tc["id"], name=tc["name"], args=tc["args"])
-        output = await execute_tool(tc["name"], tc["args"], self.workdir)
-        await self.send(type="tool_result", id=tc["id"], output=output)
-        return output
+# The live agent loop (multi-device streaming, reconnect, steering) lives in
+# sessions.py; it uses the engine helpers above (get_stream, execute_tool,
+# system_prompt, allowed_tools, estimate_cost, _persist_usage, _cfg_for …).
 
 
 # ------------------------------------------------------------ usage log
@@ -549,38 +685,83 @@ class ChatSession:
 _USAGE_FILE = config.DATA_DIR / "usage.json"
 
 
+def _blank_slot() -> dict:
+    return {"input": 0, "output": 0, "cost": 0.0, "requests": 0}
+
+
 def _persist_usage(cfg: dict, usage: dict, cost: float | None) -> None:
     try:
         data = json.loads(_USAGE_FILE.read_text()) if _USAGE_FILE.exists() else {}
         day = time.strftime("%Y-%m-%d")
-        slot = data.setdefault(day, {"input": 0, "output": 0, "cost": 0.0, "requests": 0})
+        slot = data.setdefault(day, _blank_slot())
         slot["input"] += usage["input"]
         slot["output"] += usage["output"]
         slot["requests"] += 1
         if cost:
             slot["cost"] = round(slot["cost"] + cost, 6)
-        # keep last 60 days
-        for old in sorted(data)[:-60]:
+        # per-model breakdown for the usage view
+        mkey = f"{cfg['provider']}/{cfg['model']}"
+        models = slot.setdefault("models", {})
+        m = models.setdefault(mkey, _blank_slot())
+        m["input"] += usage["input"]
+        m["output"] += usage["output"]
+        m["requests"] += 1
+        if cost:
+            m["cost"] = round(m["cost"] + cost, 6)
+        # keep last 90 days
+        for old in sorted(data)[:-90]:
             del data[old]
         _USAGE_FILE.write_text(json.dumps(data, indent=1))
     except Exception:
         pass
 
 
-def usage_summary() -> dict:
+def _load_usage() -> dict:
     try:
-        data = json.loads(_USAGE_FILE.read_text()) if _USAGE_FILE.exists() else {}
+        return json.loads(_USAGE_FILE.read_text()) if _USAGE_FILE.exists() else {}
     except Exception:
-        data = {}
+        return {}
+
+
+def _add(dst: dict, src: dict) -> None:
+    for k in ("input", "output", "cost", "requests"):
+        dst[k] = round(dst.get(k, 0) + src.get(k, 0), 6) if k == "cost" \
+            else dst.get(k, 0) + src.get(k, 0)
+
+
+def usage_summary() -> dict:
+    data = _load_usage()
     today = time.strftime("%Y-%m-%d")
     month = today[:7]
-    month_slot = {"input": 0, "output": 0, "cost": 0.0, "requests": 0}
+    month_slot = _blank_slot()
     for day, slot in data.items():
         if day.startswith(month):
-            for k in month_slot:
-                month_slot[k] += slot.get(k, 0)
-    return {"today": data.get(today, {"input": 0, "output": 0, "cost": 0.0, "requests": 0}),
-            "month": month_slot}
+            _add(month_slot, slot)
+    return {"today": data.get(today, _blank_slot()), "month": month_slot}
+
+
+def usage_series(days: int = 30) -> dict:
+    """Daily series + per-model breakdown for the last `days` days (for charts)."""
+    days = max(1, min(days, 90))
+    data = _load_usage()
+    series, total, models = [], _blank_slot(), {}
+    now = time.time()
+    for i in range(days - 1, -1, -1):
+        date = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+        slot = data.get(date, {})
+        series.append({"date": date,
+                       "input": slot.get("input", 0), "output": slot.get("output", 0),
+                       "cost": round(slot.get("cost", 0.0), 6),
+                       "requests": slot.get("requests", 0)})
+        _add(total, slot)
+        for mkey, m in (slot.get("models") or {}).items():
+            _add(models.setdefault(mkey, _blank_slot()), m)
+    model_list = [{"model": k, **v} for k, v in models.items()]
+    model_list.sort(key=lambda m: (m["cost"], m["input"] + m["output"]), reverse=True)
+    summ = usage_summary()
+    return {"days": series, "models": model_list, "total": total,
+            "range_days": days, "today": summ["today"], "month": summ["month"],
+            "priced": any(m["cost"] for m in model_list) or total["cost"] > 0}
 
 
 async def one_shot(prompt: str, system: str = "") -> str:

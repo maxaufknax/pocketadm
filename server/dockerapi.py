@@ -1,11 +1,19 @@
 """Async Docker Engine API client over the unix socket (no SDK dependency)."""
 import json
+import os
 from typing import Any
 
 import httpx
 
+from . import config, demodata
+
 SOCKET = "/var/run/docker.sock"
 _client: httpx.AsyncClient | None = None
+
+
+def demo() -> bool:
+    """Serve canned data: demo mode without a real Docker socket."""
+    return config.DEMO and not os.path.exists(SOCKET)
 
 
 def client() -> httpx.AsyncClient:
@@ -19,6 +27,8 @@ def client() -> httpx.AsyncClient:
 
 
 async def available() -> bool:
+    if demo():
+        return True
     try:
         r = await client().get("/_ping")
         return r.status_code == 200
@@ -27,6 +37,8 @@ async def available() -> bool:
 
 
 async def list_containers(all_: bool = True) -> list[dict]:
+    if demo():
+        return demodata.list_containers(all_)
     r = await client().get("/containers/json", params={"all": "true" if all_ else "false"})
     r.raise_for_status()
     out = []
@@ -67,6 +79,8 @@ def _health_from_status(status: str) -> str:
 
 
 async def inspect_container(cid: str) -> dict:
+    if demo():
+        return demodata.inspect_container(cid)
     r = await client().get(f"/containers/{cid}/json")
     r.raise_for_status()
     return r.json()
@@ -74,6 +88,8 @@ async def inspect_container(cid: str) -> dict:
 
 async def container_detail(cid: str) -> dict:
     """Human-friendly summary of a container's configuration."""
+    if demo():
+        return demodata.container_detail(cid)
     d = await inspect_container(cid)
     cfg, host = d.get("Config", {}), d.get("HostConfig", {})
     state = d.get("State", {})
@@ -109,6 +125,8 @@ async def container_action(cid: str, action: str) -> None:
 
 
 async def container_logs(cid: str, tail: int = 200) -> str:
+    if demo():
+        return demodata.container_logs(cid, tail)
     r = await client().get(f"/containers/{cid}/logs",
                            params={"stdout": "true", "stderr": "true", "tail": str(tail)})
     r.raise_for_status()
@@ -124,6 +142,8 @@ async def container_logs(cid: str, tail: int = 200) -> str:
 
 
 async def container_stats(cid: str) -> dict:
+    if demo():
+        return demodata.container_stats(cid)
     r = await client().get(f"/containers/{cid}/stats", params={"stream": "false", "one-shot": "false"})
     r.raise_for_status()
     s = r.json()
@@ -140,8 +160,22 @@ async def container_stats(cid: str) -> dict:
 
 
 async def inspect_image(name: str) -> dict | None:
+    if demo():
+        return demodata.inspect_image(name)
     r = await client().get(f"/images/{name}/json")
     return r.json() if r.status_code == 200 else None
+
+
+async def tag_image(image_id: str, repo: str, tag: str) -> None:
+    r = await client().post(f"/images/{image_id}/tag", params={"repo": repo, "tag": tag})
+    if r.status_code >= 400:
+        raise RuntimeError(f"tag failed: {r.text[:200]}")
+
+
+async def remove_image(ref: str) -> bool:
+    """Untag/remove an image reference; best-effort (in-use images stay)."""
+    r = await client().delete(f"/images/{ref}")
+    return r.status_code < 400
 
 
 async def list_images() -> list[dict[str, Any]]:
@@ -196,10 +230,11 @@ async def pull_image_stream(image: str, on_progress) -> None:
                     on_progress(status)
 
 
-async def recreate_container(cid: str, on_progress) -> str:
+async def recreate_container(cid: str, on_progress, image: str | None = None) -> str:
     """Recreate a container with its current config (after an image pull).
 
     Watchtower-style: stop + rename old, create + start new, roll back on error.
+    `image` overrides the image reference (used for snapshot rollbacks).
     """
     d = await inspect_container(cid)
     name = d.get("Name", "").lstrip("/")
@@ -208,7 +243,7 @@ async def recreate_container(cid: str, on_progress) -> str:
         **{k: cfg.get(k) for k in ("Hostname", "User", "Env", "Cmd", "Entrypoint",
                                    "WorkingDir", "Labels", "ExposedPorts", "Volumes",
                                    "Healthcheck", "Tty", "OpenStdin") if cfg.get(k) is not None},
-        "Image": cfg.get("Image", ""),
+        "Image": image or cfg.get("Image", ""),
         "HostConfig": d.get("HostConfig", {}),
     }
     networks = (d.get("NetworkSettings", {}).get("Networks") or {})
@@ -254,6 +289,8 @@ async def recreate_container(cid: str, on_progress) -> str:
 
 
 async def engine_info() -> dict:
+    if demo():
+        return demodata.engine_info()
     r = await client().get("/info")
     r.raise_for_status()
     d = r.json()

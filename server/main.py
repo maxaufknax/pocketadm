@@ -1,39 +1,142 @@
 """Helmsman — self-hosted server command center. FastAPI app assembly."""
 import asyncio
 import json
+import os
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, appstore, auth, config, dockerapi, jobs, reports, sysinfo, terminal, updates
+from . import (agents, ai, appstore, audit, auth, chats, config, dockerapi,
+               hostuser, integrations, jobs, localai, metrics, pairing, reports,
+               sessions, snapshots, sysinfo, terminal, updates)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
 
 authed = Depends(auth.require_auth)
 
+# Demo instances are a public read-only playground: every mutation is blocked.
+DEMO_ALLOW = {"/api/login", "/api/notifications/seen"}
+
+
+@app.middleware("http")
+async def _demo_guard(request: Request, call_next):
+    if config.DEMO and request.method not in ("GET", "HEAD", "OPTIONS") \
+            and request.url.path not in DEMO_ALLOW:
+        return JSONResponse({"detail": "Demo mode — this instance is read-only"},
+                            status_code=403)
+    return await call_next(request)
+
+
+# The client app may be served from a different Helmsman instance (multi-server
+# mode) or packaged natively. Auth is a bearer token in a header — no cookies —
+# so a permissive CORS policy does not open a CSRF hole.
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
+
 
 @app.on_event("startup")
 async def _startup():
-    reports.start_scheduler()
+    metrics.start()
+    if not config.DEMO:
+        reports.start_scheduler()
+        agents.start_scheduler()
+        asyncio.ensure_future(appstore.remote_refresher())
+        asyncio.ensure_future(localai.reconnect_on_startup())
 
 
 # ------------------------------------------------------------------ auth
 
 class LoginBody(BaseModel):
     password: str
+    totp: str = ""
 
 
 @app.post("/api/login")
 async def login(body: LoginBody, request: Request):
     ip = request.client.host if request.client else "?"
     auth.rate_limit(ip)
+    if config.DEMO:
+        # public playground: fixed demo credentials, no lockout surprises
+        if body.password == "demo":
+            return {"token": auth.issue_token(), "demo": True}
+        auth.record_failure(ip)
+        raise HTTPException(401, "Demo password is “demo”")
     if not auth.verify_password(body.password):
         auth.record_failure(ip)
+        audit.record("login_failed", target=ip, detail="wrong password", status="warn")
         raise HTTPException(401, "Wrong password")
+    if auth.totp_enabled():
+        if not body.totp:
+            # password ok, but a second factor is required
+            return JSONResponse({"detail": "2FA code required", "totp": True},
+                                status_code=401)
+        if not auth.verify_totp(body.totp):
+            auth.record_failure(ip)
+            audit.record("login_failed", target=ip, detail="wrong 2FA code", status="warn")
+            return JSONResponse({"detail": "Wrong 2FA code", "totp": True},
+                                status_code=401)
+    audit.record("login", target=ip, detail="2FA" if auth.totp_enabled() else "password")
     return {"token": auth.issue_token()}
+
+
+@app.get("/api/info")
+async def server_info():
+    """Unauthenticated, minimal server identity for the client Connect screen —
+    lets a new device confirm it reached a real Helmsman before signing in."""
+    return {
+        "helmsman": True,
+        "version": config.VERSION,
+        "server_name": config.get_server_name() or sysinfo.hostname(),
+        "demo": config.DEMO,
+        "totp_required": auth.totp_enabled(),
+    }
+
+
+# --------------------------------------------------------- device pairing
+
+@app.post("/api/pair/new", dependencies=[authed])
+async def pair_new():
+    """Mint a one-time pairing code (shown as a QR on the signed-in device).
+    Another device scans it and calls /api/pair/claim to get its own token."""
+    code, ttl = pairing.new_code()
+    audit.record("pair_new", detail="pairing code issued")
+    return {"code": code, "ttl": ttl,
+            "server_name": config.get_server_name() or sysinfo.hostname()}
+
+
+class QRBody(BaseModel):
+    text: str
+
+
+@app.post("/api/qr", dependencies=[authed])
+async def make_qr(body: QRBody):
+    """Render arbitrary text as a QR SVG (segno) — used for the pairing screen,
+    which builds the payload from the browser's own origin + a pairing code."""
+    svg = auth.qr_svg(body.text[:800])
+    if not svg:
+        raise HTTPException(501, "QR rendering unavailable (segno not installed)")
+    return {"svg": svg}
+
+
+class PairClaimBody(BaseModel):
+    code: str
+
+
+@app.post("/api/pair/claim")
+async def pair_claim(body: PairClaimBody, request: Request):
+    ip = request.client.host if request.client else "?"
+    auth.rate_limit(ip)
+    if not pairing.claim(body.code):
+        auth.record_failure(ip)
+        audit.record("pair_claim", target=ip, status="warn", detail="invalid/expired code")
+        raise HTTPException(401, "Pairing code is invalid or expired")
+    audit.record("pair_claim", target=ip, detail="new device paired")
+    return {"token": auth.issue_token(),
+            "server_name": config.get_server_name() or sysinfo.hostname()}
 
 
 @app.get("/api/me", dependencies=[authed])
@@ -41,12 +144,19 @@ async def me():
     default = config.get_ai_default()
     return {
         "ok": True,
+        "version": config.VERSION,
+        "demo": config.DEMO,
         "hostname": sysinfo.hostname(),
+        "server_name": config.get_server_name() or sysinfo.hostname(),
+        "onboarded": config.get_onboarded(),
         "ai_configured": bool(default["provider"]),
         "ai_default": default,
         "ai_providers": config.configured_providers(),
         "workspaces": config.get_workspaces(),
+        "default_workspace": config.get_default_workspace(),
         "report_config": config.get_report_config(),
+        "totp_enabled": auth.totp_enabled(),
+        "can_pair": not config.DEMO,
     }
 
 
@@ -56,6 +166,8 @@ async def me():
 async def system():
     data = await asyncio.to_thread(sysinfo.snapshot)
     data["docker"] = await dockerapi.engine_info() if await dockerapi.available() else None
+    last = metrics.latest()
+    data["net"] = {"rx": last["rx"], "tx": last["tx"], "ping": last["ping"]} if last else None
     return data
 
 
@@ -63,7 +175,9 @@ async def system():
 async def containers():
     result = await dockerapi.list_containers()
     for c in result:
-        c["service"] = updates.service_meta(c["image"])
+        # untagged image IDs carry no service info — fall back to the name
+        ref = c["name"] if appstore._is_image_id(c["image"]) else c["image"]
+        c["service"] = updates.service_meta(ref)
     return result
 
 
@@ -72,6 +186,7 @@ async def container_action(cid: str, action: str):
     if action not in ("start", "stop", "restart"):
         raise HTTPException(400, "bad action")
     await dockerapi.container_action(cid, action)
+    audit.record("container_action", target=cid, detail=action)
     return {"ok": True}
 
 
@@ -93,6 +208,84 @@ async def container_detail(cid: str):
         raise HTTPException(404, f"inspect failed: {e}")
     detail["service"] = updates.service_meta(detail["image"])
     return detail
+
+
+DESCRIBE_SYSTEM = (
+    "You explain a Docker container to a self-hoster who is not a sysadmin. "
+    "Given inspect data and recent logs, answer briefly with markdown: "
+    "1) What this service is and what it does for the user (2-3 sentences, plain words). "
+    "2) Current state: does it look healthy? Anything notable in the logs? "
+    "3) One concrete tip if something should be improved. Max ~160 words.")
+
+
+class DescribeBody(BaseModel):
+    lang: str = ""
+
+
+@app.post("/api/containers/{cid}/describe", dependencies=[authed])
+async def container_describe(cid: str, body: DescribeBody):
+    try:
+        detail = await dockerapi.container_detail(cid)
+        logs = await dockerapi.container_logs(cid, 60)
+    except Exception as e:
+        raise HTTPException(404, f"inspect failed: {e}")
+    detail["service"] = updates.service_meta(detail["image"])
+    prompt = ("Container inspect summary:\n" + json.dumps(detail, default=str)[:4000] +
+              "\n\nRecent logs:\n" + logs[-3000:])
+    if body.lang:
+        prompt += f"\n\nAnswer in language: {body.lang}"
+    try:
+        return {"description": await ai.one_shot(prompt, DESCRIBE_SYSTEM)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ------------------------------------------------------------ metrics
+
+@app.get("/api/metrics/history", dependencies=[authed])
+async def metrics_history(minutes: int = 60):
+    return {"points": metrics.history(min(minutes, 120)), "interval": metrics.INTERVAL}
+
+
+# ---------------------------------------------------------- fs browser
+
+@app.get("/api/fs", dependencies=[authed])
+async def fs_list(path: str = ""):
+    """Directory browser for the workspace picker — restricted to the
+    configured workspace roots (plus the default workdir)."""
+    roots = []
+    for r in config.get_workspaces() + [ai.DEFAULT_WORKDIR]:
+        rp = os.path.realpath(r)
+        if os.path.isdir(rp) and rp not in roots:
+            roots.append(rp)
+    if not path:
+        return {"path": "", "parent": None,
+                "dirs": [{"name": r, "path": r} for r in roots], "roots": roots}
+    resolved = os.path.realpath(path)
+    if not any(resolved == r or resolved.startswith(r + os.sep) for r in roots):
+        raise HTTPException(403, "outside allowed workspaces")
+    if not os.path.isdir(resolved):
+        raise HTTPException(404, "not a directory")
+    dirs, files = [], 0
+    try:
+        with os.scandir(resolved) as it:
+            for e in sorted(it, key=lambda e: e.name.lower()):
+                if e.name.startswith(".") and e.name not in (".config",):
+                    continue
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        dirs.append({"name": e.name, "path": os.path.join(resolved, e.name)})
+                    else:
+                        files += 1
+                except OSError:
+                    pass
+    except PermissionError:
+        raise HTTPException(403, "permission denied")
+    parent = os.path.dirname(resolved)
+    if not any(parent == r or parent.startswith(r + os.sep) for r in roots):
+        parent = ""
+    return {"path": resolved, "parent": parent, "dirs": dirs[:400],
+            "files": files, "roots": roots}
 
 
 # ----------------------------------------------------------------- jobs
@@ -135,6 +328,21 @@ class UpdateBody(BaseModel):
 @app.post("/api/updates/apply", dependencies=[authed])
 async def apply_update(body: UpdateBody):
     job = updates.start_update_job(body.image, body.recreate)
+    audit.record("update_apply", target=body.image)
+    return {"job_id": job.id}
+
+
+class UpdateAllBody(BaseModel):
+    images: list[str]
+
+
+@app.post("/api/updates/apply-all", dependencies=[authed])
+async def apply_all_updates(body: UpdateAllBody):
+    if not body.images:
+        raise HTTPException(400, "no images given")
+    job = updates.start_update_all_job(body.images[:30])
+    audit.record("update_apply", target=f"{len(body.images)} images",
+                 detail=", ".join(body.images[:8]))
     return {"job_id": job.id}
 
 
@@ -164,11 +372,55 @@ async def explain(body: ExplainBody):
         raise HTTPException(500, str(e))
 
 
+# ------------------------------------------------------------- snapshots
+
+@app.get("/api/snapshots", dependencies=[authed])
+async def snapshots_index():
+    return {"snapshots": snapshots.list_snapshots()}
+
+
+@app.post("/api/snapshots/{snap_id}/rollback", dependencies=[authed])
+async def snapshot_rollback(snap_id: str):
+    snap = snapshots.get(snap_id)
+    if not snap:
+        raise HTTPException(404, "no such snapshot")
+    job = snapshots.start_rollback_job(snap)
+    audit.record("snapshot_rollback", target=snap["image"],
+                 detail=f"to {snap['image_id']}", status="warn")
+    return {"job_id": job.id}
+
+
+@app.delete("/api/snapshots/{snap_id}", dependencies=[authed])
+async def snapshot_delete(snap_id: str):
+    if not await snapshots.delete(snap_id):
+        raise HTTPException(404, "no such snapshot")
+    audit.record("snapshot_delete", target=snap_id)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------- appstore
 
 @app.get("/api/apps", dependencies=[authed])
 async def apps():
-    return {"catalog": appstore.catalog(), "installed": await appstore.installed()}
+    return {"catalog": appstore.catalog(), "installed": await appstore.installed(),
+            "catalog_info": appstore.catalog_info()}
+
+
+@app.post("/api/apps/catalog/refresh", dependencies=[authed])
+async def apps_catalog_refresh():
+    return await appstore.refresh_remote(force=True)
+
+
+class CatalogUrlBody(BaseModel):
+    url: str
+
+
+@app.post("/api/apps/catalog/url", dependencies=[authed])
+async def apps_catalog_url(body: CatalogUrlBody):
+    config.set_catalog_url(body.url)
+    info = await appstore.refresh_remote(force=True)
+    audit.record("catalog_url", detail=body.url[:120])
+    return info
 
 
 class InstallBody(BaseModel):
@@ -178,15 +430,21 @@ class InstallBody(BaseModel):
 @app.post("/api/apps/{app_id}/install", dependencies=[authed])
 async def install_app(app_id: str, body: InstallBody):
     try:
-        return {"output": await appstore.install(app_id, body.values)}
+        out = await appstore.install(app_id, body.values)
+        audit.record("app_install", target=app_id)
+        return {"output": out}
     except (ValueError, RuntimeError) as e:
+        audit.record("app_install", target=app_id, status="error", detail=str(e)[:200])
         raise HTTPException(400, str(e))
 
 
 @app.post("/api/apps/{app_id}/uninstall", dependencies=[authed])
 async def uninstall_app(app_id: str, remove_data: bool = False):
     try:
-        return {"output": await appstore.uninstall(app_id, remove_data)}
+        out = await appstore.uninstall(app_id, remove_data)
+        audit.record("app_uninstall", target=app_id,
+                     detail="with data" if remove_data else "")
+        return {"output": out}
     except (ValueError, RuntimeError) as e:
         raise HTTPException(400, str(e))
 
@@ -198,9 +456,80 @@ async def ai_models():
     return {"providers": await ai.list_models(), "default": config.get_ai_default()}
 
 
+# --------------------------------------------------------------- local AI
+
+@app.get("/api/localai/status", dependencies=[authed])
+async def localai_status():
+    return await localai.status()
+
+
+@app.post("/api/localai/install", dependencies=[authed])
+async def localai_install():
+    if not localai.can_install():
+        raise HTTPException(400, "Docker is not available to install Ollama here")
+    job = localai.start_install_job()
+    audit.record("localai_install", detail="Ollama")
+    return {"job_id": job.id}
+
+
+@app.post("/api/localai/connect", dependencies=[authed])
+async def localai_connect():
+    try:
+        base = await localai.connect_existing()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    ai._model_cache["time"] = 0
+    audit.record("localai_connect", detail=base or "")
+    return await localai.status()
+
+
+class LocalPullBody(BaseModel):
+    model: str
+
+
+@app.post("/api/localai/pull", dependencies=[authed])
+async def localai_pull(body: LocalPullBody):
+    if not body.model.strip():
+        raise HTTPException(400, "no model given")
+    job = localai.start_pull_job(body.model.strip())
+    audit.record("localai_pull", target=body.model.strip())
+    ai._model_cache["time"] = 0
+    return {"job_id": job.id}
+
+
+@app.post("/api/localai/delete", dependencies=[authed])
+async def localai_delete(body: LocalPullBody):
+    try:
+        ok = await localai.delete_model(body.model.strip())
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(400, "delete failed")
+    audit.record("localai_delete", target=body.model.strip(), status="warn")
+    ai._model_cache["time"] = 0
+    return {"ok": True}
+
+
+class LocalBaseBody(BaseModel):
+    base: str = ""
+
+
+@app.post("/api/localai/base", dependencies=[authed])
+async def localai_base(body: LocalBaseBody):
+    config.set_ollama_base(body.base)
+    localai._cache["time"] = 0
+    ai._model_cache["time"] = 0
+    return await localai.status()
+
+
 @app.get("/api/ai/usage", dependencies=[authed])
 async def ai_usage():
     return ai.usage_summary()
+
+
+@app.get("/api/ai/usage/series", dependencies=[authed])
+async def ai_usage_series(days: int = 30):
+    return ai.usage_series(days)
 
 
 class AIConfigBody(BaseModel):
@@ -223,6 +552,351 @@ async def set_ai(body: AIConfigBody):
     return {"ok": True, "configured": config.configured_providers()}
 
 
+class PasswordBody(BaseModel):
+    current: str
+    new: str
+
+
+@app.post("/api/settings/password", dependencies=[authed])
+async def change_password(body: PasswordBody):
+    if not auth.verify_password(body.current):
+        raise HTTPException(403, "Current password is wrong")
+    if len(body.new) < 8:
+        raise HTTPException(400, "New password must have at least 8 characters")
+    auth.set_password(body.new)     # also bumps generation -> other sessions out
+    audit.record("password_change", detail="other sessions revoked")
+    # hand the caller a fresh token so they stay signed in
+    return {"ok": True, "token": auth.issue_token()}
+
+
+# ------------------------------------------------------- 2FA & sessions
+
+@app.get("/api/settings/2fa/setup", dependencies=[authed])
+async def totp_setup():
+    secret = auth.new_totp_secret()
+    uri = auth.provisioning_uri(secret)
+    return {"secret": secret, "uri": uri, "svg": auth.qr_svg(uri)}
+
+
+class TotpEnableBody(BaseModel):
+    secret: str
+    code: str
+
+
+@app.post("/api/settings/2fa/enable", dependencies=[authed])
+async def totp_enable(body: TotpEnableBody):
+    if auth.totp_enabled():
+        raise HTTPException(400, "2FA is already enabled")
+    if not auth.enable_totp(body.secret.strip(), body.code):
+        raise HTTPException(400, "That code didn't match — check your authenticator and try again")
+    audit.record("2fa_enable")
+    return {"ok": True}
+
+
+class TotpDisableBody(BaseModel):
+    password: str
+    code: str = ""
+
+
+@app.post("/api/settings/2fa/disable", dependencies=[authed])
+async def totp_disable(body: TotpDisableBody):
+    if not auth.verify_password(body.password):
+        raise HTTPException(403, "Password is wrong")
+    if not auth.verify_totp(body.code):
+        raise HTTPException(403, "Enter a valid current 2FA code to disable it")
+    auth.disable_totp()
+    audit.record("2fa_disable", status="warn")
+    return {"ok": True}
+
+
+@app.post("/api/settings/sessions/revoke", dependencies=[authed])
+async def revoke_sessions():
+    token = auth.revoke_all_sessions()
+    audit.record("logout_all", detail="all other devices signed out")
+    return {"ok": True, "token": token}
+
+
+@app.get("/api/audit", dependencies=[authed])
+async def audit_log(limit: int = 80, action: str = "", source: str = "", before: float = 0):
+    return audit.recent(min(limit, 300), action, source, before)
+
+
+class ServerBody(BaseModel):
+    name: str = ""
+
+
+@app.post("/api/settings/server", dependencies=[authed])
+async def set_server(body: ServerBody):
+    config.set_server_name(body.name)
+    return {"ok": True, "server_name": config.get_server_name() or sysinfo.hostname()}
+
+
+# ------------------------------------------------ server identity & users
+
+@app.get("/api/server/identity", dependencies=[authed])
+async def server_identity():
+    ident = await asyncio.to_thread(hostuser.identity)
+    ident["display_name"] = config.get_server_name()
+    return ident
+
+
+@app.get("/api/server/users", dependencies=[authed])
+async def server_users():
+    ident = await asyncio.to_thread(hostuser.identity)
+    users = await asyncio.to_thread(hostuser.list_users)
+    return {"users": users, "identity": ident,
+            "can_manage": ident["host_access"], "reason": ident["manage_reason"]}
+
+
+class UserPasswordBody(BaseModel):
+    password: str
+
+
+@app.post("/api/server/users/{name}/password", dependencies=[authed])
+async def user_set_password(name: str, body: UserPasswordBody):
+    try:
+        msg = await hostuser.set_password(name, body.password)
+    except (ValueError, RuntimeError) as e:
+        audit.record("user_password", target=name, status="error", detail=str(e)[:160])
+        raise HTTPException(400, str(e))
+    audit.record("user_password", target=name, detail="password changed")
+    return {"ok": True, "message": msg}
+
+
+class UserFlagBody(BaseModel):
+    value: bool
+
+
+@app.post("/api/server/users/{name}/lock", dependencies=[authed])
+async def user_set_lock(name: str, body: UserFlagBody):
+    try:
+        msg = await hostuser.set_locked(name, body.value)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    audit.record("user_lock", target=name,
+                 detail="locked" if body.value else "unlocked",
+                 status="warn" if body.value else "ok")
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/server/users/{name}/admin", dependencies=[authed])
+async def user_set_admin(name: str, body: UserFlagBody):
+    try:
+        msg = await hostuser.set_admin(name, body.value)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    audit.record("user_admin", target=name,
+                 detail="granted admin" if body.value else "revoked admin",
+                 status="warn")
+    return {"ok": True, "message": msg}
+
+
+class UserCreateBody(BaseModel):
+    name: str
+    password: str = ""
+    admin: bool = False
+
+
+@app.post("/api/server/users", dependencies=[authed])
+async def user_create(body: UserCreateBody):
+    try:
+        msg = await hostuser.create_user(body.name, body.password, body.admin)
+    except (ValueError, RuntimeError) as e:
+        audit.record("user_create", target=body.name, status="error", detail=str(e)[:160])
+        raise HTTPException(400, str(e))
+    audit.record("user_create", target=body.name,
+                 detail="admin" if body.admin else "standard user")
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/settings/onboarded", dependencies=[authed])
+async def set_onboarded():
+    config.set_onboarded()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- chats
+
+@app.get("/api/chats", dependencies=[authed])
+async def chats_index():
+    return {"chats": chats.list_chats()}
+
+
+class ArchiveBody(BaseModel):
+    archived: bool = True
+
+
+@app.post("/api/chats/{chat_id}/archive", dependencies=[authed])
+async def chat_archive(chat_id: str, body: ArchiveBody):
+    if not chats.set_archived(chat_id, body.archived):
+        raise HTTPException(404, "no such chat")
+    return {"ok": True}
+
+
+class RenameBody(BaseModel):
+    title: str
+
+
+@app.post("/api/chats/{chat_id}/rename", dependencies=[authed])
+async def chat_rename(chat_id: str, body: RenameBody):
+    if not chats.rename(chat_id, body.title):
+        raise HTTPException(404, "no such chat")
+    return {"ok": True}
+
+
+@app.delete("/api/chats/{chat_id}", dependencies=[authed])
+async def chat_delete(chat_id: str):
+    chats.delete(chat_id)
+    return {"ok": True}
+
+
+# ------------------------------------------------- sentinel / notifications
+
+@app.get("/api/notifications", dependencies=[authed])
+async def notifications_index():
+    return agents.notifications()
+
+
+@app.post("/api/notifications/seen", dependencies=[authed])
+async def notifications_seen():
+    agents.mark_seen()
+    return {"ok": True}
+
+
+@app.get("/api/agents/loops", dependencies=[authed])
+async def loops_index():
+    return {"loops": agents.get_loops(),
+            "presets": {k: {kk: v[kk] for kk in ("name", "icon", "interval_min", "desc")}
+                        for k, v in agents.PRESETS.items()}}
+
+
+class LoopsBody(BaseModel):
+    loops: list[dict]
+
+
+@app.post("/api/agents/loops", dependencies=[authed])
+async def loops_save(body: LoopsBody):
+    loops = agents.save_loops(body.loops)
+    audit.record("loop_save", detail=f"{sum(l['enabled'] for l in loops)} enabled")
+    return {"loops": loops}
+
+
+@app.post("/api/agents/loops/{loop_id}/run", dependencies=[authed])
+async def loop_run(loop_id: str):
+    loop = next((lp for lp in agents.get_loops() if lp["id"] == loop_id), None)
+    if not loop:
+        raise HTTPException(404, "no such loop")
+    asyncio.ensure_future(agents.run_loop(loop, trigger="manual"))
+    return {"started": True}
+
+
+# --------------------------------------------------------- integrations
+
+@app.get("/api/integrations", dependencies=[authed])
+async def integrations_index():
+    return {"integrations": integrations.list_public(),
+            "types": {k: {kk: v[kk] for kk in ("label", "base_url", "hint", "docs")}
+                      for k, v in integrations.TYPES.items()}}
+
+
+class IntegrationBody(BaseModel):
+    name: str
+    type: str = "generic"
+    secret: str = ""
+    base_url: str = ""
+    auth_header_name: str = ""
+    note: str = ""
+    enabled: bool = True
+
+
+@app.post("/api/integrations", dependencies=[authed])
+async def integration_save(body: IntegrationBody):
+    try:
+        integrations.save(body.name, body.type, body.secret, body.base_url,
+                          body.auth_header_name, body.note, body.enabled)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record("integration_save", target=body.name, detail=body.type)
+    return {"ok": True, "integrations": integrations.list_public()}
+
+
+class IntegrationEnableBody(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/integrations/{name}/enabled", dependencies=[authed])
+async def integration_set_enabled(name: str, body: IntegrationEnableBody):
+    if not integrations.set_enabled(name, body.enabled):
+        raise HTTPException(404, "no such integration")
+    audit.record("integration_save", target=name,
+                 detail="enabled" if body.enabled else "disabled")
+    return {"ok": True, "integrations": integrations.list_public()}
+
+
+@app.delete("/api/integrations/{name}", dependencies=[authed])
+async def integration_delete(name: str):
+    integrations.remove(name)
+    audit.record("integration_delete", target=name)
+    return {"ok": True}
+
+
+@app.post("/api/integrations/{name}/test", dependencies=[authed])
+async def integration_test(name: str):
+    try:
+        return await integrations.test(name)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+# --------------------------------------------------------------- agent
+
+@app.get("/api/agent/memory", dependencies=[authed])
+async def get_agent_memory():
+    return {"memory": ai.read_memory()}
+
+
+class MemoryBody(BaseModel):
+    memory: str
+
+
+@app.post("/api/agent/memory", dependencies=[authed])
+async def set_agent_memory(body: MemoryBody):
+    ai.save_memory(body.memory)
+    return {"ok": True}
+
+
+@app.get("/api/agent/instructions", dependencies=[authed])
+async def get_agent_instructions():
+    return {"instructions": config.get_custom_instructions()}
+
+
+class InstructionsBody(BaseModel):
+    instructions: str
+
+
+@app.post("/api/agent/instructions", dependencies=[authed])
+async def set_agent_instructions(body: InstructionsBody):
+    config.set_custom_instructions(body.instructions)
+    return {"ok": True, "instructions": config.get_custom_instructions()}
+
+
+@app.get("/api/agent/tools", dependencies=[authed])
+async def agent_tools():
+    return {"tools": ai.tool_docs()}
+
+
+class ToolToggleBody(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/agent/tools/{name}", dependencies=[authed])
+async def toggle_agent_tool(name: str, body: ToolToggleBody):
+    if name not in {t["name"] for t in ai.TOOLS}:
+        raise HTTPException(404, "no such tool")
+    config.set_tool_enabled(name, body.enabled)
+    return {"ok": True, "tools": ai.tool_docs()}
+
+
 class WorkspacesBody(BaseModel):
     paths: list[str]
 
@@ -231,6 +905,16 @@ class WorkspacesBody(BaseModel):
 async def set_workspaces(body: WorkspacesBody):
     config.set_workspaces(body.paths[:12])
     return {"ok": True, "workspaces": config.get_workspaces()}
+
+
+class DefaultWorkspaceBody(BaseModel):
+    path: str
+
+
+@app.post("/api/settings/default-workspace", dependencies=[authed])
+async def set_default_workspace(body: DefaultWorkspaceBody):
+    config.set_default_workspace(body.path)
+    return {"ok": True, "default_workspace": config.get_default_workspace()}
 
 
 # -------------------------------------------------------------- reports
@@ -295,7 +979,9 @@ async def ws_terminal(ws: WebSocket):
     await ws.accept()
     if not await auth.require_auth_ws(ws):
         return
-    await terminal.handle_terminal(ws, ws.query_params.get("context", "local"))
+    ctx = ws.query_params.get("context", "local")
+    audit.record("terminal", target=ctx)
+    await terminal.handle_terminal(ws, ctx)
 
 
 @app.websocket("/ws/chat")
@@ -303,17 +989,9 @@ async def ws_chat(ws: WebSocket):
     await ws.accept()
     if not await auth.require_auth_ws(ws):
         return
-    session = ai.ChatSession(ws)
-    try:
-        while True:
-            msg = json.loads(await ws.receive_text())
-            if msg.get("type") in ("approve", "config", "reset"):
-                await session.handle_client_message(msg)
-            else:
-                # run turns as a task so approvals can arrive while streaming
-                asyncio.ensure_future(session.handle_client_message(msg))
-    except (WebSocketDisconnect, RuntimeError):
-        pass
+    # the session (and its agent run) lives independently of this socket, so
+    # the work survives a disconnect and streams to every device on the chat
+    await sessions.ws_chat(ws)
 
 
 # --------------------------------------------------------------- static
