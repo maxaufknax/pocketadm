@@ -1,10 +1,8 @@
 # ⎈ PocketADM
 
-**Your server, in your pocket.** An open-source, self-hosted command center for your server —
-installable as a mobile app (PWA), with an AI engineer built in.
+**Your server, in your pocket.** An open-source, self-hosted command center for your server. Installable as a mobile app (PWA), with an AI engineer built in.
 
-Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk —
-I want Claude-Code-style vibe coding, monitoring and one-click app installs from my phone."*
+Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and unserstanding of my whole server from my phone."*
 
 ## Features
 
