@@ -3,6 +3,97 @@
 All notable changes to Helmsman. Versions are the app version reported at
 `/api/info` and shown in *More → About*.
 
+## v0.11.0 — Polish for release: edit messages, richer updates, backups, coding CLIs
+
+- **Edit & retract sent messages** (Claude-Code-style rewind): tap any of your
+  messages → *Edit* (rewinds the chat to that point and resends your new
+  version) or *Rewind* (takes the message back into the composer). Works across
+  devices — the server truncates the shared history.
+- **Name your chats**: tap the title in the chat header, or the ✎ in the chat
+  list. Renames sync live to every connected device.
+- **Extended thinking got effort tiers**: off → low → medium → high, cycling on
+  the 💭 button — mapped to each provider's real knob (Anthropic thinking
+  budgets, OpenRouter/OpenAI reasoning effort). The button only appears for
+  models that support it, and the default is now **off**.
+- **Quick-instruct (⌁) grew up**: pick Agent/Auto/Plan, and an optional
+  *Model & thinking* fold with the full model list — without leaving the sheet.
+- **Updates tell you much more**: installed version (from the image's OCI
+  label) and build date on every row, plus a **Details** sheet per app with the
+  latest upstream releases and their notes (GitHub), links, and one-tap update.
+- **Checks got smarter and broader**: unused-image/orphaned-volume detection,
+  PocketADM's own security posture (2FA, failed logins), backup-tooling
+  detection — and a new **Agent tasks** group that surfaces open permission
+  requests and background-agent findings so nothing the agent hit mid-session
+  gets forgotten.
+- **App Store more than doubled**: 43 curated apps (Immich, Pi-hole, wg-easy,
+  ntfy, Duplicati, Mealie, Actual Budget, BookStack, Umami, Netdata, SearXNG,
+  Open WebUI, …), each with plain-language what/why. Every install dialog now
+  offers **“Set up with AI instead”** — the agent asks about ports, storage,
+  reverse proxy and backups, then installs and verifies.
+- **Backups**: More → Backup exports everything PocketADM knows (settings,
+  keys, chats, memory, app definitions, audit log) as one archive — and
+  restores it. The Checks tab nags about missing *data* backups separately.
+- **Claude Code & Codex in the terminal**: Terminal → *Agents* installs
+  Anthropic's/OpenAI's coding CLIs onto the data volume (they and their logins
+  survive updates). Sign in with your existing Claude Pro/Max or ChatGPT
+  subscription — no API key needed. The local shell now uses a persistent HOME.
+- **Fixes**: “What is this?” buttons no longer fail with *bad action* (route
+  shadowing); the dead gap between composer/terminal key bar and the tab bar is
+  gone (double safe-area inset); QR handoff button uses a real QR icon.
+
+## v0.10.0 — Services, not containers: a unified Home
+
+- **Home groups by what things *do*, not by Docker plumbing.** A homeserver runs
+  dozens of containers, but most belong together — `nextcloud` + `nextcloud-db` +
+  `nextcloud-redis` + `nextcloud-cron` are *one* service. Home now folds containers
+  into **service units** (one user-facing app plus its database/cache/worker
+  dependencies) and files each under a **functional category** (Files & Sync,
+  Media, Monitoring, Passwords…). A 56-container box that used to render as one
+  giant "docker" list of 50+ rows now reads as ~30 tidy, categorised services.
+  Distinct apps that merely share a compose project (grafana + prometheus in a
+  `monitoring` stack) stay separate; multi-container apps with default
+  `project-service-N` names still fold correctly.
+- **Three groupings, one tap apart.** *Function* (default, by category), *Stack*
+  (by Docker compose project) and *Raw* (every container, unfolded) — full
+  technical transparency is always one switch away.
+- **Service detail = the whole app.** Opening a service shows a rolled-up state,
+  aggregate **Start/Stop/Restart all**, every published port, its App Store
+  linkage (open · uninstall · website · mobile clients), AI helpers for the whole
+  service, and the list of member containers — tap any to drop into the full
+  per-container view.
+- **Home ↔ App Store, de-duplicated.** Installed apps in the store get a **Manage**
+  button that jumps straight to their unified service view in Home; the service
+  view links back to the store. Locally-built images get clean names
+  (`docker-ops-api` → *Ops Api*) instead of raw image strings.
+
+## v0.9.0 — Store track, explorer, context & a lighter More tab
+
+- **Cold-start Connect screen.** When the app isn't served by a server (the native
+  client shell, or any device with no server behind it), PocketADM now opens a
+  first-run Connect screen: add a server by address + password, scan a pairing QR,
+  or set up a brand-new server. The server-hosted PWA still shows the normal login.
+- **SSH bootstrap.** Install PocketADM onto another Linux machine over SSH, straight
+  from a server you're already signed into. The installer runs remotely and streams
+  its log; the resulting URL + admin password are captured so the fresh server is one
+  tap away in your list. Credentials are used once and never stored (`bootstrap.py`,
+  `POST /api/bootstrap/ssh`).
+- **Capacitor client scaffold.** `client/` packages the PWA as a native iOS/Android
+  app for the App Store / Play Store — the UI is unchanged, the shell just bundles it
+  and boots into the Connect screen. See `client/README.md`.
+- **File Explorer.** Browse your server's files (within the allowed workspace roots)
+  from the Terminal tab: navigate folders, preview text files, jump into the terminal
+  at any path, or attach a file/folder to a chat. Backed by an extended `/api/fs`
+  (now returns file entries) and a new `/api/fs/read`.
+- **Attach context to chats.** Instead of stuffing prompts, attach real things — a
+  service/container, an app, a file or folder, or the server overview — as first-class
+  context shown to the agent (chips above the composer, `＋` button). App and container
+  cards get a direct "Attach to chat".
+- **Compacted More tab.** The long settings scroll is now grouped behind a compact
+  chip nav (Server · Security · AI · Agent · Automation · Look) that shows one section
+  at a time.
+- **Apps & Services filters.** The App Store gets search + category chips (incl.
+  Installed); the Services list gets All/Running/Issues + a live search.
+
 ## v0.8.0 — Watch it, keep working, run it locally
 
 - **Device-independent live sessions.** The agent now runs as a server-side task

@@ -11,7 +11,7 @@ import re
 import time
 from pathlib import Path
 
-from . import ai, config, dockerapi, sysinfo, updates
+from . import agents, ai, config, dockerapi, permissions, sysinfo, updates
 
 REPORTS_DIR = config.DATA_DIR / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
@@ -229,13 +229,147 @@ async def check_updates_pending() -> list[dict]:
     return out
 
 
+async def check_docker_disk() -> list[dict]:
+    """Reclaimable space: unused images and orphaned volumes."""
+    try:
+        df = await dockerapi.system_df()
+    except Exception:
+        return []
+    out = []
+    unused_img = sum(i.get("Size", 0) for i in df.get("Images") or []
+                     if i.get("Containers", 0) == 0)
+    if unused_img > 500e6:
+        gb = unused_img / 1e9
+        out.append(_check("docker-images", "Unused Docker images", "🧹",
+                          "warn" if gb > 5 else "info",
+                          f"~{gb:.1f} GB in images no container uses",
+                          recommendation="Reclaim the space with `docker image prune -a` "
+                                         "(keeps everything that's in use) — or let the "
+                                         "Vibe agent clean up safely."))
+    orphan_vols = [v.get("Name", "?") for v in df.get("Volumes") or []
+                   if (v.get("UsageData") or {}).get("RefCount", 1) == 0]
+    if len(orphan_vols) >= 3:
+        out.append(_check("docker-volumes", "Orphaned volumes", "🧹", "info",
+                          f"{len(orphan_vols)} volumes are attached to nothing",
+                          details=", ".join(orphan_vols[:12]),
+                          recommendation="If none of these hold data you need, "
+                                         "`docker volume prune` frees them. Careful: "
+                                         "volumes can contain app data — check first."))
+    return out
+
+
+async def check_app_security() -> list[dict]:
+    """PocketADM's own security posture: 2FA, recent failed app logins."""
+    out = []
+    if config.get_totp_secret():
+        out.append(_check("app-2fa", "PocketADM two-factor auth", "🔑", "ok", "enabled"))
+    else:
+        out.append(_check("app-2fa", "PocketADM two-factor auth", "🔑", "info",
+                          "not enabled",
+                          recommendation="This app can start/stop anything on your server — "
+                                         "add a second factor under More → Security."))
+    try:
+        audit_file = config.DATA_DIR / "audit.jsonl"
+        if audit_file.exists():
+            cutoff = time.time() - 24 * 3600
+            failed = 0
+            for line in audit_file.read_text().splitlines()[-2000:]:
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if e.get("action") == "login_failed" and e.get("time", 0) > cutoff:
+                    failed += 1
+            if failed:
+                out.append(_check("app-logins", "Failed PocketADM logins", "🚪",
+                                  "warn" if failed >= 10 else "info",
+                                  f"{failed} failed sign-in attempt{'s' if failed != 1 else ''} "
+                                  f"in the last 24 h",
+                                  recommendation="If that wasn't you, make sure the app is not "
+                                                 "exposed to the internet without protection, and "
+                                                 "consider 2FA." if failed >= 10 else None))
+    except Exception:
+        pass
+    return out
+
+
+async def check_backups() -> list[dict]:
+    """Is any recognizable backup tooling in place? (Best-effort detection.)"""
+    tools = ("restic", "borg", "borgmatic", "duplicati", "duplicacy", "kopia",
+             "rsnapshot", "backrest", "urbackup", "velero")
+    found = []
+    try:
+        for c in await dockerapi.list_containers(all_=True):
+            hay = (c["image"] + " " + c["name"]).lower()
+            for t in tools:
+                if t in hay:
+                    found.append(f"{c['name']} ({t})")
+                    break
+    except Exception:
+        pass
+    for d in ("/etc/cron.d", "/etc/cron.daily"):
+        p = Path(HOST + d)
+        if p.is_dir():
+            try:
+                for f in p.iterdir():
+                    if any(t in f.name.lower() for t in tools + ("backup",)):
+                        found.append(f"{d}/{f.name}")
+            except OSError:
+                pass
+    if found:
+        return [_check("backups", "Backups", "💾", "ok",
+                       "backup tooling detected: " + ", ".join(sorted(set(found))[:6]))]
+    return [_check("backups", "Backups", "💾", "warn", "no backup tooling detected",
+                   recommendation="Volumes and configs are one disk failure away from gone. "
+                                  "Ask the Vibe agent to set up restic or borgmatic to an "
+                                  "external target — and export a PocketADM settings backup "
+                                  "under More → Backup.")]
+
+
+async def check_agent_tasks() -> list[dict]:
+    """Things the agent (or a Sentinel loop) flagged and that wait for the user:
+    permission requests it ran into mid-session, and unresolved warn/crit
+    findings from background agents. Shown here so they aren't forgotten."""
+    out = []
+    try:
+        open_reqs = [p for p in permissions.list_all() if p.get("status") == "open"]
+        for p in open_reqs[:6]:
+            out.append(_check("perm-" + p["id"], p.get("title", "Permission needed"), "🔐",
+                              "warn", p.get("explanation") or p.get("detail", ""),
+                              recommendation=(p.get("fix") or "") +
+                              " Resolve or dismiss it under More → Tasks & permissions."))
+        if not open_reqs:
+            out.append(_check("perms", "Agent permission requests", "🔐", "ok",
+                              "nothing waiting for you"))
+    except Exception:
+        pass
+    try:
+        notifs = agents.notifications(limit=30).get("items", [])
+        flagged = [n for n in notifs if n.get("status") in ("warn", "crit")][:5]
+        for n in flagged:
+            out.append(_check("sentinel-" + str(n.get("id", "")),
+                              n.get("title", "Background agent finding"), "🤖",
+                              n.get("status", "warn"),
+                              (n.get("body") or "")[:300] +
+                              (f" (seen {n['count']}×)" if n.get("count", 1) > 1 else ""),
+                              recommendation="Reported by a background agent — open the bell "
+                                             "in the top bar for details, or fix it with AI."))
+    except Exception:
+        pass
+    return out
+
+
 CHECK_GROUPS = [
+    ("Agent tasks", check_agent_tasks),
     ("Resources", check_resources),
+    ("Storage", check_docker_disk),
     ("Containers", check_containers),
     ("Network", check_network),
     ("SSH", check_ssh),
     ("Logins", check_auth_log),
     ("Protection", check_fail2ban),
+    ("App security", check_app_security),
+    ("Backups", check_backups),
     ("Updates", check_updates_pending),
 ]
 

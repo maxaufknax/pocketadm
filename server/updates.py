@@ -50,6 +50,8 @@ SERVICE_META = {
     "navidrome":    ("Navidrome", "🎵", "Media", False),
     "plex":         ("Plex", "🎬", "Media", False),
     "nextcloud":    ("Nextcloud", "☁️", "Files & Sync", True),
+    "whiteboard":   ("Nextcloud Whiteboard", "🖊️", "Files & Sync", False),
+    "collabora":    ("Collabora Online", "📝", "Office", False),
     "gitea":        ("Gitea", "🍵", "Development", False),
     "code-server":  ("code-server", "💻", "Development", False),
     "n8n":          ("n8n", "🔗", "Automation", False),
@@ -121,6 +123,15 @@ def parse_image_ref(ref: str) -> tuple[str, str, str]:
     return registry, repo, tag
 
 
+def _is_image_id(ref: str) -> bool:
+    """True for a bare image ID ('sha256:…' or a 12–64 hex digest). Docker's
+    container list reports these instead of a name when the tag has moved to a
+    newer image after a pull — such refs can't be checked against a registry,
+    so we recover the real reference from the container's Config.Image instead.
+    (Twin of appstore._is_image_id.)"""
+    return bool(re.fullmatch(r"[0-9a-f]{12,64}", ref.removeprefix("sha256:")))
+
+
 async def remote_digest(client: httpx.AsyncClient, registry: str, repo: str, tag: str) -> str | None:
     url = f"https://{registry}/v2/{repo}/manifests/{tag}"
     headers = {"Accept": ACCEPT}
@@ -175,10 +186,23 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
     containers = await dockerapi.list_containers(all_=False)
     images: dict[str, dict] = {}
     for c in containers:
-        if c["image"].startswith("sha256:"):
-            continue
-        slot = images.setdefault(c["image"], {"used_by": [], "public": False})
+        ref, image_id = c["image"], ""
+        if _is_image_id(ref):
+            # Tag moved/pruned: recover the real reference (e.g.
+            # ghcr.io/open-webui/open-webui:main) from the container config, and
+            # keep the running image's ID so the local digest reflects what's
+            # actually deployed — not wherever the tag points now.
+            image_id = ref
+            det = await dockerapi.inspect_container(c["id"])
+            cfg_image = (det.get("Config") or {}).get("Image", "")
+            if cfg_image and not _is_image_id(cfg_image):
+                ref = cfg_image
+            else:
+                continue  # genuinely untaggable (locally built without a repo tag)
+        slot = images.setdefault(ref, {"used_by": [], "public": False, "image_id": image_id})
         slot["used_by"].append(c["name"])
+        if image_id and not slot["image_id"]:
+            slot["image_id"] = image_id
         if any(p.get("ip") in ("", "0.0.0.0", "::") for p in c["ports"]):
             slot["public"] = True
 
@@ -194,6 +218,8 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                      "tag": tag_, "repo": f"{registry_}/{repo_}",
                      **meta, "links": _links_for(image)}
             try:
+                # Inspect the tag's *currently pulled* image (not the running
+                # container's, whose tag may have moved away — see below).
                 info = await dockerapi.inspect_image(image)
                 if not info:
                     entry["error"] = "image not found locally"
@@ -204,8 +230,13 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                     try:
                         dt = datetime.datetime.fromisoformat(created.split(".")[0] + "+00:00")
                         entry["age_days"] = max(0, int((now - dt.timestamp()) / 86400))
+                        entry["created"] = created.split(".")[0] + "Z"
                     except ValueError:
                         pass
+                # the app's own version, when the image declares it (OCI label)
+                labels = (info.get("Config") or {}).get("Labels") or {}
+                entry["version"] = (labels.get("org.opencontainers.image.version")
+                                    or labels.get("version") or "")[:40]
                 local_digests = {d.split("@")[1] for d in info.get("RepoDigests", []) if "@" in d}
                 if not local_digests:
                     entry["error"] = "locally built image"
@@ -219,7 +250,15 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                 else:
                     entry["current_digest"] = sorted(local_digests)[0][:19]
                     entry["remote_digest"] = remote[:19]
-                    entry["update_available"] = remote not in local_digests
+                    # Two independent reasons to update: the registry moved past
+                    # the image we've pulled, OR a newer image is already pulled
+                    # but the container still runs the old one (its tag wandered,
+                    # which is exactly why image_id was a bare id) — a recreate
+                    # would change it. Either way there's an update to apply.
+                    registry_newer = remote not in local_digests
+                    running_id = info_c.get("image_id") or ""
+                    running_behind = bool(running_id and running_id != info.get("Id", ""))
+                    entry["update_available"] = registry_newer or running_behind
             except Exception as e:
                 entry["error"] = str(e)[:200]
             entry["priority"] = _classify_priority(meta, info_c["public"], entry["age_days"])
@@ -266,8 +305,18 @@ def start_update_job(image: str, recreate: bool = True) -> jobs.Job:
 
 
 async def _update_one(job: jobs.Job, image: str, meta: dict, recreate: bool = True) -> None:
-    used_by = [c["name"] for c in await dockerapi.list_containers(all_=False)
-               if c["image"] == image]
+    # Find containers linked to this image, even when the tag has moved
+    # and docker ps reports a bare image ID (same logic as check_docker_updates).
+    containers_all = await dockerapi.list_containers(all_=False)
+    used_by: list[str] = []
+    for c in containers_all:
+        ref = c["image"]
+        if ref == image:
+            used_by.append(c["name"])
+        elif _is_image_id(ref):
+            det = await dockerapi.inspect_container(c["id"])
+            if (det.get("Config") or {}).get("Image", "") == image:
+                used_by.append(c["name"])
     try:
         snap = await snapshots.create_snapshot(image, used_by)
         if snap:
@@ -284,8 +333,17 @@ async def _update_one(job: jobs.Job, image: str, meta: dict, recreate: bool = Tr
         job.log("Image updated. Containers keep running on the old "
                 "image until they are recreated.")
         return
-    containers = [c for c in await dockerapi.list_containers(all_=False)
-                  if c["image"] == image]
+    # Re-lookup containers linked to this image (by tag, bare ID, or Config.Image).
+    containers_all = await dockerapi.list_containers(all_=False)
+    containers: list[dict] = []
+    for c in containers_all:
+        ref = c["image"]
+        if ref == image:
+            containers.append(c)
+        elif _is_image_id(ref):
+            det = await dockerapi.inspect_container(c["id"])
+            if (det.get("Config") or {}).get("Image", "") == image:
+                containers.append(c)
     if not containers:
         job.log("No running containers use this image — nothing to recreate.")
         return
@@ -366,6 +424,63 @@ async def explain_update(subject: str, kind: str, lang: str = "") -> str:
         prompt += f"\nAnswer in language: {lang}"
     prompt += "\nExplain this update to the user."
     return await ai.one_shot(prompt, EXPLAIN_SYSTEM)
+
+
+def _github_repo_for(image: str) -> str:
+    """owner/name of the github repo behind an image, best effort."""
+    registry, repo, _ = parse_image_ref(image)
+    if registry == "ghcr.io":
+        return "/".join(repo.split("/")[:2])
+    if registry == "lscr.io":
+        return f"linuxserver/docker-{repo.split('/')[-1]}"
+    if registry == "registry-1.docker.io" and not repo.startswith("library/") \
+            and repo.count("/") == 1:
+        return repo
+    return ""
+
+
+async def release_details(image: str) -> dict:
+    """Everything we can find out about an update, for the detail sheet:
+    the locally installed version/build date and the latest upstream releases
+    (name, tag, date, trimmed notes) from GitHub when the repo is mappable."""
+    out: dict = {"image": image, "local": {}, "releases": [],
+                 "links": _links_for(image), **service_meta(image)}
+    try:
+        info = await dockerapi.inspect_image(image)
+    except Exception:
+        info = None
+    if info:
+        labels = (info.get("Config") or {}).get("Labels") or {}
+        out["local"] = {
+            "version": (labels.get("org.opencontainers.image.version")
+                        or labels.get("version") or "")[:40],
+            "created": (info.get("Created") or "").split(".")[0],
+            "tag": parse_image_ref(image)[2],
+            "digest": next((d.split("@")[1][:19] for d in info.get("RepoDigests", [])
+                            if "@" in d), ""),
+        }
+    repo = _github_repo_for(image)
+    if repo:
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                r = await client.get(f"https://api.github.com/repos/{repo}/releases",
+                                     params={"per_page": 5},
+                                     headers={"Accept": "application/vnd.github+json"})
+                if r.status_code == 200:
+                    for rel in r.json():
+                        if rel.get("draft"):
+                            continue
+                        out["releases"].append({
+                            "tag": rel.get("tag_name", ""),
+                            "name": rel.get("name") or rel.get("tag_name", ""),
+                            "date": (rel.get("published_at") or "")[:10],
+                            "prerelease": bool(rel.get("prerelease")),
+                            "notes": (rel.get("body") or "")[:1500],
+                            "url": rel.get("html_url", ""),
+                        })
+        except Exception:
+            pass
+    return out
 
 
 async def _try_github_release_notes(repo: str) -> str:

@@ -42,6 +42,10 @@ from . import audit, chats, config, integrations, localai
 
 MAX_TOOL_OUTPUT = 12000
 MAX_TURNS = 25
+# Absolute ceiling on tool iterations for a single user prompt. The agent no
+# longer stops silently at MAX_TURNS (that is a soft checkpoint now); this is the
+# runaway/cost safety net that always forces a pause even in autonomous mode.
+HARD_MAX_ITERATIONS = 300
 DEFAULT_WORKDIR = os.environ.get(
     "HELMSMAN_WORKDIR", "/host" if os.path.isdir("/host") else os.path.expanduser("~"))
 
@@ -57,6 +61,8 @@ The docker CLI is available and controls the host's Docker engine{host_note}.
 Guidelines:
 - Be concise; the user is often on a phone. Prefer short answers and small steps.
 - Inspect before you change: read files / list dirs / check state first.
+- For any task with more than ~2 steps, call update_plan first to show the user a short \
+plan, and keep it updated (one step in_progress at a time) so they can follow along.
 - For destructive actions (rm, docker rm, overwriting configs), state what you are about to do first.
 - When you finish a task, summarize in 1-3 sentences what you changed.
 - Answer in the language the user writes in.
@@ -172,6 +178,32 @@ TOOLS = [
         },
     },
     {
+        "name": "update_plan",
+        "description": "Publish or update a short, visible to-do plan for the current task, "
+                       "shown to the user beside the chat so they can follow along. Call it "
+                       "once you start any multi-step task, and again whenever a step's status "
+                       "changes (mark exactly one step in_progress at a time). Keep 2-8 concise "
+                       "steps. Display-only: it performs no work itself.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": "Ordered plan steps.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pending", "in_progress", "done"]},
+                        },
+                        "required": ["title"],
+                    },
+                },
+            },
+            "required": ["steps"],
+        },
+    },
+    {
         "name": "update_memory",
         "description": "Update your persistent memory about this server (shown to you in "
                        "every future session). mode 'append' adds a line/section, "
@@ -187,10 +219,11 @@ TOOLS = [
     },
 ]
 
-SAFE_TOOLS = {"read_file", "list_dir", "search_files", "fetch_url", "update_memory"}
+SAFE_TOOLS = {"read_file", "list_dir", "search_files", "fetch_url",
+              "update_memory", "update_plan"}
 MODE_TOOLS = {
     "chat": [],
-    "plan": ["run_command", "read_file", "list_dir", "search_files", "fetch_url"],
+    "plan": ["run_command", "read_file", "list_dir", "search_files", "fetch_url", "update_plan"],
     "agent": [t["name"] for t in TOOLS],
     "auto": [t["name"] for t in TOOLS],
 }
@@ -281,6 +314,15 @@ def system_prompt(workdir: str, mode: str) -> str:
 async def execute_tool(name: str, args: dict, workdir: str) -> str:
     try:
         if name == "run_command":
+            # Self-preservation guard: refuse to stop our own infrastructure
+            cmd = (args.get("command") or "").strip()
+            if _SELF_HOSTNAME and _SELF_DOCKER_BLACKLIST.search(cmd):
+                return (
+                    "[blocked: this command targets the Helmsman container itself "
+                    "or the nginx-proxy-manager that routes to it. "
+                    "Stopping these would take the UI offline. "
+                    "Ask the user to run this manually instead.]"
+                )
             timeout = min(int(args.get("timeout") or 60), 300)
             proc = await asyncio.create_subprocess_shell(
                 args["command"], stdout=asyncio.subprocess.PIPE,
@@ -391,6 +433,90 @@ def _sensitive_call(tc: dict) -> bool:
     return method not in ("GET", "HEAD", "OPTIONS")
 
 
+# Signatures that mean "the action failed because the agent lacks a permission",
+# not because the command itself was wrong. Surfaced to the user as an
+# actionable request instead of a dead-end tool error.
+_PERM_SIGNS = ("permission denied", "read-only file system", "operation not permitted",
+               "permissionerror", "eacces", "must be root", "are you root",
+               "not permitted", "sudo: a password is required", "sudo: no tty",
+               "got permission denied while trying to connect to the docker")
+
+# Self-preservation: the agent must never stop/kill/remove the Helmsman
+# container itself (or the nginx-proxy-manager it routes through), since
+# it runs inside it and has the Docker socket mounted.
+_SELF_HOSTNAME = os.environ.get("HOSTNAME", "")
+_SELF_DOCKER_BLACKLIST = re.compile(
+    rf"\b(?:docker\s+(?:stop|kill|rm|restart|pause|compose\s+down)\s+.*?"
+    rf"(?:{'|'.join(
+        re.escape(n) for n in [
+            _SELF_HOSTNAME, "helmsman",
+            "nginx-proxy-manager", "npm-app",
+            "openresty",
+        ]
+        if n
+    )})"
+    rf"|docker-compose\s+(?:down|stop)\b)",
+    re.IGNORECASE,
+)
+
+
+def detect_permission_issue(name: str, args: dict, output: str) -> dict | None:
+    """Classify a failed tool result as a missing-permission situation and
+    return a plain-language request (kind/title/detail/explanation/risk/fix),
+    or None if it does not look permission-related."""
+    low = (output or "").lower()
+    if not any(s in low for s in _PERM_SIGNS):
+        return None
+    detail = _tool_audit_detail(name, args) or (args.get("path") or args.get("command") or "")
+    detail = detail[:200]
+    if "read-only file system" in low:
+        return {
+            "kind": "host-fs-readonly",
+            "title": "Write access to the host filesystem",
+            "detail": detail,
+            "explanation": "The host filesystem is mounted read-only at /host, so the agent "
+                           "can inspect host files but not change them. To let it edit host "
+                           "files, the /host mount in Helmsman's docker-compose must be changed "
+                           "from read-only (:ro) to read-write and the container recreated.",
+            "risk": "The agent would then be able to modify (or delete) any file on the host, "
+                    "not just this one. Only grant it if you trust the tasks you hand it.",
+            "fix": "Edit helmsman/docker-compose.yml: change the `/:/host:ro` volume to `/:/host` "
+                   "and run `docker compose up -d`.",
+        }
+    if "docker" in low and "permission denied" in low:
+        return {
+            "kind": "docker-permission",
+            "title": "Access to the Docker daemon",
+            "detail": detail,
+            "explanation": "The command needs to talk to the Docker daemon but the current user "
+                           "isn't allowed to (not in the docker group / no socket access).",
+            "risk": "Docker access is effectively root on the host. Grant deliberately.",
+            "fix": "Add the user to the docker group, or run the action from a context that has "
+                   "socket access.",
+        }
+    if any(s in low for s in ("must be root", "are you root", "operation not permitted",
+                              "sudo: a password", "sudo: no tty", "not permitted")):
+        return {
+            "kind": "needs-root",
+            "title": "Elevated (root) privileges",
+            "detail": detail,
+            "explanation": "This action needs root/administrator privileges that the agent "
+                           "doesn't currently have in this context.",
+            "risk": "Root can change anything on the system. Review the exact command before "
+                    "granting.",
+            "fix": "Run the command with the necessary privileges, or open a focused session "
+                   "to set up the access properly.",
+        }
+    return {
+        "kind": "permission",
+        "title": "A missing permission",
+        "detail": detail,
+        "explanation": "The action failed because the agent lacks the permission it needs.",
+        "risk": "Review what the action would do before granting access.",
+        "fix": "Grant the needed access, or open a focused session to resolve it.",
+    }
+
+
 def _resolve(path: str, workdir: str) -> Path:
     p = Path(path)
     return p if p.is_absolute() else Path(workdir) / p
@@ -409,6 +535,18 @@ def _truncate(text: str) -> str:
 #   {"role":"tool","tool_call_id":str,"content":str}
 # Adapters yield: ("text", delta) | ("thinking", delta) | ("thinking_block", {...})
 #                 | ("tool_call", {...}) | ("usage", {...}) | ("stop", reason)
+
+THINKING_TIERS = ("off", "low", "medium", "high")
+# Anthropic extended thinking: tier -> budget_tokens (max_tokens must exceed it)
+_ANTHROPIC_BUDGETS = {"low": 2048, "medium": 8000, "high": 16000}
+
+
+def normalize_thinking(value) -> str:
+    """Accept the new tier strings and the legacy on/off boolean."""
+    if isinstance(value, str) and value in THINKING_TIERS:
+        return value
+    return "medium" if value is True else "off"
+
 
 def _cfg_for(provider: str, model: str) -> dict:
     if provider == "ollama":
@@ -430,7 +568,7 @@ def _filter_tools(tool_names: list[str]) -> list[dict]:
 
 
 async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
-                           tool_names: list[str], thinking: bool = False):
+                           tool_names: list[str], thinking: str = "off"):
     tools = [{"name": t["name"], "description": t["description"],
               "input_schema": t["parameters"]} for t in _filter_tools(tool_names)]
     api_messages = []
@@ -453,13 +591,15 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
             api_messages.append({"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": m["tool_call_id"],
                  "content": m["content"]}]})
+    thinking = normalize_thinking(thinking)
+    budget = _ANTHROPIC_BUDGETS.get(thinking, 0)
     body = {
-        "model": cfg["model"], "max_tokens": 8192 if thinking else 4096,
+        "model": cfg["model"], "max_tokens": budget + 8192 if budget else 4096,
         "system": sysprompt,
         "messages": _merge_consecutive(api_messages), "stream": True,
     }
-    if thinking:
-        body["thinking"] = {"type": "enabled", "budget_tokens": 4000}
+    if budget:
+        body["thinking"] = {"type": "enabled", "budget_tokens": budget}
     if tools:
         body["tools"] = tools
     headers = {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"}
@@ -537,8 +677,14 @@ def _openai_base(cfg: dict) -> str:
         else "https://api.openai.com/v1")
 
 
+def _openai_reasoning_model(model: str) -> bool:
+    """OpenAI models that accept the reasoning_effort parameter."""
+    base = model.lower().split("/")[-1]
+    return bool(re.match(r"(o\d|gpt-5)", base))
+
+
 async def stream_openai(cfg: dict, messages: list, sysprompt: str,
-                        tool_names: list[str], thinking: bool = False):
+                        tool_names: list[str], thinking: str = "off"):
     tools = [{"type": "function", "function": {
         "name": t["name"], "description": t["description"], "parameters": t["parameters"]}}
         for t in _filter_tools(tool_names)]
@@ -558,8 +704,14 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
             api_messages.append({"role": "user", "content": m["content"]})
     body = {"model": cfg["model"], "messages": api_messages, "stream": True,
             "stream_options": {"include_usage": True}}
-    if thinking and cfg["provider"] == "openrouter":
-        body["reasoning"] = {"effort": "medium"}
+    thinking = normalize_thinking(thinking)
+    if thinking != "off":
+        if cfg["provider"] == "openrouter":
+            # OpenRouter normalizes reasoning effort across providers/models
+            body["reasoning"] = {"effort": thinking}
+        elif cfg["provider"] == "openai" and _openai_reasoning_model(cfg["model"]):
+            body["reasoning_effort"] = thinking
+        # ollama/local: no portable reasoning control — run without
     if tools:
         body["tools"] = tools
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
@@ -607,7 +759,7 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
 
 
 def get_stream(cfg: dict, messages: list, sysprompt: str, tool_names: list[str],
-               thinking: bool = False):
+               thinking: str = "off"):
     if cfg["provider"] == "anthropic":
         return stream_anthropic(cfg, messages, sysprompt, tool_names, thinking)
     return stream_openai(cfg, messages, sysprompt, tool_names, thinking)

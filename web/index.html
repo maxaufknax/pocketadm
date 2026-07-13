@@ -16,10 +16,11 @@
   } catch (e) {}
 })();
 </script>
-<title>Helmsman</title>
+<title>PocketADM</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -28,8 +29,8 @@
 <!-- ============ Login ============ -->
 <div id="login-screen" class="login hidden">
   <div class="login-card">
-    <div class="logo-big">⎈</div>
-    <h1>Helmsman</h1>
+    <img class="logo-wordmark" src="/icons/wordmark.svg" alt="PocketADM" width="240" height="240">
+    <h1 class="visually-hidden">PocketADM</h1>
     <p class="muted">Your server, in your pocket.</p>
     <form id="login-form">
       <input type="password" id="login-password" placeholder="Admin password"
@@ -40,9 +41,9 @@
       <p id="login-error" class="error hidden"></p>
     </form>
     <details class="install-hint">
-      <summary>New here? Install Helmsman on a server</summary>
+      <summary>New here? Install PocketADM on a server</summary>
       <p class="muted">SSH into your server and run the one-line installer —
-      it sets up Docker (if needed) and Helmsman, then prints your admin password:</p>
+      it sets up Docker (if needed) and PocketADM, then prints your admin password:</p>
       <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash</pre>
       <p class="muted">Afterwards open <code>http://&lt;server&gt;:8090</code> on your phone
       and add it to your home screen.</p>
@@ -50,14 +51,33 @@
   </div>
 </div>
 
+<!-- ============ Connect (cold start / native client) ============ -->
+<div id="connect-screen" class="login hidden">
+  <div class="login-card">
+    <img class="logo-wordmark" src="/icons/wordmark.svg" alt="PocketADM" width="240" height="240">
+    <p class="muted">Connect this app to your server.</p>
+    <div id="connect-servers" class="connect-servers"></div>
+    <button id="connect-add" class="btn primary wide iconled"><span data-icon="plus"></span> Add a server</button>
+    <button id="connect-scan" class="btn wide iconled"><span data-icon="camera"></span> Scan pairing QR</button>
+    <button id="connect-ssh" class="btn wide iconled"><span data-icon="terminal"></span> Set up a new server over SSH</button>
+    <details class="install-hint">
+      <summary>No server yet? Install PocketADM</summary>
+      <p class="muted">SSH into any Linux server and run the one-line installer —
+      it sets up Docker (if needed) and PocketADM, then prints your admin password:</p>
+      <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash</pre>
+      <p class="muted">Then tap <b>Add a server</b> above with its address and password.</p>
+    </details>
+  </div>
+</div>
+
 <!-- ============ App shell ============ -->
 <div id="app" class="app hidden">
   <header class="topbar">
-    <span class="logo">⎈</span>
-    <button id="host-name" class="hostname" title="switch server"><span id="host-name-text">server</span><span class="host-caret">▾</span></button>
+    <img class="logo" src="/icons/logo.svg" alt="PocketADM">
+    <button id="host-name" class="hostname" title="switch server"><span id="host-name-text">server</span><span class="host-caret" data-icon="chevron-down"></span></button>
     <span class="spacer"></span>
-    <button id="instruct-btn" class="iconbtn" title="instruct the agent">⌁</button>
-    <button id="notif-btn" class="iconbtn" title="notifications">🔔<span id="notif-badge" class="badge hidden"></span></button>
+    <button id="instruct-btn" class="iconbtn" title="instruct the agent"><span data-icon="zap"></span></button>
+    <button id="notif-btn" class="iconbtn" title="notifications"><span data-icon="bell"></span><span id="notif-badge" class="badge hidden"></span></button>
     <span id="conn-dot" class="dot ok" title="connected"></span>
   </header>
 
@@ -74,10 +94,7 @@
       </div>
       <div class="section-head">
         <h2>Services</h2>
-        <div class="row-inline">
-          <span id="container-count" class="muted"></span>
-          <button id="svc-viewmode" class="btn small" title="toggle technical view">⚙</button>
-        </div>
+        <span id="container-count" class="muted"></span>
       </div>
       <div id="service-list"></div>
     </section>
@@ -85,18 +102,23 @@
     <!-- Vibe Code -->
     <section id="view-vibe" class="view hidden">
       <div class="vibe-header">
-        <button id="chat-list-btn" class="btn small" title="your chats">☰ Chats</button>
+        <button id="chat-list-btn" class="btn small iconled" title="your chats"><span data-icon="menu"></span> Chats</button>
         <span id="chat-title" class="chat-title"></span>
         <span class="spacer"></span>
-        <button id="chat-handoff" class="btn small" title="continue this chat on another device">🔗</button>
-        <button id="chat-new" class="btn small" title="start a new chat">＋ New</button>
+        <button id="chat-handoff" class="btn small iconled" title="continue this chat on another device (QR)"><span data-icon="qr-code"></span></button>
+        <button id="chat-new" class="btn small iconled" title="start a new chat"><span data-icon="plus"></span> New</button>
       </div>
+      <details id="plan-panel" class="plan-panel hidden" open>
+        <summary><span data-icon="list"></span> <span id="plan-summary">Plan</span></summary>
+        <ul id="plan-steps" class="plan-steps"></ul>
+      </details>
       <div id="chat-log" class="chat-log"></div>
       <div class="run-status hidden" id="run-status">
         <span class="run-pulse"></span>
         <span id="run-status-text">Agent is working…</span>
         <span class="spacer"></span>
-        <button id="chat-stop" class="btn small danger">⏹ Stop</button>
+        <button id="chat-continue" class="btn small primary iconled hidden"><span data-icon="play"></span> Continue</button>
+        <button id="chat-stop" class="btn small danger iconled"><span data-icon="square"></span> Stop</button>
       </div>
       <div class="usage-row hidden" id="usage-row">
         <span id="usage-text"></span>
@@ -109,20 +131,24 @@
           <button data-mode="auto">Auto</button>
         </div>
         <select id="chat-model" class="select mini" title="model"></select>
-        <button id="chat-workspace-btn" class="btn small ws-btn" title="working folder">📁 <span id="ws-label">…</span></button>
-        <button id="chat-thinking" class="btn small" title="extended thinking">💭</button>
+        <button id="chat-workspace-btn" class="btn small ws-btn iconled" title="working folder"><span data-icon="folder"></span> <span id="ws-label">…</span></button>
+        <button id="chat-thinking" class="btn small iconled" title="extended thinking effort"><span data-icon="brain"></span><span id="thinking-label"></span></button>
       </div>
+      <div id="context-chips" class="context-chips hidden"></div>
       <div id="slash-hints" class="slash-hints hidden"></div>
       <div class="chat-input-row">
+        <button id="chat-attach" class="btn round attach" title="attach context"><span data-icon="plus"></span></button>
         <textarea id="chat-input" rows="1" placeholder="Ask, instruct, or type / for commands…"></textarea>
-        <button id="chat-send" class="btn primary round">➤</button>
+        <button id="chat-send" class="btn primary round" title="send"><span data-icon="arrow-up"></span></button>
       </div>
     </section>
 
     <!-- Terminal -->
     <section id="view-terminal" class="view hidden">
       <div class="term-toolbar">
-        <select id="term-context" class="select"><option value="local">Helmsman shell</option></select>
+        <select id="term-context" class="select"><option value="local">PocketADM shell</option></select>
+        <button id="term-files" class="btn small iconled" title="browse files"><span data-icon="folder-open"></span> Files</button>
+        <button id="term-agents" class="btn small iconled" title="coding agents (Claude Code, Codex)"><span data-icon="sparkles"></span> Agents</button>
         <button id="term-reconnect" class="btn small">Reconnect</button>
       </div>
       <div id="terminal" class="terminal"></div>
@@ -165,7 +191,7 @@
             <span id="report-time" class="muted"></span>
           </div>
           <div class="row-inline">
-            <button id="report-analyze" class="btn small">✦ AI analysis</button>
+            <button id="report-analyze" class="btn small ai iconled"><span data-icon="sparkles"></span> AI analysis</button>
             <button id="report-run" class="btn small primary">Run now</button>
           </div>
         </div>
@@ -186,7 +212,7 @@
       <div class="section-head"><h2>Server</h2></div>
       <div id="server-identity" class="card ident-card"><div class="muted">Loading server details…</div></div>
       <div class="card form-card">
-        <label>Display name in Helmsman
+        <label>Display name in PocketADM
           <input type="text" id="server-name" placeholder="My homeserver"></label>
         <p class="muted" style="margin:-4px 0 8px">A friendly label shown in the app. It doesn’t rename the real server.</p>
         <button id="server-name-save" class="btn">Save name</button>
@@ -205,7 +231,7 @@
 
       <div class="section-head"><h2>Passwords</h2></div>
       <div class="card form-card">
-        <div class="sec-title">Helmsman admin password</div>
+        <div class="sec-title">PocketADM admin password</div>
         <p class="muted" style="margin:2px 0 10px">The password you use to sign in to this app. To change a Linux user’s password, use <b>People &amp; access</b> above.</p>
         <label>Current password
           <input type="password" id="pw-current" placeholder="Current password" autocomplete="current-password"></label>
@@ -270,7 +296,7 @@
       </div>
       <div class="card form-card" id="localai-card">
         <p class="muted" style="margin-bottom:10px">Run a model <b>on this server</b> — free, private, and offline.
-        Helmsman uses <b>Ollama</b> and picks models that fit your hardware. Local models then appear in the
+        PocketADM uses <b>Ollama</b> and picks models that fit your hardware. Local models then appear in the
         chat model picker just like cloud ones.</p>
         <div id="localai-body"><div class="muted">Checking for a local model runtime…</div></div>
       </div>
@@ -299,12 +325,12 @@
 
       <div class="section-head"><h2>Agent instructions &amp; memory</h2></div>
       <div class="card form-card">
-        <div class="sec-title">✍️ Custom instructions</div>
+        <div class="sec-title iconled"><span data-icon="pen-line"></span> Custom instructions</div>
         <p class="muted" style="margin:2px 0 8px">Standing orders you write for the agent — how it should behave, rules to always or never follow. Added to the start of every conversation.</p>
         <textarea id="agent-instructions" rows="4" spellcheck="false" placeholder="e.g. Always explain in simple terms. Never restart containers without asking. Prefer German."></textarea>
         <button id="agent-instructions-save" class="btn" style="margin-top:8px">Save instructions</button>
         <hr class="sep">
-        <div class="sec-title">🧠 Memory <span class="muted" style="font-weight:400">· the agent writes this itself</span></div>
+        <div class="sec-title iconled"><span data-icon="brain"></span> Memory <span class="muted" style="font-weight:400">· the agent writes this itself</span></div>
         <p class="muted" style="margin:2px 0 8px">What the agent has learned about your server across chats. It updates this on its own — edit or clear it anytime.</p>
         <textarea id="agent-memory" rows="6" spellcheck="false" placeholder="(empty — the agent will fill this as it works)"></textarea>
         <button id="agent-memory-save" class="btn" style="margin-top:8px">Save memory</button>
@@ -318,11 +344,45 @@
         <div id="agent-tools" class="tool-toggles"><div class="muted">Loading tools…</div></div>
       </div>
 
+      <div class="section-head"><h2>Autonomy &amp; alerts</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">How the agent behaves on long tasks, and when it pings your phone.</p>
+        <div class="sec-title iconled"><span data-icon="refresh-cw"></span> When it has worked a while</div>
+        <div class="seg" id="autonomy-seg" style="margin:8px 0">
+          <button data-pause="checkpoint" class="active">Check in &amp; ask</button>
+          <button data-pause="autonomous">Keep going</button>
+        </div>
+        <p class="muted" style="margin:2px 0 10px" id="autonomy-hint"></p>
+        <div class="field-row">
+          <span>Check in every</span>
+          <input id="autonomy-steps" type="number" min="0" max="500" style="width:74px"> <span class="muted">steps</span>
+        </div>
+        <div class="field-row">
+          <span>…or every</span>
+          <input id="autonomy-minutes" type="number" min="0" max="1440" style="width:74px"> <span class="muted">min (0 = off)</span>
+        </div>
+        <hr class="sep">
+        <div class="sec-title iconled"><span data-icon="bell"></span> Push notifications</div>
+        <p class="muted" style="margin:2px 0 8px">Get a push when the agent pauses to ask, or stops on an error. Uses <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> — paste your topic URL.</p>
+        <label class="switch-row"><input type="checkbox" id="autonomy-push"> <span>Send agent pushes</span></label>
+        <input id="autonomy-ntfy" type="text" style="margin-top:8px" placeholder="https://ntfy.sh/your-topic" spellcheck="false">
+        <button id="autonomy-save" class="btn" style="margin-top:10px">Save</button>
+      </div>
+
+      <div class="section-head">
+        <h2>Tasks &amp; permissions</h2>
+        <span class="muted" id="perm-count"></span>
+      </div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">When the agent hits a wall it can’t pass (missing rights), it lands here — with a plain explanation and a way to resolve it in a focused session.</p>
+        <div id="perm-list"><div class="muted">No open tasks.</div></div>
+      </div>
+
       <div class="section-head"><h2>Default workspace</h2></div>
       <div class="card form-card">
         <p class="muted" style="margin-bottom:10px">The folder new agent chats start in — usually where your server’s files and compose stacks live.</p>
         <div class="ws-current">
-          <span class="tile-icon sm tint-1">📁</span>
+          <span class="tile-icon sm tint-1" data-icon="folder"></span>
           <div style="flex:1;min-width:0">
             <div id="default-ws-path" class="card-title">…</div>
             <div class="card-sub">agent’s starting folder</div>
@@ -343,7 +403,7 @@
       </div>
       <div class="card form-card">
         <p class="muted" style="margin-bottom:10px">Little AI watchmen that check your server on a
-        schedule — even when the app is closed — and report to the 🔔 bell. They only ever
+        schedule — even when the app is closed — and report to the bell in the top bar. They only ever
         <b>look</b> (read-only): they never change anything on their own. Add an ntfy topic to
         also get a push to your phone.</p>
         <div id="loops-list"></div>
@@ -353,11 +413,11 @@
 
       <div class="section-head">
         <h2>Integrations</h2>
-        <span class="muted">🔒 secured</span>
+        <span class="muted">secured</span>
       </div>
       <div class="card form-card">
         <div class="integ-shield">
-          <span class="integ-shield-ico">🔒</span>
+          <span class="integ-shield-ico" data-icon="lock"></span>
           <div>Connect DNS providers and other APIs once, then let the agent manage them for you
           (e.g. “add an A record for blog.example.com”). Your tokens are stored encrypted-at-rest
           on this server with locked-down permissions, <b>never shown to the AI</b>, and injected
@@ -370,14 +430,14 @@
 
       <div class="section-head"><h2>App catalog</h2></div>
       <div class="card form-card">
-        <p class="muted" style="margin-bottom:10px">Helmsman’s App Store is served from an online
-        catalog so new apps appear without updating Helmsman. Point this at your own JSON to add
+        <p class="muted" style="margin-bottom:10px">PocketADM’s App Store is served from an online
+        catalog so new apps appear without updating PocketADM. Point this at your own JSON to add
         private apps. Leave blank to use only the built-in catalog.</p>
         <label>Catalog URL
           <input type="url" id="catalog-url" placeholder="https://…/catalog.json" autocapitalize="off"></label>
         <div class="card-actions">
           <button id="catalog-save" class="btn">Save</button>
-          <button id="catalog-refresh" class="btn small">⟳ Refresh now</button>
+          <button id="catalog-refresh" class="btn small iconled"><span data-icon="refresh-cw"></span> Refresh now</button>
         </div>
         <p id="catalog-status" class="muted"></p>
       </div>
@@ -396,34 +456,50 @@
         <button id="report-config-save" class="btn">Save</button>
       </div>
 
+      <div class="section-head"><h2>Backup</h2></div>
+      <div class="card form-card">
+        <p class="muted" style="margin-bottom:10px">Everything PocketADM knows — settings, API keys,
+        chats, agent memory, installed-app definitions, audit log — in one downloadable archive.
+        <b>Keep it safe:</b> it contains your keys. App <i>data</i> (photos, databases …) is not
+        included — the Checks tab tells you if real backups are missing.</p>
+        <div class="card-actions">
+          <button id="backup-export" class="btn primary iconled"><span data-icon="download"></span> Download backup</button>
+          <button id="backup-restore-btn" class="btn iconled"><span data-icon="upload"></span> Restore…</button>
+          <input type="file" id="backup-restore-file" accept=".gz,.tgz,application/gzip" class="hidden">
+        </div>
+        <p id="backup-status" class="muted"></p>
+      </div>
+
       <div class="section-head"><h2>Session</h2></div>
       <div class="card form-card">
         <button id="logout" class="btn danger">Sign out</button>
       </div>
-      <p class="muted center" style="margin-top:24px">Helmsman <span id="app-version"></span> · open source server command center</p>
+      <p class="muted center" style="margin-top:24px">PocketADM <span id="app-version"></span> · open source server command center</p>
     </section>
   </main>
 
   <nav class="tabbar">
-    <button class="tab active" data-view="dashboard"><span class="ico">▦</span>Home</button>
-    <button class="tab" data-view="vibe"><span class="ico">✦</span>Vibe</button>
-    <button class="tab" data-view="terminal"><span class="ico">❯_</span>Term</button>
-    <button class="tab" data-view="health"><span class="ico">♥</span><span id="health-badge" class="badge hidden"></span>Health</button>
-    <button class="tab" data-view="apps"><span class="ico">◲</span>Apps</button>
-    <button class="tab" data-view="settings"><span class="ico">⚙</span>More</button>
+    <div class="rail-brand"><img class="rail-logo" src="/icons/logo.svg" alt=""><span class="rail-name">PocketADM</span></div>
+    <button class="tab active" data-view="dashboard"><span class="ico" data-icon="layout-grid"></span><span class="tab-label">Home</span></button>
+    <button class="tab" data-view="vibe"><span class="ico" data-icon="sparkles"></span><span class="tab-label">Vibe</span></button>
+    <button class="tab" data-view="terminal"><span class="ico" data-icon="terminal"></span><span class="tab-label">Term</span></button>
+    <button class="tab" data-view="health"><span class="ico" data-icon="heart-pulse"></span><span id="health-badge" class="badge hidden"></span><span class="tab-label">Health</span></button>
+    <button class="tab" data-view="apps"><span class="ico" data-icon="blocks"></span><span class="tab-label">Apps</span></button>
+    <button class="tab" data-view="settings"><span class="ico" data-icon="settings"></span><span class="tab-label">More</span></button>
   </nav>
 </div>
 
 <!-- ============ Modal ============ -->
 <div id="modal" class="modal hidden">
   <div class="modal-box">
-    <div class="modal-head"><h3 id="modal-title"></h3><button id="modal-close" class="btn small">✕</button></div>
+    <div class="modal-head"><h3 id="modal-title"></h3><button id="modal-close" class="btn small iconled" title="close"><span data-icon="x"></span></button></div>
     <div id="modal-body" class="modal-body"></div>
   </div>
 </div>
 
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/xterm-addon-fit.js"></script>
+<script src="/icons.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

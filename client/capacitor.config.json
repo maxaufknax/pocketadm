@@ -1,0 +1,24 @@
+{
+  "appId": "de.maxaufknax.pocketadm",
+  "appName": "PocketADM",
+  "webDir": "www",
+  "backgroundColor": "#0b0f14",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "pocketadm"
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#0b0f14"
+  },
+  "android": {
+    "backgroundColor": "#0b0f14"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 400,
+      "backgroundColor": "#0b0f14",
+      "showSpinner": false
+    }
+  }
+}

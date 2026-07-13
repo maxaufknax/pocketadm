@@ -20,6 +20,23 @@ import termios
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from . import config
+
+# The local shell gets a HOME on the data volume so anything installed there
+# (Claude Code / Codex CLI, their login sessions, dotfiles, shell history)
+# survives container recreates and updates.
+PERSIST_HOME = config.DATA_DIR / "home"
+
+
+def _local_env(env: dict) -> dict:
+    try:
+        PERSIST_HOME.mkdir(exist_ok=True)
+        env["HOME"] = str(PERSIST_HOME)
+        env["PATH"] = f"{PERSIST_HOME}/.local/bin:{PERSIST_HOME}/bin:" + env.get("PATH", "")
+    except OSError:
+        pass
+    return env
+
 
 def build_command(context: str) -> list[str]:
     if context.startswith("container:"):
@@ -48,6 +65,8 @@ async def handle_terminal(ws: WebSocket, context: str = "local") -> None:
     pid, fd = pty.fork()
     if pid == 0:  # child
         env = dict(os.environ, TERM="xterm-256color", LANG="C.UTF-8")
+        if context == "local":
+            env = _local_env(env)
         try:
             os.execvpe(cmd[0], cmd, env)
         except FileNotFoundError:
