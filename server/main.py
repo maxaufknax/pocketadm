@@ -9,9 +9,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import (agents, ai, appstore, audit, auth, chats, config, dockerapi,
-               hostuser, integrations, jobs, localai, metrics, pairing, reports,
-               sessions, snapshots, sysinfo, terminal, updates)
+from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
+               clis, config, dockerapi, hostuser, integrations, jobs, localai,
+               metrics, pairing, permissions, reports, sessions, snapshots,
+               sysinfo, terminal, updates)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -181,15 +182,6 @@ async def containers():
     return result
 
 
-@app.post("/api/containers/{cid}/{action}", dependencies=[authed])
-async def container_action(cid: str, action: str):
-    if action not in ("start", "stop", "restart"):
-        raise HTTPException(400, "bad action")
-    await dockerapi.container_action(cid, action)
-    audit.record("container_action", target=cid, detail=action)
-    return {"ok": True}
-
-
 @app.get("/api/containers/{cid}/logs", dependencies=[authed])
 async def container_logs(cid: str, tail: int = 200):
     return {"logs": await dockerapi.container_logs(cid, min(tail, 2000))}
@@ -240,6 +232,17 @@ async def container_describe(cid: str, body: DescribeBody):
         raise HTTPException(500, str(e))
 
 
+# NOTE: registered AFTER the specific POST routes above — FastAPI matches routes
+# in registration order, so this catch-all must not shadow e.g. …/describe.
+@app.post("/api/containers/{cid}/{action}", dependencies=[authed])
+async def container_action(cid: str, action: str):
+    if action not in ("start", "stop", "restart"):
+        raise HTTPException(400, "bad action")
+    await dockerapi.container_action(cid, action)
+    audit.record("container_action", target=cid, detail=action)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------ metrics
 
 @app.get("/api/metrics/history", dependencies=[authed])
@@ -249,43 +252,135 @@ async def metrics_history(minutes: int = 60):
 
 # ---------------------------------------------------------- fs browser
 
-@app.get("/api/fs", dependencies=[authed])
-async def fs_list(path: str = ""):
-    """Directory browser for the workspace picker — restricted to the
-    configured workspace roots (plus the default workdir)."""
-    roots = []
+def _fs_roots() -> list[str]:
+    roots: list[str] = []
     for r in config.get_workspaces() + [ai.DEFAULT_WORKDIR]:
         rp = os.path.realpath(r)
         if os.path.isdir(rp) and rp not in roots:
             roots.append(rp)
+    return roots
+
+
+def _within_roots(resolved: str, roots: list[str]) -> bool:
+    return any(resolved == r or resolved.startswith(r + os.sep) for r in roots)
+
+
+# file kinds we can safely preview as text in the Explorer
+_TEXT_EXT = {".txt", ".md", ".markdown", ".log", ".conf", ".cfg", ".ini", ".env",
+             ".yml", ".yaml", ".json", ".toml", ".xml", ".html", ".htm", ".css",
+             ".js", ".ts", ".jsx", ".tsx", ".py", ".sh", ".bash", ".zsh", ".rb",
+             ".go", ".rs", ".c", ".h", ".cpp", ".java", ".php", ".sql", ".csv",
+             ".service", ".gitignore", ".dockerignore", ".properties"}
+_TEXT_NAMES = {"Dockerfile", "docker-compose.yml", "Makefile", "LICENSE",
+               "README", ".env", ".gitignore", "requirements.txt"}
+
+
+def _looks_text(name: str) -> bool:
+    ext = os.path.splitext(name)[1].lower()
+    return ext in _TEXT_EXT or name in _TEXT_NAMES or "." not in name
+
+
+@app.get("/api/fs", dependencies=[authed])
+async def fs_list(path: str = "", files: int = 0):
+    """Directory browser — restricted to the configured workspace roots (plus
+    the default workdir). With ?files=1 it also returns file entries (name,
+    path, size, whether previewable as text) so it can back the Explorer."""
+    roots = _fs_roots()
     if not path:
         return {"path": "", "parent": None,
-                "dirs": [{"name": r, "path": r} for r in roots], "roots": roots}
+                "dirs": [{"name": r, "path": r} for r in roots],
+                "file_entries": [], "files": 0, "roots": roots}
     resolved = os.path.realpath(path)
-    if not any(resolved == r or resolved.startswith(r + os.sep) for r in roots):
+    if not _within_roots(resolved, roots):
         raise HTTPException(403, "outside allowed workspaces")
     if not os.path.isdir(resolved):
         raise HTTPException(404, "not a directory")
-    dirs, files = [], 0
+    dirs, file_entries, file_count = [], [], 0
     try:
         with os.scandir(resolved) as it:
             for e in sorted(it, key=lambda e: e.name.lower()):
-                if e.name.startswith(".") and e.name not in (".config",):
+                if e.name.startswith(".") and e.name not in (".config", ".env"):
                     continue
                 try:
                     if e.is_dir(follow_symlinks=False):
                         dirs.append({"name": e.name, "path": os.path.join(resolved, e.name)})
                     else:
-                        files += 1
+                        file_count += 1
+                        if files:
+                            try:
+                                size = e.stat(follow_symlinks=False).st_size
+                            except OSError:
+                                size = 0
+                            file_entries.append({
+                                "name": e.name, "path": os.path.join(resolved, e.name),
+                                "size": size, "text": _looks_text(e.name)})
                 except OSError:
                     pass
     except PermissionError:
         raise HTTPException(403, "permission denied")
     parent = os.path.dirname(resolved)
-    if not any(parent == r or parent.startswith(r + os.sep) for r in roots):
+    if not _within_roots(parent, roots):
         parent = ""
-    return {"path": resolved, "parent": parent, "dirs": dirs[:400],
-            "files": files, "roots": roots}
+    return {"path": resolved, "parent": parent, "dirs": dirs[:600],
+            "file_entries": file_entries[:600], "files": file_count, "roots": roots}
+
+
+@app.get("/api/fs/read", dependencies=[authed])
+async def fs_read(path: str):
+    """Preview a text file inside the allowed roots (size-capped)."""
+    roots = _fs_roots()
+    resolved = os.path.realpath(path)
+    if not _within_roots(resolved, roots):
+        raise HTTPException(403, "outside allowed workspaces")
+    if not os.path.isfile(resolved):
+        raise HTTPException(404, "not a file")
+    try:
+        size = os.path.getsize(resolved)
+    except OSError:
+        raise HTTPException(404, "not readable")
+    cap = 512 * 1024
+    try:
+        with open(resolved, "rb") as fh:
+            raw = fh.read(cap + 1)
+    except PermissionError:
+        raise HTTPException(403, "permission denied")
+    except OSError:
+        raise HTTPException(404, "not readable")
+    truncated = len(raw) > cap
+    raw = raw[:cap]
+    if b"\x00" in raw[:4096]:
+        return {"path": resolved, "size": size, "binary": True, "content": "",
+                "truncated": truncated}
+    return {"path": resolved, "size": size, "binary": False, "truncated": truncated,
+            "content": raw.decode("utf-8", "replace")}
+
+
+# ----------------------------------------------------- SSH bootstrap (fleet)
+
+class BootstrapBody(BaseModel):
+    host: str
+    user: str = "root"
+    password: str = ""
+    key: str = ""
+    port: int = 22
+    install_port: int = 8090
+
+
+@app.post("/api/bootstrap/ssh", dependencies=[authed])
+async def bootstrap_ssh(body: BootstrapBody):
+    """Install PocketADM onto another machine over SSH, streamed as a job.
+    Credentials are used transiently and never stored."""
+    if not bootstrap.available():
+        raise HTTPException(501, "SSH support unavailable (paramiko not installed)")
+    host = (body.host or "").strip()
+    if not host:
+        raise HTTPException(400, "host is required")
+    job = bootstrap.start_job(host, (body.user or "root").strip(),
+                              password=body.password, key=body.key,
+                              port=body.port or 22, install_port=body.install_port or 8090)
+    audit.record("bootstrap_ssh", target=f"{body.user}@{host}",
+                 detail="remote install started")
+    return {"job_id": job.id}
 
 
 # ----------------------------------------------------------------- jobs
@@ -318,6 +413,12 @@ async def get_updates(force: bool = False):
     docker_updates, apt = await asyncio.gather(
         updates.check_docker_updates(force), updates.check_apt_updates())
     return {"docker": docker_updates, "apt": apt}
+
+
+@app.get("/api/updates/detail", dependencies=[authed])
+async def update_detail(image: str):
+    """Installed version/build date + latest upstream releases for one image."""
+    return await updates.release_details(image)
 
 
 class UpdateBody(BaseModel):
@@ -741,7 +842,13 @@ class RenameBody(BaseModel):
 async def chat_rename(chat_id: str, body: RenameBody):
     if not chats.rename(chat_id, body.title):
         raise HTTPException(404, "no such chat")
-    return {"ok": True}
+    # keep a live session (and every device watching it) in sync
+    live = sessions.manager.get(chat_id)
+    if live:
+        live.chat["title"] = body.title.strip()[:80] or chats.DEFAULT_TITLE
+        await live.broadcast(type="chat_meta", id=chat_id,
+                             title=live.chat["title"], live=False)
+    return {"ok": True, "title": body.title.strip()[:80]}
 
 
 @app.delete("/api/chats/{chat_id}", dependencies=[authed])
@@ -885,6 +992,46 @@ async def agent_tools():
     return {"tools": ai.tool_docs()}
 
 
+@app.get("/api/agent/autonomy", dependencies=[authed])
+async def get_autonomy():
+    return {**config.get_autonomy(), "ntfy_url": config.get_ntfy_url()}
+
+
+class AutonomyBody(BaseModel):
+    pause_mode: str | None = None
+    steps: int | None = None
+    minutes: int | None = None
+    push: bool | None = None
+    ntfy_url: str | None = None
+
+
+@app.post("/api/agent/autonomy", dependencies=[authed])
+async def set_autonomy(body: AutonomyBody):
+    if body.ntfy_url is not None:
+        config.set_ntfy_url(body.ntfy_url)
+    au = config.set_autonomy(pause_mode=body.pause_mode or "", steps=body.steps,
+                             minutes=body.minutes, push=body.push)
+    return {**au, "ntfy_url": config.get_ntfy_url()}
+
+
+@app.get("/api/permissions", dependencies=[authed])
+async def list_permissions():
+    return {"items": permissions.list_all(), "open": permissions.open_count()}
+
+
+class PermActionBody(BaseModel):
+    action: str   # "dismiss" | "resolve"
+
+
+@app.post("/api/permissions/{req_id}", dependencies=[authed])
+async def act_permission(req_id: str, body: PermActionBody):
+    status = "dismissed" if body.action == "dismiss" else "resolved"
+    if not permissions.set_status(req_id, status):
+        raise HTTPException(404, "no such request")
+    audit.record("permission_" + status, target=req_id)
+    return {"ok": True, "open": permissions.open_count()}
+
+
 class ToolToggleBody(BaseModel):
     enabled: bool
 
@@ -970,6 +1117,53 @@ class ReportConfigBody(BaseModel):
 async def reports_config(body: ReportConfigBody):
     config.set_report_config(body.interval_min, body.auto)
     return {"ok": True}
+
+
+# -------------------------------------------------------------- backups
+
+@app.get("/api/backup/export", dependencies=[authed])
+async def backup_export():
+    """Download PocketADM's state (settings, keys, chats, memory, app compose
+    files, audit log) as a tar.gz. Sensitive — contains keys and secrets."""
+    name, data = await asyncio.to_thread(backups.export_archive)
+    audit.record("backup_export", detail=f"{len(data)} bytes")
+    return StreamingResponse(iter([data]), media_type="application/gzip",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/api/backup/restore", dependencies=[authed])
+async def backup_restore(request: Request):
+    """Restore a previously exported backup (raw tar.gz body). Overwrites
+    current settings — a restart afterwards is recommended."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "empty upload")
+    if len(data) > 100 * 1024 * 1024:
+        raise HTTPException(413, "backup too large")
+    try:
+        restored = await asyncio.to_thread(backups.restore_archive, data)
+    except Exception as e:
+        raise HTTPException(400, f"restore failed: {e}")
+    audit.record("backup_restore", detail=f"{len(restored)} files")
+    return {"ok": True, "files": len(restored),
+            "note": "Restored. Restart the PocketADM container to apply everything cleanly."}
+
+
+# ------------------------------------------------- coding-agent CLIs
+
+@app.get("/api/clis", dependencies=[authed])
+async def clis_index():
+    return {"clis": await clis.status()}
+
+
+@app.post("/api/clis/{tool}/install", dependencies=[authed])
+async def clis_install(tool: str):
+    try:
+        job = clis.start_install_job(tool)
+    except ValueError:
+        raise HTTPException(404, "unknown tool")
+    audit.record("cli_install", target=tool)
+    return {"job_id": job.id}
 
 
 # ----------------------------------------------------------- websockets

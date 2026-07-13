@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.8.0"
+VERSION = "0.11.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -266,6 +266,47 @@ def get_report_config() -> dict:
 def set_report_config(interval_min: int, auto: bool) -> None:
     settings["report_interval_min"] = max(15, interval_min)
     settings["report_auto"] = auto
+    save_settings(settings)
+
+
+# ---------------------------------------------------------- agent autonomy
+
+# How the long-running agent behaves at a checkpoint (every N steps / minutes):
+#   "checkpoint" — pause and wait for the user to tap Continue (push sent)
+#   "autonomous" — keep going on its own; only pause at the hard safety cap
+def get_autonomy() -> dict:
+    a = settings.get("agent_autonomy", {})
+    return {
+        "pause_mode": a.get("pause_mode", "checkpoint"),
+        "steps": int(a.get("steps", 25)),        # tool runs per checkpoint (0 = off)
+        "minutes": int(a.get("minutes", 0)),     # wall-clock per checkpoint (0 = off)
+        "push": bool(a.get("push", True)),        # notify on pause / error
+    }
+
+
+def set_autonomy(pause_mode: str = "", steps: int | None = None,
+                 minutes: int | None = None, push: bool | None = None) -> dict:
+    a = settings.setdefault("agent_autonomy", {})
+    if pause_mode in ("checkpoint", "autonomous"):
+        a["pause_mode"] = pause_mode
+    if steps is not None:
+        a["steps"] = max(0, min(500, int(steps)))
+    if minutes is not None:
+        a["minutes"] = max(0, min(1440, int(minutes)))
+    if push is not None:
+        a["push"] = bool(push)
+    save_settings(settings)
+    return get_autonomy()
+
+
+def get_ntfy_url() -> str:
+    """Global ntfy topic URL used for agent push (pause / stop / done).
+    Per-loop URLs (Sentinel) are separate and take precedence for those."""
+    return os.environ.get("NTFY_URL", "") or settings.get("ntfy_url", "")
+
+
+def set_ntfy_url(url: str) -> None:
+    settings["ntfy_url"] = (url or "").strip()[:300]
     save_settings(settings)
 
 

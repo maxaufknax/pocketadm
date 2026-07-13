@@ -1,8 +1,8 @@
-/* Helmsman service worker — cache the app shell, never cache API/WS. */
-const CACHE = "helmsman-v9";
-const SHELL = ["/", "/style.css", "/app.js", "/manifest.webmanifest",
+/* PocketADM service worker — cache the app shell, never cache API/WS. */
+const CACHE = "pocketadm-v15";
+const SHELL = ["/", "/style.css", "/app.js", "/icons.js", "/manifest.webmanifest",
   "/vendor/xterm.js", "/vendor/xterm.css", "/vendor/xterm-addon-fit.js",
-  "/icons/icon.svg"];
+  "/icons/icon.svg", "/icons/logo.svg", "/icons/wordmark.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

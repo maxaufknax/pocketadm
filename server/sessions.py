@@ -30,7 +30,7 @@ import json
 import os
 import time
 
-from . import ai, audit, chats, config, discovery
+from . import agents, ai, audit, chats, config, discovery, permissions
 
 # events that make up the replayable in-flight turn (see Session.live_events)
 _LIVE_KINDS = {"text", "thinking", "thinking_block", "tool_request",
@@ -70,15 +70,23 @@ class Session:
         self.provider = default["provider"]
         self.model = default["model"]
         self.workdir = config.get_default_workspace() or ai.DEFAULT_WORKDIR
-        self.thinking = False
+        self.thinking = "off"   # "off" | "low" | "medium" | "high" (effort tier)
+
+        self.plan: list[dict] = chat.get("plan") or []   # visible to-do panel
 
         self.subscribers: set[Client] = set()
         self.inbox: list[str] = []            # queued user messages / steering
         self.pending: dict[str, asyncio.Future] = {}
         self.run_task: asyncio.Task | None = None
         self.running = False
+        self.paused = False                   # awaiting a "continue" at a checkpoint
+        self.pause_info: dict = {}
+        self.continue_fut: asyncio.Future | None = None
         self.live_events: list[dict] = []     # in-flight turn, for late joiners
         self._mutated = False                 # did a state-changing tool run?
+        self._steps = 0                       # tool runs since last checkpoint
+        self._total_steps = 0                 # tool runs this prompt (for status)
+        self._ckpt_start = 0.0                # wall-clock of last checkpoint
 
     # ---------------------------------------------------------- attach/replay
 
@@ -98,6 +106,7 @@ class Session:
             type="chat", id=self.chat_id, title=self.chat["title"],
             events=chats.display_events(self.messages),
             config=self.config_dict(), running=self.running,
+            plan=self.plan, paused=self.paused, pause=self.pause_info,
             live=self.live_events if self.running else [])
 
     async def broadcast(self, live: bool = True, **event) -> None:
@@ -134,8 +143,10 @@ class Session:
             wd = self._safe_workdir(msg["workdir"])
             if wd != self.workdir:
                 self.workdir, changed = wd, True
-        if "thinking" in msg and bool(msg["thinking"]) != self.thinking:
-            self.thinking, changed = bool(msg["thinking"]), True
+        if "thinking" in msg:
+            tier = ai.normalize_thinking(msg["thinking"])
+            if tier != self.thinking:
+                self.thinking, changed = tier, True
         return changed
 
     def _safe_workdir(self, path: str) -> str:
@@ -157,17 +168,48 @@ class Session:
             if not fut.done():
                 fut.set_result(False)
         self.pending.clear()
+        if self.continue_fut and not self.continue_fut.done():
+            self.continue_fut.set_result(False)
         if self.run_task and not self.run_task.done():
             self.run_task.cancel()
 
-    async def submit_user(self, text: str) -> None:
+    def resume_continue(self) -> None:
+        """User tapped Continue on a checkpoint pause."""
+        if self.continue_fut and not self.continue_fut.done():
+            self.continue_fut.set_result(True)
+
+    def rewind(self, ordinal: int) -> str | None:
+        """Drop history from the Nth user message on (0-based, counting only
+        visible user messages) — the Claude-Code-style 'edit / retract' flow.
+        Returns the removed message's text, or None if it can't rewind."""
+        if self.running:
+            return None
+        count = -1
+        for i, m in enumerate(self.messages):
+            if m.get("role") == "user" and isinstance(m.get("content"), str) \
+                    and m["content"].strip():
+                count += 1
+                if count == ordinal:
+                    removed = m["content"]
+                    del self.messages[i:]
+                    self._persist()
+                    return removed
+        return None
+
+    async def submit_user(self, text: str, context: str = "") -> None:
         text = (text or "").strip()
-        if not text:
+        if not text and not context:
             return
-        self.inbox.append(text)
-        # every device shows the message immediately (single source of truth)
+        # `context` (attached services/apps/files) is fed to the model as a
+        # preamble but not shown in the transcript — the chip UI shows it instead.
+        payload = (context.strip() + "\n\n" + text).strip() if context.strip() else text
+        self.inbox.append(payload)
+        # every device shows the (clean) message immediately (single source of truth)
         await self.broadcast(type="user_echo", text=text, queued=self.running, live=False)
-        if not self.running:
+        if self.paused:
+            # a message sent while paused both steers and resumes the agent
+            self.resume_continue()
+        elif not self.running:
             self.run_task = asyncio.ensure_future(self._runner())
 
     # --------------------------------------------------------------- runner
@@ -192,8 +234,12 @@ class Session:
         except Exception as e:  # noqa: BLE001 — surface any provider error
             self._persist()
             await self._safe_broadcast(type="error", message=str(e), live=False)
+            self._push("crit", "Agent stopped on an error", str(e)[:300])
         finally:
             self.running = False
+            self.paused = False
+            self.pause_info = {}
+            self.continue_fut = None
             self.live_events = []
             await self._safe_broadcast(type="run_state", running=False, live=False)
             await self._safe_broadcast(type="done", live=False)
@@ -211,10 +257,14 @@ class Session:
         tool_names = ai.allowed_tools(self.mode)
         turn_usage = {"input": 0, "output": 0}
         self._mutated = False
+        self._total_steps = 0
+        self._reset_checkpoint()
         before_ids = await discovery.snapshot_ids() if tool_names else set()
         text_parts: list[str] = []
         try:
-            for _ in range(ai.MAX_TURNS):
+            iteration = 0
+            while True:
+                iteration += 1
                 self.live_events = []           # commit boundary for reconnects
                 text_parts = []
                 tool_calls: list[dict] = []
@@ -249,6 +299,10 @@ class Session:
                 self.live_events = []
                 # steering: a message sent mid-turn is answered on the next model call
                 self._drain_inbox_into_history()
+                # watchdog: instead of silently stopping at a turn cap, checkpoint —
+                # keep going autonomously, or pause and ask the user to continue.
+                if not await self._checkpoint_gate(iteration, turn_usage):
+                    break
             await self._account(cfg, turn_usage)
             if self._mutated and tool_names:
                 await self._report_new_services(before_ids)
@@ -264,6 +318,8 @@ class Session:
             raise
 
     async def _run_tool_with_approval(self, tc: dict) -> str:
+        if tc["name"] == "update_plan":
+            return await self._apply_plan(tc)
         auto = (self.mode == "auto"
                 or (self.mode in ("agent", "plan") and tc["name"] in ai.SAFE_TOOLS)) \
             and not ai._sensitive_call(tc)
@@ -282,13 +338,126 @@ class Session:
                 return "The user declined this action. Ask how they want to proceed."
         await self.broadcast(type="tool_start", id=tc["id"], name=tc["name"], args=tc["args"])
         output = await ai.execute_tool(tc["name"], tc["args"], self.workdir)
+        self._steps += 1
+        self._total_steps += 1
         if tc["name"] not in ai.SAFE_TOOLS:
             self._mutated = True
             audit.record("agent_tool", target=tc["name"],
                          source="auto" if self.mode == "auto" else "agent",
                          detail=ai._tool_audit_detail(tc["name"], tc["args"]))
+        output = await self._check_permission(tc, output)
         await self.broadcast(type="tool_result", id=tc["id"], output=output)
         return output
+
+    async def _apply_plan(self, tc: dict) -> str:
+        """update_plan is display-only: store the plan on the session, push it to
+        every device, and return a short confirmation to the model. No tool card."""
+        raw = tc.get("args", {}).get("steps") or []
+        plan = []
+        for s in raw:
+            title = str((s or {}).get("title", "")).strip()[:200]
+            if not title:
+                continue
+            status = s.get("status") if s.get("status") in ("pending", "in_progress", "done") \
+                else "pending"
+            plan.append({"title": title, "status": status})
+        self.plan = plan[:12]
+        self._persist()
+        await self.broadcast(type="plan", items=self.plan, live=False)
+        done = sum(1 for s in self.plan if s["status"] == "done")
+        return f"Plan updated ({done}/{len(self.plan)} done)."
+
+    async def _check_permission(self, tc: dict, output: str) -> str:
+        """If a tool failed for lack of a permission, surface an actionable
+        request to the user and nudge the model not to retry blindly."""
+        issue = ai.detect_permission_issue(tc["name"], tc.get("args", {}), output)
+        if not issue:
+            return output
+        req = permissions.add(**issue, chat_id=self.chat_id)
+        if req.get("_new"):
+            await self.broadcast(type="permission", request={k: req[k] for k in
+                                 ("id", "kind", "title", "detail", "explanation", "risk", "fix")},
+                                 live=False)
+            self._push("warn", "Permission needed: " + issue["title"],
+                       issue["explanation"][:200])
+        return (output + "\n\n[Helmsman: this failed because of a missing permission "
+                f"('{issue['title']}'). The user has been shown a permission request — do "
+                "not retry blindly. Continue with what you can do without it, or tell the "
+                "user what access you need and why.]")
+
+    # --------------------------------------------------------- watchdog
+
+    def _reset_checkpoint(self) -> None:
+        self._steps = 0
+        self._ckpt_start = time.time()
+
+    async def _checkpoint_gate(self, iteration: int, turn_usage: dict) -> bool:
+        """Called at each tool-iteration boundary. Returns True to keep working,
+        False to end the turn. Decides between running on autonomously and
+        pausing to ask the user, and always pauses at the hard safety cap."""
+        au = config.get_autonomy()
+        hard = iteration >= ai.HARD_MAX_ITERATIONS
+        due = ""
+        if au["steps"] and self._steps >= au["steps"]:
+            due = "steps"
+        elif au["minutes"] and (time.time() - self._ckpt_start) >= au["minutes"] * 60:
+            due = "time"
+        if not hard and not due:
+            return True
+        # autonomous mode keeps going through soft checkpoints (only the hard cap stops it)
+        if au["pause_mode"] == "autonomous" and not hard:
+            self._reset_checkpoint()
+            return True
+        return await self._pause_and_wait("limit" if hard else due, turn_usage)
+
+    def _status_summary(self, reason: str, turn_usage: dict) -> dict:
+        task = next((m["content"] for m in self.messages
+                     if m["role"] == "user" and isinstance(m["content"], str)), "")
+        last = ""
+        for m in reversed(self.messages):
+            if m["role"] == "assistant" and m.get("content"):
+                last = m["content"]
+                break
+        why = {"steps": f"{self._total_steps} steps in — checking in.",
+               "time": "Been working a while — checking in.",
+               "limit": "Reached the safety limit for one prompt."}.get(reason, "Checking in.")
+        return {"reason": reason, "title": "Agent paused — continue?", "why": why,
+                "task": task[:160], "last": (last[:400] or "Working…"),
+                "steps": self._total_steps,
+                "tokens": turn_usage["input"] + turn_usage["output"]}
+
+    async def _pause_and_wait(self, reason: str, turn_usage: dict) -> bool:
+        info = self._status_summary(reason, turn_usage)
+        self.paused = True
+        self.pause_info = info
+        self._persist()
+        await self._safe_broadcast(type="paused", live=False, **info)
+        await self._safe_broadcast(type="run_state", running=True, paused=True, live=False)
+        self._push("warn", info["title"], f"{info['why']} {info['last'][:160]}")
+        self.continue_fut = asyncio.get_running_loop().create_future()
+        try:
+            cont = await asyncio.wait_for(self.continue_fut, timeout=6 * 3600)
+        except asyncio.TimeoutError:
+            cont = False
+        finally:
+            self.continue_fut = None
+            self.paused = False
+            self.pause_info = {}
+        await self._safe_broadcast(type="run_state", running=True, paused=False, live=False)
+        if cont:
+            self._reset_checkpoint()
+            # a message sent while paused steers the very next model call
+            self._drain_inbox_into_history()
+        return cont
+
+    def _push(self, status: str, title: str, body: str) -> None:
+        """Fire-and-forget agent push to the global ntfy topic (if configured)."""
+        au = config.get_autonomy()
+        url = config.get_ntfy_url()
+        if not (au["push"] and url):
+            return
+        name = config.get_server_name() or "Helmsman"
+        asyncio.ensure_future(agents._push_ntfy(url, status, f"{name}: {title}", body))
 
     async def _report_new_services(self, before_ids: set) -> None:
         try:
@@ -323,6 +492,7 @@ class Session:
                 self.chat["title"] = chats.title_from(first)
         self.chat["messages"] = self.messages
         self.chat["usage"] = self.session_usage
+        self.chat["plan"] = self.plan
         try:
             chats.save(self.chat)
         except Exception:
@@ -344,6 +514,10 @@ class SessionManager:
 
     def __init__(self):
         self._sessions: dict[str, Session] = {}
+
+    def get(self, chat_id: str) -> Session | None:
+        """A live session for this chat, if one is currently open."""
+        return self._sessions.get(chat_id)
 
     def open(self, chat_id: str = "") -> Session:
         if chat_id and chat_id in self._sessions:
@@ -390,10 +564,31 @@ async def ws_chat(ws) -> None:
                     session = manager.open(msg.get("chat_id", ""))
                     session.attach(client)
                     await session.send_snapshot(client)
-                await session.submit_user(msg.get("text", ""))
+                await session.submit_user(msg.get("text", ""), msg.get("context", ""))
+            elif t == "rewind":
+                # edit/retract a sent message: truncate history at that user
+                # message; with "text" set, immediately resend the edited version
+                if session:
+                    if session.running:
+                        await client.send(type="error",
+                                          message="Stop the agent before editing a message.")
+                    else:
+                        removed = session.rewind(int(msg.get("ordinal", -1)))
+                        if removed is not None:
+                            for c in list(session.subscribers):
+                                await session.send_snapshot(c)
+                            new_text = (msg.get("text") or "").strip()
+                            if new_text:
+                                await session.submit_user(new_text)
+                            else:
+                                await session.broadcast(type="rewound", text=removed,
+                                                        live=False)
             elif t == "approve":
                 if session:
                     session.resolve_approval(msg)
+            elif t == "continue":
+                if session:
+                    session.resume_continue()
             elif t == "stop":
                 if session:
                     session.stop()

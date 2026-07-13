@@ -1,3 +1,9 @@
+# Compose project name is pinned so the stack keeps the same container name and
+# data volume (helmsman_helmsman_data) even if this directory is renamed
+# (e.g. helmsman -> pocketadm). Renaming the folder is then safe: no data loss,
+# and dependents that address the container by name (npm, hub-landing) keep working.
+name: helmsman
+
 services:
   helmsman:
     build: .
@@ -15,7 +21,7 @@ services:
       - HELMSMAN_WORKDIR=/host
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /:/host:ro                          # host filesystem, read-only (metrics + AI context)
+      - /:/host                          # host filesystem, read-only (metrics + AI context)
       - helmsman_data:/data
       # - ~/.ssh:/root/.ssh:ro              # optional: for HOST_SSH key auth
 

@@ -3,17 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Helmsman · Your server, in your pocket</title>
-<meta name="description" content="Helmsman is an open-source, mobile-first command center for your self-hosted server: live dashboard, an AI agent that works directly on your box, a real terminal, one-tap app installs, updates and local AI, all from your phone.">
+<title>PocketADM · Your server, in your pocket</title>
+<meta name="description" content="PocketADM is an open-source, mobile-first command center for your self-hosted server: a live dashboard, an AI agent that works directly on your box, a real terminal, one-tap app installs, smart updates, background watchmen and local AI, all from your phone.">
 <meta name="theme-color" content="#0b0f14">
-<meta property="og:title" content="Helmsman · Your server, in your pocket">
-<meta property="og:description" content="An open-source, mobile-first command center for your self-hosted server. Dashboard, AI agent, terminal, app store, updates & local AI, from your phone.">
+<meta property="og:title" content="PocketADM · Your server, in your pocket">
+<meta property="og:description" content="An open-source, mobile-first command center for your self-hosted server. Dashboard, AI agent, terminal, app store, smart updates, background watchmen and local AI, from your phone.">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%8E%88%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:image" content="/icon-512.png">
 <style>
 :root{
   --bg:#0b0f14; --bg2:#121821; --bg3:#1a2230; --border:#243044;
   --text:#e6edf3; --muted:#8b98a9; --accent:#4da3ff; --accent2:#7ee0b8;
+  --warn:#f5b83d; --danger:#ff6b6b;
   --radius:16px; --maxw:1120px;
   --glow: radial-gradient(60% 60% at 50% 0%, rgba(77,163,255,.16), transparent 70%);
 }
@@ -29,18 +33,28 @@ a{color:inherit;text-decoration:none}
 .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 .grad{background:linear-gradient(100deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
 
+/* ambient background */
+.aurora{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.aurora::before,.aurora::after{content:"";position:absolute;border-radius:50%;filter:blur(90px);opacity:.5}
+.aurora::before{width:620px;height:620px;top:-220px;left:50%;transform:translateX(-50%);
+  background:radial-gradient(circle,rgba(77,163,255,.28),transparent 65%)}
+.aurora::after{width:520px;height:520px;top:520px;left:-120px;
+  background:radial-gradient(circle,rgba(126,224,184,.16),transparent 65%);animation:float 14s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(40px)}}
+
 /* nav */
 header.nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
   background:color-mix(in srgb,var(--bg) 78%,transparent);border-bottom:1px solid transparent;transition:border-color .3s}
 header.nav.scrolled{border-color:var(--border)}
 .nav-in{display:flex;align-items:center;gap:14px;height:64px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px}
-.brand .helm{font-size:24px;filter:drop-shadow(0 0 10px rgba(77,163,255,.5))}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:19px}
+.brand .mark{height:26px;width:auto;display:block;filter:drop-shadow(0 0 10px rgba(77,163,255,.35))}
+.pill-tag .mark,.app-top .mark{vertical-align:-2px;display:inline-block}
 .nav-links{margin-left:auto;display:flex;align-items:center;gap:26px}
 .nav-links a{color:var(--muted);font-size:14.5px;font-weight:500;transition:color .2s}
 .nav-links a:hover{color:var(--text)}
 .btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:14.5px;
-  padding:10px 18px;border-radius:11px;border:1px solid var(--border);cursor:pointer;transition:.2s;white-space:nowrap}
+  padding:10px 18px;border-radius:11px;border:1px solid var(--border);cursor:pointer;transition:.2s;white-space:nowrap;background:transparent;color:inherit}
 .btn.primary{background:linear-gradient(100deg,var(--accent),#63b3ff);color:#04121f;border-color:transparent;
   box-shadow:0 6px 20px rgba(77,163,255,.28)}
 .btn.primary:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(77,163,255,.4)}
@@ -48,11 +62,12 @@ header.nav.scrolled{border-color:var(--border)}
 @media(max-width:720px){.nav-links a.hide-sm{display:none}}
 
 /* hero */
-.hero{position:relative;padding:76px 0 40px;text-align:center}
-.hero::before{content:"";position:absolute;inset:-120px 0 auto;height:560px;background:var(--glow);pointer-events:none}
+.hero{position:relative;padding:70px 0 30px;text-align:center}
 .pill-tag{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);
   background:var(--bg2);border:1px solid var(--border);padding:6px 14px;border-radius:30px;margin-bottom:22px}
 .pill-tag b{color:var(--accent2)}
+.pill-tag .dotlive{width:7px;height:7px;border-radius:50%;background:var(--accent2);box-shadow:0 0 8px var(--accent2);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
 .hero h1{font-size:clamp(34px,6.4vw,64px);line-height:1.05;letter-spacing:-.02em;font-weight:800;margin-bottom:18px}
 .hero p.sub{max-width:640px;margin:0 auto 30px;color:var(--muted);font-size:clamp(16px,2.4vw,20px)}
 .hero-cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
@@ -61,66 +76,143 @@ header.nav.scrolled{border-color:var(--border)}
 .trust span{display:inline-flex;align-items:center;gap:7px}
 .trust b{color:var(--text)}
 
-/* phone mockup */
-.stage{position:relative;margin:52px auto 0;max-width:900px;display:flex;justify-content:center;gap:26px;align-items:flex-end}
-.phone{position:relative;width:270px;flex:none;border-radius:38px;padding:11px;
+/* interactive phone */
+.stage{position:relative;margin:54px auto 0;display:flex;flex-direction:column;align-items:center;gap:20px}
+.tabs{display:inline-flex;gap:4px;background:var(--bg2);border:1px solid var(--border);border-radius:13px;padding:4px}
+.tabs button{background:transparent;border:0;color:var(--muted);font-size:13.5px;font-weight:600;
+  padding:8px 16px;border-radius:9px;cursor:pointer;transition:.2s;display:inline-flex;align-items:center;gap:7px}
+.tabs button .tico{font-size:14px}
+.tabs button.on{background:linear-gradient(100deg,var(--accent),#63b3ff);color:#04121f}
+.phone{position:relative;width:288px;border-radius:40px;padding:11px;
   background:linear-gradient(160deg,#20293a,#0d1219);border:1px solid #2b3648;
-  box-shadow:0 40px 90px -30px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.02) inset}
-.phone.side{width:230px;transform:translateY(26px) scale(.96);opacity:.92}
-.screen{background:var(--bg);border-radius:28px;overflow:hidden;height:540px;display:flex;flex-direction:column}
-.notch{height:22px;display:flex;justify-content:center;align-items:flex-start}
-.notch::after{content:"";width:92px;height:6px;border-radius:6px;background:#0006;margin-top:7px}
-.app-top{display:flex;align-items:center;gap:8px;padding:6px 14px 10px;font-size:13px}
+  box-shadow:0 46px 100px -34px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.02) inset}
+.phone::after{content:"";position:absolute;inset:-2px;border-radius:42px;pointer-events:none;
+  background:linear-gradient(120deg,rgba(77,163,255,.35),transparent 40%,transparent 60%,rgba(126,224,184,.25));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  padding:1px;opacity:.5}
+.screen{background:var(--bg);border-radius:30px;overflow:hidden;height:560px;display:flex;flex-direction:column;position:relative}
+.notch{height:22px;display:flex;justify-content:center;align-items:flex-start;flex:none}
+.notch::after{content:"";width:96px;height:6px;border-radius:6px;background:#0006;margin-top:7px}
+.pane{position:absolute;inset:22px 0 0;display:flex;flex-direction:column;opacity:0;transform:translateY(10px);
+  transition:opacity .45s,transform .45s;pointer-events:none}
+.pane.on{opacity:1;transform:none;pointer-events:auto}
+.app-top{display:flex;align-items:center;gap:8px;padding:6px 14px 10px;font-size:13px;flex:none}
 .app-top .helm{color:var(--accent)}
 .app-top .host{color:var(--muted)}
 .app-top .dot{width:8px;height:8px;border-radius:50%;background:var(--accent2);box-shadow:0 0 6px var(--accent2);margin-left:auto}
 .scr-body{padding:4px 12px 12px;overflow:hidden;flex:1}
-.statrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.statrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:9px}
 .stat{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:9px 11px}
 .stat .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .stat .v{font-size:17px;font-weight:700;margin-top:2px}
+.stat .v small{font-size:11px;font-weight:600;color:var(--muted)}
 .stat .bar{height:4px;border-radius:3px;background:var(--bg3);margin-top:7px;overflow:hidden}
-.stat .bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.stat .bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0;transition:width 1s cubic-bezier(.2,.7,.2,1)}
+.svc-hd{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);margin:2px 2px 7px}
+.svc-hd b{color:var(--text)}
 .svc{display:flex;align-items:center;gap:9px;background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:8px 10px;margin-bottom:7px}
 .svc .ico{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:15px;background:var(--bg3)}
 .svc .nm{font-size:12.5px;font-weight:600}
 .svc .sb{font-size:10.5px;color:var(--muted)}
+.svc .port{margin-left:auto;font-size:9.5px;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,var(--border));padding:2px 7px;border-radius:20px}
 .svc .run{margin-left:auto;font-size:9px;color:var(--accent2);border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--border));padding:2px 7px;border-radius:20px}
-/* chat screen */
-.chat-scr{padding:10px 12px;display:flex;flex-direction:column;gap:9px;font-size:12px}
-.bub{max-width:82%;padding:8px 11px;border-radius:13px;line-height:1.4}
+/* chat pane */
+.chat-scr{padding:8px 12px;display:flex;flex-direction:column;gap:8px;font-size:11.5px;flex:1;overflow:hidden}
+.think{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.bub{max-width:84%;padding:8px 11px;border-radius:13px;line-height:1.4}
 .bub.u{align-self:flex-end;background:linear-gradient(100deg,var(--accent),#63b3ff);color:#04121f;border-bottom-right-radius:4px}
 .bub.a{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-bottom-left-radius:4px}
-.toolc{align-self:flex-start;width:92%;background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:8px 10px;font-size:11px}
-.toolc .th{display:flex;align-items:center;gap:7px}
+.toolc{align-self:flex-start;width:94%;background:var(--bg2);border-left:3px solid var(--border);border-radius:11px;padding:8px 10px;font-size:11px}
+.toolc.okc{border-left-color:var(--accent2)}
+.toolc.askc{border-left-color:var(--warn)}
+.toolc .th{display:flex;align-items:center;gap:7px;font-weight:600}
 .toolc .ok{color:var(--accent2)}
-.toolc .cmd{color:var(--muted);margin-top:5px}
-.runbar{margin-top:auto;display:flex;align-items:center;gap:8px;background:color-mix(in srgb,var(--accent) 9%,var(--bg2));
-  border:1px solid color-mix(in srgb,var(--accent) 30%,var(--border));border-radius:11px;padding:7px 10px;font-size:11px}
+.toolc .ask{color:var(--warn)}
+.toolc .cmd{color:var(--muted);margin-top:5px;word-break:break-all}
+.toolc .ad{display:flex;gap:8px;margin-top:8px}
+.toolc .ad b{font-size:10.5px;padding:5px 14px;border-radius:8px}
+.toolc .ad .allow{background:var(--accent);color:#04121f}
+.toolc .ad .deny{border:1px solid var(--danger);color:var(--danger)}
+.modebar{margin-top:auto;display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:10px;flex:none}
+.modebar .mchip{padding:4px 9px;border-radius:8px;border:1px solid var(--border);color:var(--muted)}
+.modebar .mchip.on{background:var(--accent);color:#04121f;border-color:transparent;font-weight:600}
+.modebar .model{margin-left:auto;padding:4px 9px;border-radius:8px;border:1px solid var(--border);color:var(--muted)}
+/* health pane */
+.hchip{display:inline-flex;gap:6px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:10px;font-size:11px}
+.hchip span{padding:4px 12px;border-radius:7px;color:var(--muted)}
+.hchip span.on{background:var(--accent);color:#04121f;font-weight:600}
+.updrow{display:flex;align-items:center;gap:9px;background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:9px 10px;margin-bottom:8px}
+.updrow .ico{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:14px;background:var(--bg3)}
+.updrow .nm{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+.updrow .hi{font-size:8.5px;color:var(--danger);border:1px solid color-mix(in srgb,var(--danger) 45%,var(--border));padding:1px 6px;border-radius:20px}
+.updrow .sb{font-size:10px;color:var(--muted)}
+.updrow .up{margin-left:auto;font-size:10px;padding:5px 12px;border-radius:8px;background:var(--accent);color:#04121f;font-weight:600}
+.warncard{background:color-mix(in srgb,var(--warn) 8%,var(--bg2));border:1px solid color-mix(in srgb,var(--warn) 35%,var(--border));border-radius:11px;padding:10px;margin-top:2px}
+.warncard .wt{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--warn)}
+.warncard .wd{font-size:10.5px;color:var(--muted);margin-top:4px}
+.warncard .fix{display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:10.5px;color:var(--accent2);
+  border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--border));border-radius:8px;padding:4px 10px}
+.runbar{display:flex;align-items:center;gap:8px;background:color-mix(in srgb,var(--accent) 9%,var(--bg2));
+  border:1px solid color-mix(in srgb,var(--accent) 30%,var(--border));border-radius:11px;padding:7px 10px;font-size:11px;margin-top:6px}
 .runbar .p{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.4s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(77,163,255,.5)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
-@media(max-width:760px){.stage{gap:0}.phone.side{display:none}}
 
 /* sections */
 section{padding:72px 0;position:relative}
 .eyebrow{color:var(--accent);font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-align:center}
 .h2{font-size:clamp(26px,4vw,40px);font-weight:800;letter-spacing:-.02em;text-align:center;margin:10px 0 12px}
-.lead{color:var(--muted);text-align:center;max-width:620px;margin:0 auto 44px;font-size:17px}
+.lead{color:var(--muted);text-align:center;max-width:640px;margin:0 auto 44px;font-size:17px}
 
 /* features */
 .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
 @media(max-width:900px){.feat-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:600px){.feat-grid{grid-template-columns:1fr}}
-.feat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;transition:.25s}
+.feat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:24px;transition:.25s;position:relative;overflow:hidden}
+.feat::before{content:"";position:absolute;inset:0;opacity:0;transition:.25s;
+  background:radial-gradient(120% 80% at 0% 0%,rgba(77,163,255,.10),transparent 60%)}
 .feat:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.feat:hover::before{opacity:1}
+.feat>*{position:relative}
 .feat .fico{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;font-size:22px;margin-bottom:14px;
   background:linear-gradient(150deg,color-mix(in srgb,var(--accent) 22%,var(--bg3)),var(--bg3));border:1px solid var(--border)}
 .feat h3{font-size:18px;margin-bottom:7px}
 .feat p{color:var(--muted);font-size:14.5px}
 
+/* permissions / toolbelt */
+.perm-wrap{background:radial-gradient(70% 120% at 50% 0%,rgba(77,163,255,.06),transparent 60%)}
+.tool-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;max-width:820px;margin:0 auto}
+@media(max-width:640px){.tool-grid{grid-template-columns:1fr}}
+.tool{display:flex;align-items:center;gap:12px;background:var(--bg2);border:1px solid var(--border);border-radius:13px;padding:14px 16px;transition:.2s}
+.tool:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
+.tool .tn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;font-weight:600}
+.tool .td{font-size:12.5px;color:var(--muted);margin-top:2px}
+.tag{margin-left:auto;flex:none;font-size:10px;font-weight:700;letter-spacing:.04em;padding:3px 9px;border-radius:20px;text-transform:uppercase}
+.tag.ro{color:var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,transparent);border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--border))}
+.tag.ask{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 38%,var(--border))}
+.perm-note{max-width:760px;margin:26px auto 0;text-align:center;color:var(--muted);font-size:14px}
+
+/* modes strip */
+.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-width:920px;margin:0 auto}
+@media(max-width:700px){.modes{grid-template-columns:repeat(2,1fr)}}
+.mode{background:var(--bg2);border:1px solid var(--border);border-radius:13px;padding:18px 16px;text-align:center;transition:.2s}
+.mode:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
+.mode .mi{font-size:20px;margin-bottom:8px}
+.mode .m{font-weight:700;margin-bottom:4px}.mode .m.c1{color:var(--accent)}.mode .m.c2{color:var(--accent2)}
+.mode small{color:var(--muted);font-size:12.5px}
+
+/* sentinel */
+.sent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media(max-width:860px){.sent-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.sent-grid{grid-template-columns:1fr}}
+.sent{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;transition:.22s}
+.sent:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent2) 40%,var(--border))}
+.sent .si{font-size:24px;margin-bottom:10px}
+.sent .st{font-weight:700;font-size:15px;margin-bottom:5px}
+.sent .sd{color:var(--muted);font-size:12.5px}
+.sent .sk{margin-top:10px;font-size:10.5px;color:var(--accent);opacity:.85}
+
 /* featured stack */
-.stack-wrap{background:
-  radial-gradient(70% 120% at 50% 0%,rgba(126,224,184,.06),transparent 60%);}
+.stack-wrap{background:radial-gradient(70% 120% at 50% 0%,rgba(126,224,184,.06),transparent 60%);}
 .stack-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 @media(max-width:900px){.stack-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:640px){.stack-grid{grid-template-columns:repeat(2,1fr)}}
@@ -130,9 +222,6 @@ section{padding:72px 0;position:relative}
 .svc-card .big{font-size:26px;margin-bottom:8px}
 .svc-card .t{font-weight:700;font-size:15px}
 .svc-card .d{color:var(--muted);font-size:12.5px}
-.svc-card .u{color:var(--accent);font-size:11.5px;margin-top:8px;opacity:.85}
-.svc-card .arrow{position:absolute;top:14px;right:14px;color:var(--muted);opacity:0;transition:.2s}
-.svc-card:hover .arrow{opacity:1;transform:translateX(2px)}
 
 /* install */
 .install-box{max-width:760px;margin:0 auto;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:26px}
@@ -150,13 +239,6 @@ section{padding:72px 0;position:relative}
   background:color-mix(in srgb,var(--accent) 18%,var(--bg3));border:1px solid var(--border);color:var(--accent)}
 .step .st{font-size:14px}.step .st b{display:block;margin-bottom:2px}.step .st span{color:var(--muted)}
 
-/* modes strip */
-.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-width:900px;margin:0 auto}
-@media(max-width:700px){.modes{grid-template-columns:repeat(2,1fr)}}
-.mode{background:var(--bg2);border:1px solid var(--border);border-radius:13px;padding:16px;text-align:center}
-.mode .m{font-weight:700;margin-bottom:4px}.mode .m.c1{color:var(--accent)}.mode .m.c2{color:var(--accent2)}
-.mode small{color:var(--muted);font-size:12.5px}
-
 /* cta band */
 .cta-band{background:linear-gradient(120deg,rgba(77,163,255,.1),rgba(126,224,184,.08));
   border:1px solid var(--border);border-radius:24px;padding:52px 30px;text-align:center;position:relative;overflow:hidden}
@@ -170,18 +252,20 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 .foot-links a{color:var(--muted);transition:.2s}.foot-links a:hover{color:var(--text)}
 .reveal{opacity:0;transform:translateY(18px);transition:.7s cubic-bezier(.2,.7,.2,1)}
 .reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.reveal{transition:none}.aurora::after{animation:none}}
 </style>
 </head>
 <body>
+<div class="aurora" aria-hidden="true"></div>
 
 <header class="nav" id="nav">
   <div class="wrap nav-in">
-    <a class="brand" href="#top"><span class="helm">⎈</span> Helmsman</a>
+    <a class="brand" href="#top"><img class="mark" src="/logo.svg" alt=""> PocketADM</a>
     <nav class="nav-links">
       <a href="#features" class="hide-sm">Features</a>
+      <a href="#agent" class="hide-sm">AI agent</a>
       <a href="#stack" class="hide-sm">Stack</a>
       <a href="#install" class="hide-sm">Install</a>
-      <a href="https://github.com/maxaufknax/helmsman" class="hide-sm">GitHub</a>
       <a href="https://github.com/maxaufknax/helmsman" class="btn primary">★ Star on GitHub</a>
     </nav>
   </div>
@@ -192,11 +276,11 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 <!-- HERO -->
 <section class="hero">
   <div class="wrap">
-    <span class="pill-tag">⎈ Open source · self-hosted · <b>v0.8</b></span>
+    <span class="pill-tag"><span class="dotlive"></span> Open source · self-hosted · <b>v0.8</b></span>
     <h1>Your server,<br><span class="grad">in your pocket.</span></h1>
-    <p class="sub">Helmsman is a mobile-first command center for your self-hosted box:
+    <p class="sub">PocketADM is a mobile-first command center for your self-hosted box:
       a live dashboard, an AI agent that <em>actually works on your server</em>, a real terminal,
-      one-tap app installs and local AI. Termius + Claude Code + an app store, for your homelab.</p>
+      one-tap app installs and local AI. Termius plus Claude Code plus an app store, for your homelab.</p>
     <div class="hero-cta">
       <a href="#install" class="btn primary">⚡ Install in one command</a>
       <a href="https://github.com/maxaufknax/helmsman" class="btn ghost">View on GitHub →</a>
@@ -208,40 +292,72 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
       <span>🖧 <b>Multi-arch</b> (arm64 + amd64)</span>
     </div>
 
+    <!-- interactive phone -->
     <div class="stage">
-      <!-- side phone: chat -->
-      <div class="phone side" aria-hidden="true">
-        <div class="screen">
-          <div class="notch"></div>
-          <div class="app-top"><span class="helm">✦</span> Vibe Code <span class="dot"></span></div>
-          <div class="chat-scr">
-            <div class="bub u">install a media server</div>
-            <div class="bub a">On it, deploying Jellyfin as a compose stack.</div>
-            <div class="toolc"><div class="th"><span class="ok">✓</span> run_command</div>
-              <div class="cmd mono">docker compose up -d</div></div>
-            <div class="bub a">🆕 New service detected: <b>Jellyfin</b> on :8096. Open it?</div>
-            <div class="runbar"><span class="p"></span> Agent is working…</div>
-          </div>
-        </div>
+      <div class="tabs" role="tablist">
+        <button class="on" data-tab="dash" role="tab"><span class="tico">📊</span> Dashboard</button>
+        <button data-tab="vibe" role="tab"><span class="tico">✦</span> Vibe Code</button>
+        <button data-tab="health" role="tab"><span class="tico">❤</span> Health</button>
       </div>
-      <!-- main phone: dashboard -->
       <div class="phone">
         <div class="screen">
           <div class="notch"></div>
-          <div class="app-top"><span class="helm">⎈</span> <span class="host">home-server ▾</span> <span class="dot"></span></div>
-          <div class="scr-body">
-            <div class="statrow">
-              <div class="stat"><div class="l">CPU</div><div class="v">12%</div><div class="bar"><i style="width:12%"></i></div></div>
-              <div class="stat"><div class="l">Memory</div><div class="v">41%</div><div class="bar"><i style="width:41%"></i></div></div>
-              <div class="stat"><div class="l">Disk</div><div class="v">58%</div><div class="bar"><i style="width:58%"></i></div></div>
-              <div class="stat"><div class="l">Uptime</div><div class="v">37d</div><div class="bar"><i style="width:90%"></i></div></div>
+
+          <!-- DASHBOARD -->
+          <div class="pane on" data-pane="dash">
+            <div class="app-top"><img class="mark" src="/logo.svg" alt="" style="height:15px"> <span class="host">home-server ▾</span> <span class="dot"></span></div>
+            <div class="scr-body">
+              <div class="statrow">
+                <div class="stat"><div class="l">CPU</div><div class="v">20.2%</div><div class="bar"><i data-w="20"></i></div></div>
+                <div class="stat"><div class="l">Memory</div><div class="v">52%</div><div class="bar"><i data-w="52"></i></div></div>
+                <div class="stat"><div class="l">Disk</div><div class="v">80.9%</div><div class="bar"><i data-w="81"></i></div></div>
+                <div class="stat"><div class="l">Uptime</div><div class="v">5d 2h</div><div class="bar"><i data-w="90"></i></div></div>
+              </div>
+              <div class="svc-hd"><span>Services</span><b>54 / 56 running</b></div>
+              <div class="svc"><span class="ico">🔐</span><div><div class="nm">Authentik</div><div class="sb">auth · up 5 days (healthy)</div></div><span class="port">:9300</span></div>
+              <div class="svc"><span class="ico">☁️</span><div><div class="nm">Nextcloud</div><div class="sb">cloud · up 5 days (healthy)</div></div><span class="run">running</span></div>
+              <div class="svc"><span class="ico">🌿</span><div><div class="nm">Gitea</div><div class="sb">git · up 5 days (healthy)</div></div><span class="port">:3030</span></div>
+              <div class="svc"><span class="ico">📊</span><div><div class="nm">Grafana</div><div class="sb">monitoring · up 5 days</div></div><span class="port">:3000</span></div>
+              <div class="svc"><span class="ico">💬</span><div><div class="nm">Element</div><div class="sb">chat · up 5 days (healthy)</div></div><span class="run">running</span></div>
             </div>
-            <div class="svc"><span class="ico">☁️</span><div><div class="nm">Nextcloud</div><div class="sb">cloud · files</div></div><span class="run">running</span></div>
-            <div class="svc"><span class="ico">🤖</span><div><div class="nm">OpenWebUI</div><div class="sb">chat · AI</div></div><span class="run">running</span></div>
-            <div class="svc"><span class="ico">🔐</span><div><div class="nm">Vaultwarden</div><div class="sb">vault · passwords</div></div><span class="run">running</span></div>
-            <div class="svc"><span class="ico">🎬</span><div><div class="nm">Jellyfin</div><div class="sb">tv · media</div></div><span class="run">running</span></div>
-            <div class="svc"><span class="ico">🌿</span><div><div class="nm">Gitea</div><div class="sb">git</div></div><span class="run">running</span></div>
           </div>
+
+          <!-- VIBE CODE -->
+          <div class="pane" data-pane="vibe">
+            <div class="app-top"><span class="helm">✦</span> Vibe Code <span class="dot"></span></div>
+            <div class="chat-scr">
+              <div class="bub u">Run a quick security check: SSH hardening, failed logins, fail2ban, exposed ports.</div>
+              <div class="think">🧠 thought for a bit</div>
+              <div class="toolc okc"><div class="th"><span class="ok">✓</span> run_command</div>
+                <div class="cmd mono">ss -tlnp</div></div>
+              <div class="toolc askc"><div class="th"><span class="ask">✋</span> run_command</div>
+                <div class="cmd mono">cat /etc/ssh/sshd_config</div>
+                <div class="ad"><b class="allow">Allow</b><b class="deny">Deny</b></div></div>
+              <div class="modebar">
+                <span class="mchip">Chat</span><span class="mchip">Plan</span>
+                <span class="mchip on">Agent</span><span class="mchip">Auto</span>
+                <span class="model">DeepSeek ▾</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- HEALTH -->
+          <div class="pane" data-pane="health">
+            <div class="app-top"><span class="helm">❤</span> <span class="host">Health</span> <span class="dot" style="background:var(--warn);box-shadow:0 0 6px var(--warn)"></span></div>
+            <div class="scr-body">
+              <div class="hchip"><span class="on">Updates</span><span>Checks</span></div>
+              <div class="svc-hd"><span>Updates</span><b>20 available</b></div>
+              <div class="updrow"><span class="ico">🧱</span><div><div class="nm">Redis <span class="hi">high</span></div><div class="sb">used by authentik-redis</div></div><span class="up">Update</span></div>
+              <div class="updrow"><span class="ico">🗄️</span><div><div class="nm">MariaDB <span class="hi">high</span></div><div class="sb">used by nextcloud-db</div></div><span class="up">Update</span></div>
+              <div class="updrow"><span class="ico">☁️</span><div><div class="nm">Nextcloud <span class="hi">high</span></div><div class="sb">nextcloud:latest</div></div><span class="up">Update</span></div>
+              <div class="warncard">
+                <div class="wt">🔒 SSH root login · warn</div>
+                <div class="wd">PermitRootLogin is not set. Set it to <span class="mono">no</span> in sshd_config.</div>
+                <span class="fix">🔧 Fix with AI</span>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -253,42 +369,87 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
   <div class="wrap">
     <div class="eyebrow reveal">Everything, from your phone</div>
     <h2 class="h2 reveal">One app to run your whole server</h2>
-    <p class="lead reveal">No more SSH-ing from a laptop to fix a container at 11pm. Helmsman puts the
+    <p class="lead reveal">No more SSH-ing from a laptop to fix a container at 11pm. PocketADM puts the
       whole box (metrics, logs, updates, terminal and an AI engineer) one tap away.</p>
     <div class="feat-grid">
       <div class="feat reveal"><div class="fico">✦</div><h3>Vibe Code: an AI that works on your server</h3>
-        <p>Chat with an agent that runs commands, reads &amp; writes files, and fixes things directly on your box. It streams live, keeps working when you close the app, and asks before anything destructive, or flip on Auto.</p></div>
+        <p>Chat with an agent that runs commands, reads and writes files, and fixes things directly on your box. It streams live, keeps working when you close the app, and asks before anything destructive, or flip on Auto.</p></div>
       <div class="feat reveal"><div class="fico">📊</div><h3>Live dashboard</h3>
-        <p>Real-time CPU, RAM, disk, uptime and internet latency with tap-through history graphs. Every container grouped by stack: start, stop, restart, logs, one-tap port links.</p></div>
+        <p>Real-time CPU, RAM, disk, uptime and internet latency with tap-through history graphs. Every container grouped by stack, with one-tap port links and a live running count.</p></div>
+      <div class="feat reveal"><div class="fico">🗂</div><h3>Service control sheets</h3>
+        <p>Tap any container for a full sheet: live CPU and RAM, restart, stop, logs and a shell. Plus AI shortcuts: What is this, check logs, troubleshoot, optimize, backup, or open it straight in Vibe Chat.</p></div>
       <div class="feat reveal"><div class="fico">❯_</div><h3>A real terminal</h3>
         <p>A full xterm terminal over WebSocket, with a mobile key bar and one-tap <span class="mono">docker exec</span> into any container. Open any command the agent ran to watch it yourself.</p></div>
       <div class="feat reveal"><div class="fico">◲</div><h3>One-tap App Store</h3>
-        <p>Deploy popular self-hosted apps as clean compose projects with friendly config forms, and it detects apps you already run. Build something new and Helmsman spots the new service and helps you finish setup.</p></div>
-      <div class="feat reveal"><div class="fico">⟳</div><h3>Smart updates &amp; rollback</h3>
-        <p>Detects newer images by registry digest (no pull needed) with AI release-note explanations. Snapshots the running image before every update so you can roll back in one tap.</p></div>
+        <p>Deploy popular self-hosted apps as clean compose projects with friendly config forms, sorted by category. Already running something? PocketADM detects it and helps you finish setup.</p></div>
+      <div class="feat reveal"><div class="fico">⟳</div><h3>Smart updates and rollback</h3>
+        <p>Detects newer images by registry digest, no pull needed, with priority flags and AI release-note explanations. Snapshots the running image before every update so you can roll back in one tap.</p></div>
+      <div class="feat reveal"><div class="fico">🩺</div><h3>Security and health checks</h3>
+        <p>Scheduled checks for SSH hardening, failed logins, fail2ban, exposed ports and restarting containers. Each warning comes with a plain-English fix and a one-tap Fix with AI.</p></div>
       <div class="feat reveal"><div class="fico">🧠</div><h3>Local AI, built in</h3>
-        <p>Run models on your own hardware via Ollama: Helmsman detects or installs it, recommends models that fit your RAM, and wires them straight into the chat. Private, free, offline.</p></div>
-      <div class="feat reveal"><div class="fico">🛰</div><h3>Background sentinels</h3>
-        <p>Little AI watchmen check your server on a schedule (security, updates, health) and push findings to your phone via ntfy, each with a one-tap “discuss &amp; fix”.</p></div>
-      <div class="feat reveal"><div class="fico">🖧</div><h3>Multi-server &amp; handoff</h3>
-        <p>Manage several servers from one app. Pair a new device by QR, and hand a live agent chat from your phone to your laptop mid-task, and it keeps streaming.</p></div>
+        <p>Run models on your own hardware via Ollama: PocketADM detects or installs it, recommends models that fit your RAM, and wires them straight into the chat. Private, free, offline.</p></div>
       <div class="feat reveal"><div class="fico">🔒</div><h3>Secure by design</h3>
-        <p>Password + optional TOTP 2FA, token revocation, an append-only audit log of every action (including the AI’s), and integration tokens that are never shown to the model.</p></div>
+        <p>Password plus optional TOTP 2FA, token revocation, an append-only audit log of every action (including the AI's), and integration tokens that are never shown to the model.</p></div>
     </div>
   </div>
 </section>
 
-<!-- MODES -->
-<section style="padding-top:0">
+<!-- AGENT / MODES + PERMISSIONS -->
+<section id="agent">
   <div class="wrap">
-    <div class="eyebrow reveal">You’re always in control</div>
+    <div class="eyebrow reveal">You are always in control</div>
     <h2 class="h2 reveal">Four ways to work with the agent</h2>
-    <p class="lead reveal">From read-only exploration to full autonomy: pick how much rope the AI gets.</p>
+    <p class="lead reveal">From read-only exploration to full autonomy: pick how much rope the AI gets, then bring any key.</p>
     <div class="modes">
-      <div class="mode reveal"><div class="m">Chat</div><small>Talk only. No tools, just answers and advice.</small></div>
-      <div class="mode reveal"><div class="m c1">Plan</div><small>Read-only investigation, ends with a concrete plan.</small></div>
-      <div class="mode reveal"><div class="m c1">Agent</div><small>Full tools, asks before anything destructive.</small></div>
-      <div class="mode reveal"><div class="m c2">Auto</div><small>Free rein. Runs to completion while you sleep.</small></div>
+      <div class="mode reveal"><div class="mi">💬</div><div class="m">Chat</div><small>Talk only. No tools, just answers and advice.</small></div>
+      <div class="mode reveal"><div class="mi">📋</div><div class="m c1">Plan</div><small>Read-only investigation, ends with a concrete plan.</small></div>
+      <div class="mode reveal"><div class="mi">🤖</div><div class="m c1">Agent</div><small>Full tools, asks before anything destructive.</small></div>
+      <div class="mode reveal"><div class="mi">⚡</div><div class="m c2">Auto</div><small>Free rein. Runs to completion while you sleep.</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- PERMISSIONS -->
+<section class="perm-wrap" style="padding-top:0">
+  <div class="wrap">
+    <div class="eyebrow reveal">Nothing runs behind your back</div>
+    <h2 class="h2 reveal">Every tool, on your terms</h2>
+    <p class="lead reveal">Toggle any capability on or off. Green tools are read-only and run without asking.
+      The rest need your tap, unless you are in Auto mode. Integration tokens are never shown to the model.</p>
+    <div class="tool-grid">
+      <div class="tool reveal"><div><div class="tn">read_file</div><div class="td">Read a text file from the server.</div></div><span class="tag ro">read-only</span></div>
+      <div class="tool reveal"><div><div class="tn">list_dir</div><div class="td">List a directory (name, type, size).</div></div><span class="tag ro">read-only</span></div>
+      <div class="tool reveal"><div><div class="tn">search_files</div><div class="td">Search file contents recursively.</div></div><span class="tag ro">read-only</span></div>
+      <div class="tool reveal"><div><div class="tn">fetch_url</div><div class="td">HTTP GET a URL: docs, changelogs, APIs.</div></div><span class="tag ro">read-only</span></div>
+      <div class="tool reveal"><div><div class="tn">run_command</div><div class="td">Run a shell command on the server.</div></div><span class="tag ask">asks first</span></div>
+      <div class="tool reveal"><div><div class="tn">write_file</div><div class="td">Write or overwrite a text file.</div></div><span class="tag ask">asks first</span></div>
+      <div class="tool reveal"><div><div class="tn">edit_file</div><div class="td">Replace an exact snippet in a file.</div></div><span class="tag ask">asks first</span></div>
+      <div class="tool reveal"><div><div class="tn">docker exec</div><div class="td">Drop into a shell inside any container.</div></div><span class="tag ask">asks first</span></div>
+    </div>
+    <p class="perm-note reveal">Every action, including the AI's, lands in an append-only audit log you can review anytime.</p>
+  </div>
+</section>
+
+<!-- SENTINEL -->
+<section>
+  <div class="wrap">
+    <div class="eyebrow reveal">Watchmen that never sleep</div>
+    <h2 class="h2 reveal">Background agents on a schedule</h2>
+    <p class="lead reveal">Little AI watchmen check your server even when the app is closed, and push findings to your
+      phone via ntfy. They only ever look, never change anything on their own. Every alert has a one-tap discuss and fix.</p>
+    <div class="sent-grid">
+      <div class="sent reveal"><div class="si">🛡️</div><div class="st">Security watch</div>
+        <div class="sd">Failed SSH logins, fail2ban bans, newly exposed ports and containers restarting out of nowhere.</div>
+        <div class="sk">every 6 hours</div></div>
+      <div class="sent reveal"><div class="si">⬆️</div><div class="st">Update watch</div>
+        <div class="sd">Reviews pending image and system updates and flags which ones are security-relevant and worth applying soon.</div>
+        <div class="sk">daily</div></div>
+      <div class="sent reveal"><div class="si">💚</div><div class="st">Health digest</div>
+        <div class="sd">Disk space, memory pressure, unhealthy or restarting containers and error bursts in your core services.</div>
+        <div class="sk">every 12 hours</div></div>
+      <div class="sent reveal"><div class="si">🔁</div><div class="st">Custom loop</div>
+        <div class="sd">You decide what it watches. Describe the job in plain words and the agent checks it on your schedule.</div>
+        <div class="sk">your schedule</div></div>
     </div>
   </div>
 </section>
@@ -298,21 +459,21 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
   <div class="wrap">
     <div class="eyebrow reveal">Built for real stacks</div>
     <h2 class="h2 reveal">One command center for your whole homelab</h2>
-    <p class="lead reveal">Helmsman isn’t a toy. It runs and manages a full self-hosted stack from a
+    <p class="lead reveal">PocketADM is not a toy. It runs and manages a full self-hosted stack from a
       single app: the popular apps you already know, side by side.</p>
     <div class="stack-grid">
-      <div class="svc-card reveal"><span class="big">☁️</span><span class="t">Nextcloud</span><span class="d">Private cloud &amp; files</span></div>
+      <div class="svc-card reveal"><span class="big">☁️</span><span class="t">Nextcloud</span><span class="d">Private cloud and files</span></div>
+      <div class="svc-card reveal"><span class="big">🔐</span><span class="t">Authentik</span><span class="d">Single sign-on and 2FA</span></div>
       <div class="svc-card reveal"><span class="big">🤖</span><span class="t">Open WebUI</span><span class="d">Self-hosted AI chat</span></div>
-      <div class="svc-card reveal"><span class="big">🔐</span><span class="t">Vaultwarden</span><span class="d">Passwords, self-hosted</span></div>
-      <div class="svc-card reveal"><span class="big">🎬</span><span class="t">Jellyfin</span><span class="d">Movies &amp; shows</span></div>
-      <div class="svc-card reveal"><span class="big">🎵</span><span class="t">Navidrome</span><span class="d">Your music library</span></div>
+      <div class="svc-card reveal"><span class="big">🔑</span><span class="t">Vaultwarden</span><span class="d">Passwords, self-hosted</span></div>
+      <div class="svc-card reveal"><span class="big">🎬</span><span class="t">Jellyfin</span><span class="d">Movies and shows</span></div>
       <div class="svc-card reveal"><span class="big">🌿</span><span class="t">Gitea</span><span class="d">Self-hosted Git</span></div>
       <div class="svc-card reveal"><span class="big">💬</span><span class="t">Matrix</span><span class="d">Encrypted chat</span></div>
-      <div class="svc-card reveal"><span class="big">📊</span><span class="t">Grafana</span><span class="d">Metrics &amp; monitoring</span></div>
-      <div class="svc-card reveal"><span class="big">🏠</span><span class="t">Home Assistant</span><span class="d">Smart-home hub</span></div>
+      <div class="svc-card reveal"><span class="big">📊</span><span class="t">Grafana</span><span class="d">Metrics and monitoring</span></div>
+      <div class="svc-card reveal"><span class="big">📄</span><span class="t">Paperless-ngx</span><span class="d">Document archive</span></div>
+      <div class="svc-card reveal"><span class="big">👁️</span><span class="t">Uptime Kuma</span><span class="d">Uptime monitoring</span></div>
       <div class="svc-card reveal"><span class="big">⌨️</span><span class="t">code-server</span><span class="d">VS Code in the browser</span></div>
-      <div class="svc-card reveal"><span class="big">🛡️</span><span class="t">Pi-hole</span><span class="d">Network-wide ad blocking</span></div>
-      <div class="svc-card reveal"><span class="big">➕</span><span class="t">…and hundreds more</span><span class="d">Any Docker or compose app you run</span></div>
+      <div class="svc-card reveal"><span class="big">➕</span><span class="t">and many more</span><span class="d">Any Docker or compose app you run</span></div>
     </div>
   </div>
 </section>
@@ -322,7 +483,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
   <div class="wrap">
     <div class="eyebrow reveal">Up and running in minutes</div>
     <h2 class="h2 reveal">Install with one line</h2>
-    <p class="lead reveal">SSH into any Linux server. The installer sets up Docker (if needed) and Helmsman,
+    <p class="lead reveal">SSH into any Linux server. The installer sets up Docker (if needed) and PocketADM,
       then prints your admin password. Open it on your phone, add to home screen, done.</p>
     <div class="install-box reveal">
       <div class="code-line">
@@ -330,9 +491,9 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
         <button class="copy" id="copyBtn">Copy</button>
       </div>
       <div class="steps">
-        <div class="step"><span class="n">1</span><span class="st"><b>Run the installer</b><span>Docker + Helmsman on port 8090, admin password printed to the console.</span></span></div>
+        <div class="step"><span class="n">1</span><span class="st"><b>Run the installer</b><span>Docker plus PocketADM on port 8090, admin password printed to the console.</span></span></div>
         <div class="step"><span class="n">2</span><span class="st"><b>Open on your phone</b><span>Visit <span class="mono">http://your-server:8090</span> and add it to your home screen as a PWA.</span></span></div>
-        <div class="step"><span class="n">3</span><span class="st"><b>Add an AI key (optional)</b><span>Bring an Anthropic / OpenRouter / OpenAI key, or run a local model, and start vibing.</span></span></div>
+        <div class="step"><span class="n">3</span><span class="st"><b>Add an AI key (optional)</b><span>Bring an Anthropic, OpenRouter or OpenAI key, or run a local model, and start vibing.</span></span></div>
       </div>
     </div>
   </div>
@@ -356,7 +517,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 
 <footer>
   <div class="wrap foot-in">
-    <div><span class="brand" style="font-size:16px"><span class="helm" style="color:var(--accent)">⎈</span> Helmsman</span>
+    <div><span class="brand" style="font-size:16px"><img class="mark" src="/logo.svg" alt="" style="height:22px"> PocketADM</span>
       <div style="margin-top:6px;font-size:13px">Open-source server command center · MIT licensed</div></div>
     <nav class="foot-links">
       <a href="https://github.com/maxaufknax/helmsman">GitHub</a>
@@ -372,14 +533,36 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 // nav shadow on scroll
 const nav=document.getElementById('nav');
 addEventListener('scroll',()=>nav.classList.toggle('scrolled',scrollY>10));
+
 // copy install command
 document.getElementById('copyBtn').addEventListener('click',function(){
   navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash');
   this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy',1600);
 });
+
 // reveal on scroll
 const io=new IntersectionObserver((es)=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.12});
 document.querySelectorAll('.reveal').forEach((el,i)=>{el.style.transitionDelay=(i%3*60)+'ms';io.observe(el)});
+
+// phone: animate stat bars when dashboard is visible
+function fillBars(pane){pane.querySelectorAll('.bar i[data-w]').forEach(i=>{i.style.width=i.dataset.w+'%'})}
+
+// phone: tab switching + auto-rotate
+const tabs=[...document.querySelectorAll('.tabs button')];
+const panes={};document.querySelectorAll('.pane').forEach(p=>panes[p.dataset.pane]=p);
+let idx=0,autoRotate=true;
+function show(name){
+  tabs.forEach(b=>b.classList.toggle('on',b.dataset.tab===name));
+  Object.entries(panes).forEach(([k,p])=>p.classList.toggle('on',k===name));
+  if(name==='dash'){fillBars(panes.dash)}
+}
+tabs.forEach((b,i)=>b.addEventListener('click',()=>{autoRotate=false;idx=i;show(b.dataset.tab)}));
+const order=['dash','vibe','health'];
+setInterval(()=>{if(!autoRotate)return;idx=(idx+1)%order.length;show(order[idx])},4200);
+
+// kick off bar fill once the phone scrolls into view
+const phoneIO=new IntersectionObserver((es)=>es.forEach(e=>{if(e.isIntersecting){fillBars(panes.dash);phoneIO.disconnect()}}),{threshold:.3});
+phoneIO.observe(document.querySelector('.phone'));
 </script>
 </body>
 </html>

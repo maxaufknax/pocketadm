@@ -288,6 +288,15 @@ async def recreate_container(cid: str, on_progress, image: str | None = None) ->
         raise
 
 
+async def system_df() -> dict:
+    """Disk usage of images/containers/volumes (docker system df)."""
+    if demo():
+        return {}
+    r = await client().get("/system/df")
+    r.raise_for_status()
+    return r.json()
+
+
 async def engine_info() -> dict:
     if demo():
         return demodata.engine_info()
