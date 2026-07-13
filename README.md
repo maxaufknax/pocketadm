@@ -8,9 +8,10 @@ I want Claude-Code-style vibe coding, monitoring and one-click app installs from
 
 ## Features
 
-- **📊 Dashboard:** live CPU / RAM / disk / **internet latency & throughput**; every stat
+- **Dashboard:** live CPU / RAM / disk / **internet latency & throughput**; every stat
   tile opens an interactive history graph (2 h in-memory sampling). All Docker containers
   grouped by stack (collapsible), with start / stop / restart / logs and one-tap port links.
+  
 - **✦ Vibe Code:** chat with an AI agent that works *directly on your server* via tools:
   `run_command`, `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`,
   `fetch_url`, `integration_request` and a **persistent memory** it maintains about your server
@@ -19,54 +20,71 @@ I want Claude-Code-style vibe coding, monitoring and one-click app installs from
   the workspace, and collapsible tool/output cards. Any command the agent runs has an **“open in
   terminal”** button so you can watch it yourself. Bring your own key — **Anthropic, OpenRouter,
   OpenAI:** or run a model **locally** (see below).
-- **🧠 Local AI:** run models *on your own hardware* via **Ollama**. Helmsman auto-detects a
+
+- **Local AI:** run models *on your own hardware* via **Ollama**. Helmsman auto-detects a
   running Ollama (or connects to your existing container non-destructively / installs one in a
   tap), recommends models that fit your RAM, downloads them with live progress, and wires them
   straight into the chat model picker. Private, free, offline — no cloud key required.
-- **💬 Ask AI everywhere:** every update, health check, container, log view, metric and
+
+- **Ask AI everywhere:** every update, health check, container, log view, metric and
   app-store error has a one-tap "Ask AI / Fix with AI" button that hands full context to the
   agent. Tips become actions.
-- **❯_ Terminal:** a real terminal on your phone (xterm.js + PTY over WebSocket),
+
+- **Terminal:** a real terminal on your phone (xterm.js + PTY over WebSocket),
   with a mobile key bar (esc/tab/ctrl/arrows) and one-tap `docker exec` into any container.
-- **◲ App Store:** 45+ curated apps with plain-language "what's in it for me" explanations,
+
+- **App Store:** 45+ curated apps with plain-language "what's in it for me" explanations,
   one-tap installs as clean compose projects — and it **detects apps you already run**
   outside Helmsman (shown as *self-managed* instead of installable).
-- **⟳ Updates:** registry digest comparison (no pull needed) with priority classification,
+
+- **Updates:** registry digest comparison (no pull needed) with priority classification,
   grouped compactly (available / up-to-date / ignored folds), **Update all**, live job logs
   with heartbeat + post-update health wait, and AI explanations of release notes in *your*
   language. Failed jobs offer *Fix with AI*.
-- **♥ Checks:** script-based security & ops checks (SSH hardening, fail2ban, auth.log,
+
+- **Checks:** script-based security & ops checks (SSH hardening, fail2ban, auth.log,
   ports, restarts …) on a schedule, grouped report UI with per-finding *Fix with AI*.
-- **🛠 Server settings:** rename your server, change the admin password, edit agent
+
+- **Server settings:** rename your server, change the admin password, edit agent
   memory & workspaces — plus a first-run onboarding wizard.
-- **📱 PWA:** add to home screen, dark, fast, offline shell. One codebase, phone + desktop.
-- **💬 Live, device-independent sessions:** the agent runs **server-side**, decoupled from the
+
+- **PWA:** add to home screen, dark, fast, offline shell. One codebase, phone + desktop.
+
+- **Live, device-independent sessions:** the agent runs **server-side**, decoupled from the
   connection: close the app or lock your phone and it keeps working; reopen and it’s still
   streaming. Open the **same chat on several devices** at once and watch it type live, send a
   message **while it’s working** (steering / a live queue), and **hand a session off** to another
   device by QR (`/remote`). Multiple chats with archive & delete, slash commands (`/agent`,
   `/auto`, `/terminal`, `/remote` …), and an ⌁ “instruct the agent” button reachable anywhere.
-- **🆕 Service detection:** when the agent (or you) brings up a new service, Helmsman spots the
+
+- **Service detection:** when the agent (or you) brings up a new service, Helmsman spots the
   new container, surfaces it in the chat with one-tap **Open**, **Logs**, and **✦ Finish setup**
   (reverse-proxy + HTTPS + backup) actions.
-- **🛰 Sentinel loops:** background AI agents on a schedule (security watch, update watch,
+
+- **Sentinel loops:** background AI agents on a schedule (security watch, update watch,
   health digest, or a custom prompt). Findings land under the 🔔 bell and can be **pushed
   to your phone via ntfy** (priority-filtered), each with a "Discuss & fix" hand-off to chat.
-- **🔌 Integrations:** connect deSEC / IONOS / GoDaddy / Cloudflare or any generic API once;
+
+- **Integrations:** connect deSEC / IONOS / GoDaddy / Cloudflare or any generic API once;
   the agent gets an `integration_request` tool with server-side credential injection
   ("add an A record for blog.example.com" just works — the AI never sees your token).
-- **↩ Snapshot before update:** before any image update, the running image is pinned as a
+
+- **Snapshot before update:** before any image update, the running image is pinned as a
   restore point; if the new version misbehaves, **roll back in one tap** (Health → Updates →
   Restore points) and Helmsman recreates the containers on the previous image.
-- **🖧 Multi-server & pairing:** manage several servers from one app. Add a server by URL +
+
+- **Multi-server & pairing:** manage several servers from one app. Add a server by URL +
   password, or **pair a new device by scanning a QR code** (one-time code, 10-min expiry).
   Switch servers from the header; each keeps its own token on your device.
-- **🛰 Sentinel de-duplication:** the same recurring finding is folded into one notification
+
+- **Sentinel de-duplication:** the same recurring finding is folded into one notification
   with a `×N` counter instead of spamming the bell, and won't buzz your phone again unless it
   changes (a persistent *crit* re-reminds at most once a day).
-- **◲ Online app catalog:** the App Store is served from an online catalog, so new apps
+
+- **Online app catalog:** the App Store is served from an online catalog, so new apps
   appear without updating Helmsman. Point it at your own JSON to add private apps.
-- **🎡 Demo mode** (`HELMSMAN_DEMO=1`) — a public, read-only playground with believable sample
+
+- **Demo mode** (`HELMSMAN_DEMO=1`) — a public, read-only playground with believable sample
   data and no host access, for showing the whole UI without a real server.
 
 ## Quick start
