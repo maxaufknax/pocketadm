@@ -123,7 +123,7 @@ Open `http://<your-server>:8090`, sign in, and on your phone use
 | --- | --- |
 | `ADMIN_PASSWORD` | Set your own password (otherwise generated + printed on first run) |
 | `AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL` / `AI_BASE_URL` | AI config via env (can also be set in the UI, stored on your server) |
-| `HOST_SSH` | `user@host` — adds a *real host shell* option to the terminal (mount your SSH key) |
+| `HOST_SSH` | `user@host` adds a *real host shell* option to the terminal (mount your SSH key) |
 | `HELMSMAN_WORKDIR` | Working dir for AI tools & terminal (default `/host`) |
 | `HELMSMAN_CATALOG_URL` | Override the online App Store catalog (`""` disables remote fetch) |
 | `OLLAMA_HOST` | Point Local AI at a specific Ollama endpoint (otherwise auto-detected) |
@@ -147,7 +147,7 @@ apt update checks work too.
 └──────────────┬────────────────────┬──────────────────────────┘
                │ REST (token auth)  │ WebSockets (chat, PTY)
 ┌──────────────┴────────────────────┴──────────────────────────┐
-│                    Helmsman container (FastAPI)               │
+│                    PocketADM container (FastAPI)             │
 │  auth · sysinfo(/proc) · docker API (unix socket) · updates  │
 │  appstore (compose projects) · AI agent loop (BYO key)       │
 └──────┬──────────────────┬───────────────────┬────────────────┘
@@ -171,10 +171,10 @@ your server.
 - [x] Snapshot-before-update + one-tap rollback — v0.7
 - [x] Multi-server support + QR device pairing — v0.7
 - [x] CI multi-arch image (amd64 + arm64) + read-only demo mode — v0.7
-- [x] **Device-independent live sessions** — agent runs server-side, streams to every device,
+- [x] **Device-independent live sessions** so agent runs server-side, streams to every device,
   survives disconnects, steering + queue, chat handoff — **v0.8**
 - [x] **Local AI** — run models on your own hardware via Ollama, RAM-aware recommendations — **v0.8**
-- [x] **Service detection** — spot new containers the agent brings up and help finish setup — **v0.8**
+- [x] **Service detection** spot new containers the agent brings up and help finish setup — **v0.8**
 - [ ] Native mobile app shell (Capacitor) with push notifications for updates/alerts
 - [ ] Domain / reverse-proxy automation: choose "reachable at sub.domain.tld" at install
   time, Helmsman wires up the proxy + DNS (script first, AI agent as fallback)
@@ -189,7 +189,7 @@ your server.
 ## Contributing
 
 Issues and PRs welcome. The stack is deliberately dependency-light: a single FastAPI app
-(`server/`) plus a vanilla-JS PWA (`web/`, xterm.js vendored) — no build step, no framework.
+(`server/`) plus a vanilla-JS PWA (`web/`, xterm.js vendored) no build step, no framework.
 `docker compose up -d --build` and you're running the whole thing.
 
 ## License
