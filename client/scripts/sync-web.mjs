@@ -30,12 +30,24 @@ for (const f of ["sw.js"]) {
   if (existsSync(p)) await unlink(p);
 }
 // neutralise the SW registration line so the app never 404s trying to load it
+const { readFile } = await import("node:fs/promises");
 const appJs = join(wwwDir, "app.js");
 if (existsSync(appJs)) {
-  const { readFile } = await import("node:fs/promises");
   let src = await readFile(appJs, "utf8");
   src = src.replace(/if \("serviceWorker" in navigator\)[^\n]*\n/, "");
   await writeFile(appJs, src);
 }
 
-console.log("synced web/ -> www/ (service worker stripped)");
+// native shell only: pin the zoom. Stops iOS from zoom-jumping into focused
+// fields and disables pinch — the PWA served by the server keeps browser zoom.
+const indexHtml = join(wwwDir, "index.html");
+if (existsSync(indexHtml)) {
+  let html = await readFile(indexHtml, "utf8");
+  html = html.replace(
+    /content="width=device-width, initial-scale=1, viewport-fit=cover/,
+    'content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover',
+  );
+  await writeFile(indexHtml, html);
+}
+
+console.log("synced web/ -> www/ (service worker stripped, viewport pinned)");

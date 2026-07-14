@@ -1781,3 +1781,131 @@ input:focus, textarea:focus, .select:focus {
   .modal:not(.hidden) .modal-box, .tab.active .ico, .badge { animation: none; }
   .btn, .tab .ico, .seg button, .ticon, .key-bar button { transition: none; }
 }
+
+/* ============================================================
+   Native feel layer (v0.13)
+   The app as a *phone app*: a ChatGPT-class composer pill, a
+   keyboard-aware shell (the tab bar slides away so the composer rides
+   directly on the keyboard), honest touch ergonomics, and none of the
+   web-isms (tap flashes, callouts, focus zoom). Keyboard/haptics/status
+   bar are driven by native.js — Capacitor in the app shell, graceful
+   fallbacks in the browser.
+   ============================================================ */
+
+/* ---- kill the web-isms: tap flash, long-press callouts, stray selection ---- */
+html { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button, .tab, .seg, .tabbar, .topbar, .stat, .suggest, .msg-actions,
+.term-target, .ticon, summary, .chat-open, .attach-item, .pick-row,
+.key-bar, .theme-card, .srv-row, .connect-srv {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+
+/* iOS zooms the whole page into any focused field under 16px — keep text
+   fields at 16px on touch devices so focusing never zoom-jumps the app */
+@media (pointer: coarse) {
+  input, textarea, .select.wide { font-size: 16px; }
+}
+
+/* ---- the composer: one soft pill (attach · text · send), ChatGPT-style ---- */
+/* longhands only: the desktop layout centers this row via padding-left/right */
+.chat-input-row {
+  gap: 0; padding-top: 6px; padding-bottom: 8px;
+  border-top: none;
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--border) 75%, transparent);
+}
+.composer {
+  flex: 1; display: flex; align-items: flex-end; gap: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 26px;
+  padding: 4px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.composer textarea {
+  flex: 1; width: auto; background: none; border: none; border-radius: 0;
+  padding: 7px 6px; min-height: 36px; max-height: 132px;
+  font-size: 16px; line-height: 1.4;
+}
+.composer textarea:focus { border: none; box-shadow: none; }
+.composer .btn.round { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; }
+.composer .btn.round.attach { background: transparent; border-color: transparent; color: var(--muted); box-shadow: none; }
+.composer .btn.round.attach:active { background: var(--bg2); color: var(--text); }
+
+/* send ⇄ stop morph: while the agent runs (and you're not typing a steer),
+   the send circle becomes a stop button — exactly like the chat apps */
+#chat-send { position: relative; overflow: hidden;
+  transition: transform .15s cubic-bezier(.34, 1.56, .5, 1), background .2s, border-color .2s,
+              box-shadow .2s, opacity .2s, filter .2s; }
+#chat-send span { display: inline-flex; transition: opacity .16s, transform .16s; }
+#chat-send .ic-stop {
+  position: absolute; inset: 0; align-items: center; justify-content: center;
+  opacity: 0; transform: scale(.4) rotate(60deg);
+}
+#chat-send .ic-stop svg.i { width: 14px; height: 14px; fill: currentColor; }
+#chat-send.stop-mode .ic-stop { opacity: 1; transform: none; }
+#chat-send.stop-mode .ic-send { opacity: 0; transform: scale(.4); }
+#chat-send.stop-mode {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+  box-shadow: 0 1px 10px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+#chat-send:disabled { opacity: .35; filter: saturate(.35); transform: scale(.94); }
+
+/* ---- keyboard-aware shell ----
+   native.js toggles body.kb-open and sets --kb (browser fallback) /
+   --tabbar-real (measured). Native shells resize the webview themselves,
+   so --kb stays 0 there and only the chrome reacts. */
+.app { padding-bottom: var(--kb, 0px); }
+.modal { padding-bottom: var(--kb, 0px); }   /* bottom sheets ride the keyboard too */
+@media (max-width: 899px) {
+  .app { overflow: hidden; }
+  .tabbar {
+    transition: transform .24s cubic-bezier(.4, 0, .2, 1),
+                margin-bottom .24s cubic-bezier(.4, 0, .2, 1);
+  }
+  body.kb-open .tabbar {
+    transform: translateY(102%);
+    margin-bottom: calc(-1 * var(--tabbar-real, calc(var(--tabbar-h) + var(--safe-bottom))));
+    pointer-events: none;
+  }
+}
+
+/* ---- jump-to-latest bubble over the transcript ---- */
+.scroll-fab-anchor { position: relative; height: 0; overflow: visible; z-index: 5; flex: none; }
+.scroll-fab {
+  position: absolute; right: 14px; bottom: 10px;
+  width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg2) 86%, var(--text) 7%);
+  border: 1px solid var(--border); color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .28);
+  opacity: 0; transform: translateY(8px) scale(.8); pointer-events: none;
+  transition: opacity .18s, transform .18s cubic-bezier(.34, 1.56, .5, 1);
+}
+.scroll-fab.show { opacity: 1; transform: none; pointer-events: auto; }
+.scroll-fab svg.i { width: 17px; height: 17px; }
+@media (min-width: 900px) {
+  /* keep the bubble attached to the centered transcript column */
+  .scroll-fab-anchor { width: calc(100% - 48px); max-width: 836px; margin: 0 auto; }
+}
+
+/* ---- honest touch targets on phones ---- */
+@media (pointer: coarse) {
+  /* approvals are the most important tap in the app — give them real buttons */
+  .approve-row { padding: 2px 12px 12px; gap: 10px; }
+  .approve-row .btn.small { flex: 1; padding: 11px 14px; font-size: 14px; border-radius: 12px; font-weight: 600; }
+  .msg-actions button { padding: 7px 13px; font-size: 12px; border-radius: 10px; }
+  .vibe-controls { gap: 7px; padding-top: 7px; padding-bottom: 7px; }
+  .vibe-controls .seg button { padding: 7px 11px; font-size: 12px; }
+  .iconbtn { padding: 8px; margin: -3px; }        /* bigger thumb pad, same look */
+  .chat-input-row { padding-bottom: 9px; }
+}
+/* the haptics switch only makes sense where there's a vibration motor */
+@media (pointer: fine) { #haptics-row { display: none; } }
+
+/* keep the calm for people who asked for it */
+@media (prefers-reduced-motion: reduce) {
+  .tabbar, .composer, #chat-send, #chat-send span, .scroll-fab { transition: none; }
+}
