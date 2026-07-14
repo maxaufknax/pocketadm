@@ -105,9 +105,25 @@ workflows:
 
       - name: Build the signed IPA
         script: |
+          set +e
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "═══════ build-ipa failed (exit $status) — real xcodebuild error below ═══════"
+            log=$(ls -t /tmp/xcodebuild_logs/*.log 2>/dev/null | head -n1)
+            if [ -n "$log" ]; then
+              echo ">> log file: $log"
+              echo "───────── error / signing lines ─────────"
+              grep -nE "error:|fatal error|The following build commands failed|Signing for|requires a provisioning|No profile|no matching|certificate|does not support|deployment target|Undefined symbol|linker command failed|PhaseScriptExecution" "$log" | tail -n 100
+              echo "───────── last 200 log lines ─────────"
+              tail -n 200 "$log"
+            else
+              echo "!! no xcodebuild log found under /tmp/xcodebuild_logs"
+            fi
+            exit $status
+          fi
 
     artifacts:
       - build/ios/ipa/*.ipa
