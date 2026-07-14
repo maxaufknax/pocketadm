@@ -29,6 +29,8 @@ workflows:
       # existing provisioning profiles and fails on a fresh app ("No matching
       # profiles found"). Instead the "Set up code signing" script below fetches
       # AND creates the distribution certificate + profile via --create.
+      groups:
+        - ios-release          # holds the secure var CERTIFICATE_PRIVATE_KEY_B64
       vars:
         BUNDLE_ID: "de.maxaufknax.pocketadm"
         TEAM_ID: "ZPF4QUFXXH"            # Apple Developer Team ID (App ID prefix)
