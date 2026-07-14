@@ -74,9 +74,19 @@ workflows:
             --type IOS_APP_STORE --create
           keychain add-certificates
           xcode-project use-profiles
-          # Capacitor's generated project ships with automatic signing and an
-          # empty team, so a Manual archive fails with "requires a provisioning
-          # profile". Pin the team + manual style on the App target explicitly.
+
+          # Capacitor's generated project ships with automatic signing, an empty
+          # team and no profile specifier, so a Manual archive fails with
+          # "requires a provisioning profile". `use-profiles` alone doesn't
+          # reliably pin the specifier onto the App target for a fresh project,
+          # so we read the profile we just fetched and write EVERY manual-signing
+          # setting explicitly (team, style, specifier, identity). Ruby runs last
+          # so it is the final authority on the build settings.
+          PROFILE=$(ls -t "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision | head -n1)
+          security cms -D -i "$PROFILE" -o /tmp/pp.plist
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' /tmp/pp.plist)
+          export PROFILE_NAME
+          echo "Using provisioning profile: $PROFILE_NAME"
           ruby -e '
             require "xcodeproj"
             proj = Xcodeproj::Project.open("ios/App/App.xcodeproj")
@@ -85,6 +95,9 @@ workflows:
               t.build_configurations.each do |c|
                 c.build_settings["DEVELOPMENT_TEAM"] = ENV["TEAM_ID"]
                 c.build_settings["CODE_SIGN_STYLE"] = "Manual"
+                c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ENV["PROFILE_NAME"]
+                c.build_settings["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+                c.build_settings["CODE_SIGN_IDENTITY[sdk=iphoneos*]"] = "Apple Distribution"
               end
             end
             proj.save
