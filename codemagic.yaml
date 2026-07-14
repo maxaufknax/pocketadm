@@ -1,0 +1,91 @@
+# PocketADM — no-Mac iOS release pipeline (Codemagic)
+# ---------------------------------------------------------------------------
+# Builds the Capacitor client on a Codemagic macOS VM, signs it automatically
+# with an App Store Connect API key (no Mac, no manual certificates), and ships
+# it to TestFlight. Everything the build needs that only exists on macOS
+# (CocoaPods, Xcode, the iOS project itself) is produced here at build time.
+#
+# ONE-TIME SETUP (in the Codemagic web UI — see client/APPSTORE.md):
+#   1. Connect this Git repo.
+#   2. Team settings → Integrations → App Store Connect → add your API key,
+#      and name it exactly:  PocketADM ASC key   (matches `integrations` below).
+#   3. Start the "ios-release" workflow. First build → TestFlight.
+# When you're ready for the public release, flip submit_to_app_store to true.
+# ---------------------------------------------------------------------------
+
+workflows:
+  ios-release:
+    name: PocketADM iOS (TestFlight + App Store)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: client
+    integrations:
+      app_store_connect: PocketADM ASC key
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: de.maxaufknax.pocketadm
+      vars:
+        BUNDLE_ID: "de.maxaufknax.pocketadm"
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+        MARKETING_VERSION: "1.0.0"       # public App Store version string
+      node: 20
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install JS dependencies
+        script: npm ci || npm install
+
+      - name: Bundle the PWA into the native shell
+        script: npm run sync-web        # copies ../web -> ./www (strips sw.js)
+
+      - name: Create the iOS platform if it isn't committed yet
+        script: |
+          if [ ! -d "ios/App" ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      - name: Generate app icons & splash from assets/
+        script: |
+          npx @capacitor/assets generate --ios --assetPath assets || \
+            echo "asset generation skipped (assets/ missing) — using template icons"
+
+      - name: Apply native iOS configuration (Info.plist)
+        script: bash scripts/ios-configure.sh
+
+      - name: Install CocoaPods dependencies
+        script: |
+          cd ios/App && pod install
+
+      - name: Set the version and a monotonic build number
+        script: |
+          cd ios/App
+          agvtool new-marketing-version "$MARKETING_VERSION"
+          agvtool new-version -all "$(date +%Y%m%d%H%M)"
+
+      - name: Set up automatic code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+
+      - name: Build the signed IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Ready for the public store? Flip this to true (and set the group/notes).
+        submit_to_app_store: false

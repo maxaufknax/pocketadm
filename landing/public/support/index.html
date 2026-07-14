@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PocketADM · Support</title>
+<meta name="theme-color" content="#0b0f14">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0b0f14;--bg2:#121821;--border:#243044;--text:#e6edf3;--muted:#8b98a9;--accent:#4da3ff;--accent2:#7ee0b8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);line-height:1.62;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:0 22px}
+.wrap{max-width:760px;margin:0 auto;padding:48px 0 80px}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.brand{display:inline-flex;align-items:center;gap:9px;font-weight:700;font-size:18px;margin-bottom:34px}
+.brand img{height:24px}
+h1{font-size:clamp(28px,5vw,38px);letter-spacing:-.02em;margin-bottom:6px}
+.sub{color:var(--muted);font-size:16px;margin-bottom:30px}
+h2{font-size:19px;margin:28px 0 8px;color:var(--accent2)}
+p,li{color:#d3dbe6;font-size:15.5px;margin-bottom:10px}
+ul{margin:6px 0 14px 22px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0}
+@media(max-width:560px){.grid{grid-template-columns:1fr}}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px 20px;transition:.2s}
+.card:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.card h3{font-size:16px;margin-bottom:4px}
+.card p{font-size:14px;color:var(--muted);margin:0}
+code{background:#0a0e13;border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:13.5px}
+footer{border-top:1px solid var(--border);margin-top:40px;padding-top:20px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="brand" href="/"><img src="/logo.svg" alt=""> PocketADM</a>
+  <h1>Support</h1>
+  <p class="sub">PocketADM is free and open source. Here's how to get help.</p>
+
+  <div class="grid">
+    <a class="card" href="https://github.com/maxaufknax/pocketadm/issues">
+      <h3>🐛 Report a bug</h3><p>Open an issue on GitHub — the fastest way to reach us.</p></a>
+    <a class="card" href="https://github.com/maxaufknax/pocketadm#readme">
+      <h3>📖 Documentation</h3><p>Install guide, features and configuration in the README.</p></a>
+    <a class="card" href="mailto:support@pocketadm.com">
+      <h3>✉️ Email</h3><p>support@pocketadm.com for anything not suited to a public issue.</p></a>
+    <a class="card" href="/">
+      <h3>🌐 Website</h3><p>pocketadm.com — overview, features and the one-line installer.</p></a>
+  </div>
+
+  <h2>Getting started</h2>
+  <p>PocketADM has two parts: the <b>app</b> (this iOS app) and the <b>server</b> software you run
+  on your own Linux box. Install the server with one command, then add it in the app:</p>
+  <ul>
+    <li>On any Linux server, run the one-line installer from <a href="/#install">pocketadm.com</a>.
+      It prints an admin password.</li>
+    <li>In the app, tap <b>Add a server</b>, enter the address (e.g. <code>http://your-server:8090</code>)
+      and that password.</li>
+    <li>Or, on a server you're already signed into, show a pairing QR and scan it from the app.</li>
+  </ul>
+
+  <h2>Try it without a server</h2>
+  <p>Want to look around first? Add the demo server <code>demo.pocketadm.com</code> with the
+  username and password <code>demo</code> — it's a read-only sandbox.</p>
+
+  <h2>Common questions</h2>
+  <p><b>Do I need a Mac or a subscription?</b> No. PocketADM is free; you run the server on your
+  own hardware and bring your own AI key (or a local model) if you want the assistant.</p>
+  <p><b>Can't the app reach my server?</b> Make sure the server is running and reachable from your
+  phone's network. For servers at home, connect over the same Wi-Fi or a VPN.</p>
+
+  <footer>PocketADM is free and open source (MIT). · <a href="/">pocketadm.com</a> · <a href="/privacy/">Privacy</a></footer>
+</div>
+</body>
+</html>

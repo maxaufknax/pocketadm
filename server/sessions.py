@@ -337,7 +337,9 @@ class Session:
                 await self.broadcast(type="tool_result", id=tc["id"], output="[denied by user]")
                 return "The user declined this action. Ask how they want to proceed."
         await self.broadcast(type="tool_start", id=tc["id"], name=tc["name"], args=tc["args"])
+        before = ai.capture_before(tc["name"], tc["args"], self.workdir)
         output = await ai.execute_tool(tc["name"], tc["args"], self.workdir)
+        diff = ai.build_file_diff(tc["name"], tc["args"], self.workdir, before)
         self._steps += 1
         self._total_steps += 1
         if tc["name"] not in ai.SAFE_TOOLS:
@@ -346,7 +348,7 @@ class Session:
                          source="auto" if self.mode == "auto" else "agent",
                          detail=ai._tool_audit_detail(tc["name"], tc["args"]))
         output = await self._check_permission(tc, output)
-        await self.broadcast(type="tool_result", id=tc["id"], output=output)
+        await self.broadcast(type="tool_result", id=tc["id"], output=output, diff=diff)
         return output
 
     async def _apply_plan(self, tc: dict) -> str:

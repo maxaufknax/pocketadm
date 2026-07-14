@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PocketADM · Privacy Policy</title>
+<meta name="theme-color" content="#0b0f14">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0b0f14;--bg2:#121821;--border:#243044;--text:#e6edf3;--muted:#8b98a9;--accent:#4da3ff;--accent2:#7ee0b8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);line-height:1.62;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:0 22px}
+.wrap{max-width:760px;margin:0 auto;padding:48px 0 80px}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.brand{display:inline-flex;align-items:center;gap:9px;font-weight:700;font-size:18px;margin-bottom:34px}
+.brand img{height:24px}
+h1{font-size:clamp(28px,5vw,38px);letter-spacing:-.02em;margin-bottom:6px}
+.upd{color:var(--muted);font-size:14px;margin-bottom:30px}
+h2{font-size:19px;margin:30px 0 8px;color:var(--accent2)}
+p,li{color:#d3dbe6;font-size:15.5px;margin-bottom:10px}
+ul{margin:6px 0 14px 22px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin:18px 0}
+.tldr{border-color:color-mix(in srgb,var(--accent2) 40%,var(--border));background:color-mix(in srgb,var(--accent2) 7%,var(--bg2))}
+footer{border-top:1px solid var(--border);margin-top:40px;padding-top:20px;color:var(--muted);font-size:14px}
+code{background:#0a0e13;border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="brand" href="/"><img src="/logo.svg" alt=""> PocketADM</a>
+  <h1>Privacy Policy</h1>
+  <div class="upd">Last updated: 14 July 2026</div>
+
+  <div class="card tldr">
+    <p style="margin:0"><b>In short:</b> PocketADM is open-source, self-hosted software.
+    The app has <b>no backend of ours</b> and <b>collects no personal data</b>. It talks only
+    to the servers <i>you</i> add, over a direct connection. We never see your servers, your
+    credentials, your files, or your usage.</p>
+  </div>
+
+  <h2>Who we are</h2>
+  <p>PocketADM ("the app") is an open-source command center for your own self-hosted servers,
+  published by Maximilian Paasch. The app is a client: it connects to PocketADM server software
+  that <i>you</i> install and run on <i>your</i> hardware.</p>
+
+  <h2>What data the app collects</h2>
+  <p><b>None on our side.</b> There is no PocketADM analytics, no tracking SDK, no advertising,
+  and no account with us. We operate no server that receives your data.</p>
+
+  <h2>Data that stays on your device</h2>
+  <p>To function, the app stores the following <b>locally on your device only</b>:</p>
+  <ul>
+    <li>The address, name and login token of each server you add.</li>
+    <li>Your preferences (theme, terminal settings, last-open chat).</li>
+  </ul>
+  <p>This information is kept in the app's local storage and is never transmitted to us. Removing
+  a server, or deleting the app, removes it.</p>
+
+  <h2>Data that goes directly to your own server</h2>
+  <p>When you use PocketADM, your device communicates <b>directly</b> with the server you added
+  (your admin password, commands, chat messages, files). This traffic goes only between your
+  device and your server. It does not pass through us.</p>
+
+  <h2>AI features (bring your own key)</h2>
+  <p>If you enable the AI assistant, requests are sent from your server to the AI provider whose
+  API key <i>you</i> configured (e.g. Anthropic, OpenAI, OpenRouter), or to a local model you run
+  yourself. Those requests are governed by that provider's privacy policy. We are not a party to
+  them and never receive your API keys.</p>
+
+  <h2>Camera &amp; local network</h2>
+  <ul>
+    <li><b>Camera</b> is used only when you choose to scan a pairing QR code. No images are stored or sent.</li>
+    <li><b>Local network</b> access is used to reach servers you add on your home network (e.g. <code>192.168.x.x</code>).</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>PocketADM is a developer/administration tool and is not directed at children.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the "last updated" date above will change. Material changes will be
+  noted in the app's changelog.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about privacy: <a href="mailto:privacy@pocketadm.com">privacy@pocketadm.com</a>,
+  or open an issue on <a href="https://github.com/maxaufknax/pocketadm">GitHub</a>.</p>
+
+  <footer>PocketADM is free and open source (MIT). · <a href="/">pocketadm.com</a> · <a href="/support/">Support</a></footer>
+</div>
+</body>
+</html>

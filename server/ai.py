@@ -30,6 +30,7 @@ its content is injected into every system prompt and the agent can update
 it with the update_memory tool — so it learns about this server over time.
 """
 import asyncio
+import difflib
 import json
 import os
 import re
@@ -522,6 +523,56 @@ def _resolve(path: str, workdir: str) -> Path:
     return p if p.is_absolute() else Path(workdir) / p
 
 
+# ------------------------------------------------- file-edit diffs (for the UI)
+# So the user can *see* what the agent changed — how many lines added/removed and
+# a colored patch — not just "wrote N bytes". Computed around the actual write.
+
+FILE_WRITE_TOOLS = {"write_file", "edit_file"}
+_DIFF_MAX_LINES = 500
+
+
+def capture_before(name: str, args: dict, workdir: str) -> str | None:
+    """Snapshot a file's current text right before a write/edit tool runs.
+    Returns "" for a not-yet-existing file, None when the tool isn't a writer."""
+    if name not in FILE_WRITE_TOOLS:
+        return None
+    try:
+        return _resolve(args.get("path", ""), workdir).read_text(errors="replace")
+    except (OSError, KeyError):
+        return ""
+
+
+def build_file_diff(name: str, args: dict, workdir: str, before: str | None) -> dict | None:
+    """After the write happened, produce {path, added, removed, patch, truncated}
+    for the UI. Cheap and best-effort — never raises into the tool flow."""
+    if before is None or name not in FILE_WRITE_TOOLS:
+        return None
+    try:
+        after = _resolve(args.get("path", ""), workdir).read_text(errors="replace")
+    except OSError:
+        return None
+    if after == before:
+        return None
+    b_lines, a_lines = before.splitlines(), after.splitlines()
+    added = removed = 0
+    patch: list[str] = []
+    for line in difflib.unified_diff(b_lines, a_lines, lineterm="", n=2):
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+        if len(patch) < _DIFF_MAX_LINES:
+            patch.append(line)
+    return {
+        "path": args.get("path", ""),
+        "added": added, "removed": removed,
+        "patch": "\n".join(patch),
+        "truncated": len(patch) >= _DIFF_MAX_LINES,
+    }
+
+
 def _truncate(text: str) -> str:
     if len(text) > MAX_TOOL_OUTPUT:
         return text[:MAX_TOOL_OUTPUT] + f"\n… [truncated, {len(text)} chars total]"
@@ -941,3 +992,56 @@ async def one_shot(prompt: str, system: str = "") -> str:
                               headers={"Authorization": f"Bearer {cfg['api_key']}"})
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
+
+
+async def one_shot_stream(prompt: str, system: str = ""):
+    """Streaming, tool-less completion — yields text deltas so callers (e.g. the
+    "What is this?" explainer) can show the answer appearing live instead of a
+    silent spinner. Falls back to a single yield if the provider can't stream."""
+    default = config.get_ai_default()
+    if not default["provider"]:
+        raise RuntimeError("No AI API key configured")
+    cfg = _cfg_for(default["provider"], default["model"])
+    if cfg["provider"] == "anthropic":
+        url = (cfg["base_url"] or "https://api.anthropic.com") + "/v1/messages"
+        body = {"model": cfg["model"], "max_tokens": 2000, "stream": True,
+                "messages": [{"role": "user", "content": prompt}]}
+        if system:
+            body["system"] = system
+        headers = {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"}
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", url, json=body, headers=headers) as resp:
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"API error {resp.status_code}: "
+                                       f"{(await resp.aread()).decode()[:300]}")
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        ev = json.loads(line[6:])
+                    except ValueError:
+                        continue
+                    if ev.get("type") == "content_block_delta":
+                        piece = ev.get("delta", {}).get("text", "")
+                        if piece:
+                            yield piece
+        return
+    msgs = ([{"role": "system", "content": system}] if system else []) + [
+        {"role": "user", "content": prompt}]
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream("POST", _openai_base(cfg) + "/chat/completions",
+                                 json={"model": cfg["model"], "messages": msgs, "stream": True},
+                                 headers={"Authorization": f"Bearer {cfg['api_key']}"}) as resp:
+            if resp.status_code >= 400:
+                raise RuntimeError(f"API error {resp.status_code}: "
+                                   f"{(await resp.aread()).decode()[:300]}")
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: ") or line[6:].strip() == "[DONE]":
+                    continue
+                try:
+                    ev = json.loads(line[6:])
+                except ValueError:
+                    continue
+                piece = (ev.get("choices") or [{}])[0].get("delta", {}).get("content", "")
+                if piece:
+                    yield piece

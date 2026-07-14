@@ -1,10 +1,11 @@
-"""Coding-agent CLIs in the built-in terminal (Claude Code, OpenAI Codex).
+"""Coding-agent CLIs in the built-in terminal (Claude Code, OpenAI Codex,
+Mistral Vibe).
 
 They are installed into DATA_DIR/home/.local/bin — the persistent HOME the
 local terminal shell uses (see terminal.PERSIST_HOME) — so the binaries AND
 their login sessions survive container updates. This lets users drive an
-existing Claude Pro/Max or ChatGPT subscription from PocketADM's terminal:
-sign in once with `claude` / `codex`, no API key needed.
+existing Claude Pro/Max, ChatGPT or Mistral subscription from PocketADM's
+terminal: sign in once with `claude` / `codex` / `vibe`, no API key needed.
 """
 import asyncio
 import os
@@ -34,6 +35,13 @@ CLIS = {
         "subscription": "ChatGPT Plus / Pro (or an OpenAI API key)",
         "tagline": "OpenAI's terminal coding agent",
         "site": "https://github.com/openai/codex",
+    },
+    "mistral": {
+        "id": "mistral", "name": "Mistral Vibe", "vendor": "Mistral AI",
+        "bin": "vibe", "launch": "vibe",
+        "subscription": "a Mistral account (Free/Pro) or an API key",
+        "tagline": "Mistral's terminal coding agent (Devstral)",
+        "site": "https://mistral.ai/products/vibe/code/",
     },
 }
 
@@ -79,6 +87,8 @@ def start_install_job(tool: str) -> jobs.Job:
         BIN_DIR.mkdir(parents=True, exist_ok=True)
         if tool == "claude":
             await _install_claude(job)
+        elif tool == "mistral":
+            await _install_mistral(job)
         else:
             await _install_codex(job)
         version = await _version_of(BIN_DIR / meta["bin"])
@@ -103,6 +113,40 @@ async def _install_claude(job: jobs.Job) -> None:
             job.log("  " + line[:300])
     await proc.wait()
     if proc.returncode != 0 or not (BIN_DIR / "claude").is_file():
+        raise RuntimeError("installer failed — see log above")
+
+
+async def _install_mistral(job: jobs.Job) -> None:
+    """Official installer — bootstraps uv, then `uv tool install mistral-vibe`.
+    uv places the `vibe` launcher in $HOME/.local/bin (our persistent BIN_DIR)."""
+    job.log("⬇ Running the official Mistral Vibe installer …")
+    env = _env()
+    # uv respects these; pin them at BIN_DIR so the launcher lands where we look.
+    env["XDG_BIN_HOME"] = str(BIN_DIR)
+    env["UV_INSTALL_DIR"] = str(BIN_DIR)
+    proc = await asyncio.create_subprocess_shell(
+        "curl -LsSf https://mistral.ai/vibe/install.sh | bash",
+        env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    assert proc.stdout
+    async for raw in proc.stdout:
+        line = raw.decode("utf-8", "replace").rstrip()
+        if line:
+            job.log("  " + line[:300])
+    await proc.wait()
+    # uv sometimes drops the launcher elsewhere under HOME — link it into BIN_DIR.
+    if not (BIN_DIR / "vibe").exists():
+        found = next((p for p in terminal.PERSIST_HOME.rglob("vibe")
+                      if p.is_file() and os.access(p, os.X_OK) and BIN_DIR not in p.parents
+                      and ".cache" not in p.parts), None)
+        if found:
+            link = BIN_DIR / "vibe"
+            try:
+                link.symlink_to(found)
+            except OSError:
+                link.write_bytes(found.read_bytes())
+                link.chmod(link.stat().st_mode | stat.S_IEXEC)
+            job.log(f"  linked {found} → {link}")
+    if proc.returncode != 0 and not (BIN_DIR / "vibe").exists():
         raise RuntimeError("installer failed — see log above")
 
 

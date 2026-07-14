@@ -4,7 +4,7 @@
 # generated admin password. Safe to re-run (it updates an existing install).
 set -euo pipefail
 
-REPO="${HELMSMAN_REPO:-https://github.com/maxaufknax/helmsman.git}"
+REPO="${HELMSMAN_REPO:-https://github.com/maxaufknax/pocketadm.git}"
 DIR="${HELMSMAN_DIR:-/opt/helmsman}"
 PORT="${HELMSMAN_PORT:-8090}"
 
