@@ -22,9 +22,10 @@ workflows:
     integrations:
       app_store_connect: PocketADM ASC key
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: de.maxaufknax.pocketadm
+      # NOTE: no `ios_signing:` block here on purpose. That block only *fetches*
+      # existing provisioning profiles and fails on a fresh app ("No matching
+      # profiles found"). Instead the "Set up code signing" script below fetches
+      # AND creates the distribution certificate + profile via --create.
       vars:
         BUNDLE_ID: "de.maxaufknax.pocketadm"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
