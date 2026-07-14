@@ -87,7 +87,7 @@ workflows:
             echo "!! variable in Codemagic (ios-release group) — see APPSTORE.md §Signing."
             exit 1
           fi
-          echo "$CERTIFICATE_PRIVATE_KEY_B64" | base64 --decode > /tmp/cert_key.pem
+          printf '%s' "$CERTIFICATE_PRIVATE_KEY_B64" | openssl base64 -d -A -out /tmp/cert_key.pem
 
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
