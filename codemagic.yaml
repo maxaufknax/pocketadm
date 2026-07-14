@@ -9,7 +9,10 @@
 #   1. Connect this Git repo.
 #   2. Team settings → Integrations → App Store Connect → add your API key,
 #      and name it exactly:  PocketADM ASC key   (matches `integrations` below).
-#   3. Start the "ios-release" workflow. First build → TestFlight.
+#   3. Add a secure env var CERTIFICATE_PRIVATE_KEY_B64 (base64 of an RSA private
+#      key) to the ios-release group — the distribution cert's private key, which
+#      Apple's API can't hand out. See APPSTORE.md §Signing for how to generate it.
+#   4. Start the "ios-release" workflow. First build → TestFlight.
 # When you're ready for the public release, flip submit_to_app_store to true.
 # ---------------------------------------------------------------------------
 
@@ -69,20 +72,40 @@ workflows:
 
       - name: Set up code signing (create cert + profile, pin team)
         script: |
+          set -eo pipefail
+          # Apple's API can create/return a distribution certificate but NEVER its
+          # private key — that has to be supplied. Without it fetch-signing-files
+          # fails with "Cannot save Signing Certificates without certificate
+          # private key" and produces no cert AND no profile. Supply a persistent
+          # key stored ONCE as a base64 secure env var in Codemagic (see
+          # client/APPSTORE.md §Signing). Reusing the same key every build means
+          # no new certificate is created (Apple caps distribution certs).
+          if [ -z "${CERTIFICATE_PRIVATE_KEY_B64:-}" ]; then
+            echo "!! CERTIFICATE_PRIVATE_KEY_B64 is not set. Add it as a secure env"
+            echo "!! variable in Codemagic (ios-release group) — see APPSTORE.md §Signing."
+            exit 1
+          fi
+          echo "$CERTIFICATE_PRIVATE_KEY_B64" | base64 --decode > /tmp/cert_key.pem
+
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE --create
+            --type IOS_APP_STORE \
+            --certificate-key @file:/tmp/cert_key.pem \
+            --create
           keychain add-certificates
           xcode-project use-profiles
 
-          # Capacitor's generated project ships with automatic signing, an empty
-          # team and no profile specifier, so a Manual archive fails with
-          # "requires a provisioning profile". `use-profiles` alone doesn't
-          # reliably pin the specifier onto the App target for a fresh project,
-          # so we read the profile we just fetched and write EVERY manual-signing
-          # setting explicitly (team, style, specifier, identity). Ruby runs last
-          # so it is the final authority on the build settings.
-          PROFILE=$(ls -t "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision | head -n1)
+          # Belt-and-suspenders: a freshly generated Capacitor project defaults to
+          # automatic signing with an empty team, so pin every manual-signing
+          # setting (team, style, specifier, identity) onto the App target from
+          # the profile we just fetched. Fail loudly if no profile was produced
+          # rather than writing a bogus specifier.
+          PROFILE=$(ls -t "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision 2>/dev/null | head -n1 || true)
+          if [ -z "$PROFILE" ] || [ ! -f "$PROFILE" ]; then
+            echo "!! No provisioning profile was fetched — check the ASC API key"
+            echo "!! permissions (App Manager) and CERTIFICATE_PRIVATE_KEY_B64."
+            exit 1
+          fi
           security cms -D -i "$PROFILE" -o /tmp/pp.plist
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' /tmp/pp.plist)
           export PROFILE_NAME

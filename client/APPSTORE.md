@@ -54,8 +54,28 @@ git push https://<TOKEN>@github.com/maxaufknax/pocketadm.git main
 3. Open the app in Codemagic → it detects `codemagic.yaml` → run the
    **`ios-release`** workflow.
 
+### 2.1 👤 Signing: the certificate private key (one-time, required)
+
+Apple's API can *create* your distribution certificate but can **never** hand out
+its private key — so you supply one. The pipeline reuses it every build (Apple
+caps distribution certs, so we must not generate a new one each time).
+
+1. Generate an RSA private key and base64-encode it to a single line:
+   ```bash
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out cert_key.pem
+   base64 -w0 cert_key.pem   # copy the whole one-line output
+   ```
+   (On the server, ask the agent — it can generate this for you.)
+2. In Codemagic → your app → **Environment variables**: add
+   - **Name** `CERTIFICATE_PRIVATE_KEY_B64`
+   - **Value** the one-line base64 from step 1
+   - **Group** `ios-release` · **Secure** ✅ (must be checked)
+3. Keep `cert_key.pem` safe (or just regenerate — the first build creates a fresh
+   cert from whatever key it sees). Never commit it.
+
 That's it. The pipeline installs deps, bundles the latest `../web` UI, generates
-the iOS project + icons, signs with your key, and uploads to **TestFlight**.
+the iOS project + icons, creates the cert + profile from your key, signs, and
+uploads to **TestFlight**.
 
 ## 3. Test on your iPhone
 
