@@ -205,12 +205,27 @@ function applyTheme(choice, animate = false) {
   document.querySelector('meta[name="theme-color"]')
     .setAttribute("content", cssVar("--bg2"));
   if (state.term) state.term.options.theme = termTheme();
+  // native shell: keep status-bar text and keyboard appearance in step
+  if (window.PocketNative) window.PocketNative.themeChanged(
+    resolveTheme(choice) === "daybreak" ? "light" : "dark", cssVar("--bg2").trim());
 }
 
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
   if (storedTheme() === "auto") applyTheme("auto", true);
 });
 applyTheme(storedTheme());
+
+// haptics preference (Appearance card; only shown on touch devices)
+{
+  const ht = document.querySelector("#haptics-toggle");
+  if (ht) {
+    ht.checked = localStorage.getItem("pocketadm_haptics") !== "off";
+    ht.addEventListener("change", () => {
+      localStorage.setItem("pocketadm_haptics", ht.checked ? "on" : "off");
+      if (ht.checked) setTimeout(() => hap("success"), 60);  // hello again
+    });
+  }
+}
 
 function renderThemeGrid() {
   const grid = $("#theme-grid");
@@ -345,6 +360,9 @@ function closeModal() { $("#modal").classList.add("hidden"); $("#modal").classLi
 $("#modal-close").addEventListener("click", closeModal);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
+/* haptic feedback — native.js decides what the device can actually do */
+function hap(kind) { window.PocketNative && window.PocketNative.haptic(kind); }
+
 let toastTimer = null;
 function toast(msg) {
   let t = $("#toast");
@@ -362,8 +380,7 @@ function openVibeWith(text) {
   showView("vibe");
   const input = $("#chat-input");
   input.value = text;
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 120) + "px";
+  fitComposer();
   setTimeout(() => input.focus(), 60);
 }
 
@@ -2306,8 +2323,7 @@ function handleChatEvent(ev) {
     // a retracted message comes back into the composer for re-editing
     const input = $("#chat-input");
     input.value = ev.text || "";
-    input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    fitComposer();
     input.focus();
     toast("Message taken back");
     return;
@@ -2341,10 +2357,11 @@ function handleChatEvent(ev) {
     if (ev.type === "tool_request") {
       setToolStatus(card, "hand", "");
       card.classList.add("open");
+      hap("medium");   // the agent is asking for permission — worth a nudge
       card.append(el("div", { class: "approve-row" },
         el("button", {
           class: "btn small primary",
-          onclick: () => { sendChat({ type: "approve", id: ev.id, approved: true }); },
+          onclick: () => { hap("medium"); sendChat({ type: "approve", id: ev.id, approved: true }); },
         }, "Allow"),
         el("button", {
           class: "btn small danger",
@@ -2389,12 +2406,14 @@ function handleChatEvent(ev) {
     removeThinking();
     finishThinkBlock();
     state.streamEl = null;
+    if (state.chatRunning) hap("success");   // the agent finished a real run
     setChatRunning(false);
   } else if (ev.type === "error") {
     removeThinking();
     finishThinkBlock();
     state.streamEl = null;
     log.append(el("div", { class: "msg error" }, "✕ " + ev.message));
+    hap("error");
     setChatRunning(false);
     scrollChat();
   }
@@ -2414,6 +2433,7 @@ function setChatRunning(running) {
   state.chatRunning = running;
   $("#run-status").classList.toggle("hidden", !running);
   if (!running) applyPaused(false, null);
+  updateSendState();
 }
 
 // The agent hit a checkpoint and is waiting for the user to continue (or it is
@@ -2427,6 +2447,7 @@ function applyPaused(paused, info) {
   const txt = $("#run-status-text");
   if (paused) {
     bar.classList.remove("hidden");
+    if (info) hap("warning");   // a fresh checkpoint wants your attention
     const why = info && info.why ? info.why : "Paused — continue?";
     txt.textContent = why + (info && info.steps ? ` (${info.steps} steps)` : "");
   } else if (state.chatRunning) {
@@ -2676,16 +2697,35 @@ async function openAppPicker() {
   } catch (e) { body.innerHTML = ""; body.append(el("div", { class: "error" }, e.message)); }
 }
 
+/* the composer grows with its content (up to ~5 lines) and keeps the
+   send button honest: dimmed when empty, a stop button while the agent
+   runs and you're not typing a steer */
+function fitComposer() {
+  const input = $("#chat-input");
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 132) + "px";
+  updateSendState();
+}
+function updateSendState() {
+  const btn = $("#chat-send");
+  const hasText = !!$("#chat-input").value.trim();
+  const stop = state.chatRunning && !hasText;
+  btn.classList.toggle("stop-mode", stop);
+  btn.disabled = !hasText && !stop;
+  btn.title = stop ? "stop the agent" : "send";
+}
+
 function submitChat() {
   const input = $("#chat-input");
   const text = input.value.trim();
   if (!text) return;
   hideSlashHints();
   if (text.startsWith("/") && handleSlash(text)) {
-    input.value = ""; input.style.height = "auto";
+    input.value = ""; fitComposer();
     return;
   }
-  input.value = ""; input.style.height = "auto";
+  input.value = ""; fitComposer();
+  hap("light");
   if (state.pendingRewind != null) {
     // editing a sent message: server truncates the history there and resends
     const ordinal = state.pendingRewind;
@@ -2715,8 +2755,7 @@ function startEditing(text, ordinal) {
   state.pendingRewind = ordinal;
   const input = $("#chat-input");
   input.value = text;
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 120) + "px";
+  fitComposer();
   const banner = el("div", { class: "editing-banner", id: "editing-banner" },
     ic("pen-line"), el("span", { style: "flex:1" },
       "Editing a sent message — sending rewinds the chat to this point."),
@@ -2753,8 +2792,15 @@ function userBubble(text, ordinal) {
 
 $("#chat-attach").addEventListener("click", openAttachMenu);
 
-$("#chat-send").addEventListener("click", submitChat);
-$("#chat-stop").addEventListener("click", () => sendChat({ type: "stop" }));
+$("#chat-send").addEventListener("click", () => {
+  if ($("#chat-send").classList.contains("stop-mode")) {
+    hap("medium");
+    sendChat({ type: "stop" });
+    return;
+  }
+  submitChat();
+});
+$("#chat-stop").addEventListener("click", () => { hap("medium"); sendChat({ type: "stop" }); });
 $("#chat-continue").addEventListener("click", () => {
   applyPaused(false, null);
   sendChat({ type: "continue" });
@@ -2766,10 +2812,52 @@ $("#chat-input").addEventListener("keydown", (e) => {
   }
 });
 $("#chat-input").addEventListener("input", function () {
-  this.style.height = "auto";
-  this.style.height = Math.min(this.scrollHeight, 120) + "px";
+  fitComposer();
   renderSlashHints(this.value);
 });
+updateSendState();
+
+/* ----- phone-app chrome around the chat ----- */
+
+// keyboard opened (native event or browser fallback): keep the newest
+// message in view once the layout has settled
+window.addEventListener("pocketadm-kb", (e) => {
+  if (e.detail.open && state.view === "vibe") setTimeout(() => scrollChat(), 140);
+});
+
+{
+  const log = $("#chat-log");
+  // dragging the transcript dismisses the keyboard (chat-app standard)
+  let touchY = null;
+  log.addEventListener("touchstart", (e) => { touchY = e.touches[0].clientY; }, { passive: true });
+  log.addEventListener("touchmove", (e) => {
+    if (touchY == null || !document.body.classList.contains("kb-open")) return;
+    if (Math.abs(e.touches[0].clientY - touchY) > 16) {
+      touchY = null;
+      const ae = document.activeElement;
+      if (ae && ae.id === "chat-input") ae.blur();
+    }
+  }, { passive: true });
+  // jump-to-latest bubble once you've scrolled up a screen or so
+  const fab = $("#scroll-fab");
+  log.addEventListener("scroll", () => {
+    fab.classList.toggle("show", log.scrollHeight - log.scrollTop - log.clientHeight > 420);
+  }, { passive: true });
+  fab.addEventListener("click", () => log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }));
+}
+
+// Android back: close what's open before letting the OS minimize the app
+window.addEventListener("pocketadm-back", (e) => {
+  if (!$("#modal").classList.contains("hidden")) { e.preventDefault(); closeModal(); return; }
+  if (!$("#app").classList.contains("hidden") && state.view !== "dashboard") {
+    e.preventDefault(); showView("dashboard");
+  }
+});
+
+// app came back to the foreground (native): reuse the visibility-change
+// reconnect path (chat WS, dashboards)
+window.addEventListener("pocketadm-resume", () =>
+  document.dispatchEvent(new Event("visibilitychange")));
 
 /* ----- slash commands ----- */
 
@@ -5664,7 +5752,9 @@ async function boot() {
     if (local) {
       $("#connect-screen").classList.add("hidden");
       $("#login-screen").classList.remove("hidden");
-      setTimeout(() => $("#login-password").focus(), 100);
+      // desktop only — autofocus on phones pops the keyboard over the screen
+      if (!matchMedia("(pointer: coarse)").matches)
+        setTimeout(() => $("#login-password").focus(), 100);
     } else {
       $("#login-screen").classList.add("hidden");
       showConnectScreen();

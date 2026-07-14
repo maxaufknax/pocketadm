@@ -113,6 +113,7 @@
         <ul id="plan-steps" class="plan-steps"></ul>
       </details>
       <div id="chat-log" class="chat-log"></div>
+      <div class="scroll-fab-anchor"><button id="scroll-fab" class="scroll-fab" title="jump to latest"><span data-icon="arrow-down"></span></button></div>
       <div class="run-status hidden" id="run-status">
         <span class="run-pulse"></span>
         <span id="run-status-text">Agent is working…</span>
@@ -137,9 +138,11 @@
       <div id="context-chips" class="context-chips hidden"></div>
       <div id="slash-hints" class="slash-hints hidden"></div>
       <div class="chat-input-row">
-        <button id="chat-attach" class="btn round attach" title="attach context"><span data-icon="plus"></span></button>
-        <textarea id="chat-input" rows="1" placeholder="Ask or type /…"></textarea>
-        <button id="chat-send" class="btn primary round" title="send"><span data-icon="arrow-up"></span></button>
+        <div class="composer">
+          <button id="chat-attach" class="btn round attach" title="attach context"><span data-icon="plus"></span></button>
+          <textarea id="chat-input" rows="1" placeholder="Ask or type /…" autocapitalize="sentences"></textarea>
+          <button id="chat-send" class="btn primary round send" title="send"><span class="ic-send" data-icon="arrow-up"></span><span class="ic-stop" data-icon="square"></span></button>
+        </div>
       </div>
     </section>
 
@@ -262,6 +265,11 @@
         <p class="muted" style="margin-bottom:10px">Pick a look — saved on this device.
         <b>Auto</b> follows your system’s light/dark setting.</p>
         <div id="theme-grid" class="theme-grid"></div>
+        <div id="haptics-row">
+          <hr class="sep">
+          <label class="switch-row"><input type="checkbox" id="haptics-toggle">
+            <span>Haptic feedback — a gentle tap on touches and key moments</span></label>
+        </div>
       </div>
 
       <div class="section-head"><h2>Security &amp; activity</h2></div>
@@ -515,6 +523,7 @@
 
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/xterm-addon-fit.js"></script>
+<script src="/native.js"></script>
 <script src="/icons.js"></script>
 <script src="/app.js"></script>
 </body>

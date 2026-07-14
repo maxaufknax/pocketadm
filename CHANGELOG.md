@@ -3,6 +3,43 @@
 All notable changes to Helmsman. Versions are the app version reported at
 `/api/info` and shown in *More → About*.
 
+## v0.13.0 — It feels like a phone app now
+
+The whole release is about one thing: PocketADM on a phone should feel as
+good as ChatGPT or Claude — especially the keyboard, the composer and the
+way the app responds to your fingers.
+
+- **Native bridge (`native.js`).** A small platform layer that wires up the
+  Capacitor shell — keyboard events, status bar, Taptic engine — with clean
+  fallbacks for the browser/PWA (visualViewport keyboard tracking,
+  `navigator.vibrate`). The web app itself never talks to Capacitor.
+- **The keyboard finally behaves.** Opening the keyboard slides the tab bar
+  away so the composer sits directly on top of the keyboard (in the native
+  app the webview resizes with it — no more covered input). The transcript
+  keeps the newest message in view, and dragging the chat dismisses the
+  keyboard, exactly like the big chat apps. Text fields are 16px on touch
+  devices so iOS never zoom-jumps into a focused field; the native shell
+  additionally pins the viewport zoom.
+- **A real composer.** Attach, input and send now live in one soft pill that
+  grows with your message (up to ~5 lines). The send circle is dimmed while
+  empty, springs in when there's something to send — and morphs into a red
+  stop button while the agent is working (typing a steer flips it back).
+- **Haptics, everywhere it matters.** A barely-there tick on every control,
+  a slightly firmer tap on tab switches and toggles, and real feedback at the
+  moments that count: message sent, approval requested, Allow tapped, agent
+  finished (success), checkpoint reached (warning), error (buzz). Tunable
+  under *More → Appearance*; fully respects the new toggle and never fires
+  on desktops.
+- **Status bar & keyboard match the theme.** Light text over dark themes,
+  dark over Daybreak — updated live when you switch, including the iOS
+  keyboard appearance and the Android status-bar color.
+- **Touch ergonomics.** Allow/Deny are now full-width, thumb-sized buttons;
+  message actions, mode buttons and top-bar icons got honest hit areas; tap
+  highlights, long-press callouts and accidental text selection on chrome are
+  gone. A floating "jump to latest" bubble appears when you scroll up.
+- **Android ready.** Hardware back closes modals / returns Home before
+  minimizing, and the app reconnects its live streams when foregrounded.
+
 ## v0.12.1 — Visual polish, everywhere
 
 - **App-wide design refresh** (pure CSS layer, all five themes): ambient
