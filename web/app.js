@@ -608,7 +608,11 @@ function showView(name) {
   if (name === "vibe") {
     initVibeControls();
     if (!$("#chat-log").children.length) renderChatEvents([]);
-    setTimeout(() => $("#chat-input").focus(), 50);
+    // Only auto-focus with a fine pointer (desktop). On touch devices this pops
+    // the keyboard open the instant the Vibe tab is tapped — unwanted on mobile.
+    if (!window.matchMedia("(pointer: coarse)").matches) {
+      setTimeout(() => $("#chat-input").focus(), 50);
+    }
   }
 }
 $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
