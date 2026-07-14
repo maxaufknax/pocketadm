@@ -232,6 +232,33 @@ async def container_describe(cid: str, body: DescribeBody):
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/containers/{cid}/describe/stream", dependencies=[authed])
+async def container_describe_stream(cid: str, lang: str = ""):
+    """Same explainer as /describe, but streamed as Server-Sent Events so the UI
+    shows the answer forming live (and can tell it's actually working)."""
+    try:
+        detail = await dockerapi.container_detail(cid)
+        logs = await dockerapi.container_logs(cid, 60)
+    except Exception as e:
+        raise HTTPException(404, f"inspect failed: {e}")
+    detail["service"] = updates.service_meta(detail["image"])
+    prompt = ("Container inspect summary:\n" + json.dumps(detail, default=str)[:4000] +
+              "\n\nRecent logs:\n" + logs[-3000:])
+    if lang:
+        prompt += f"\n\nAnswer in language: {lang}"
+
+    async def gen():
+        try:
+            async for piece in ai.one_shot_stream(prompt, DESCRIBE_SYSTEM):
+                yield "data: " + json.dumps({"delta": piece}) + "\n\n"
+            yield "data: " + json.dumps({"done": True}) + "\n\n"
+        except Exception as e:  # surface the failure into the stream, not a 500
+            yield "data: " + json.dumps({"error": str(e)}) + "\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 # NOTE: registered AFTER the specific POST routes above — FastAPI matches routes
 # in registration order, so this catch-all must not shadow e.g. …/describe.
 @app.post("/api/containers/{cid}/{action}", dependencies=[authed])
@@ -1167,6 +1194,60 @@ async def clis_install(tool: str):
 
 
 # ----------------------------------------------------------- websockets
+
+@app.get("/api/terminal/targets", dependencies=[authed])
+async def terminal_targets():
+    """Human-readable, grouped list of who/where the terminal can open a shell:
+    the PocketADM app box, real host logins (maxaufknax@stream), and each running
+    service container. Replaces the flat, confusing dropdown of many identities."""
+    groups: list[dict] = []
+
+    server: list[dict] = [{
+        "id": "local", "label": "PocketADM app",
+        "sub": "the app's own container · docker + host control", "icon": "box",
+    }]
+    host_ok = hostuser._can_manage()
+    if host_ok:
+        try:
+            ident = await asyncio.to_thread(hostuser.identity)
+            host = ident.get("hostname") or "host"
+            users = await asyncio.to_thread(hostuser.list_users)
+        except Exception:
+            host, users = "host", []
+        for u in users:
+            if u["kind"] != "human" or not u["can_login"]:
+                continue
+            server.append({
+                "id": "host:" + u["name"],
+                "label": f'{u["name"]}@{host}',
+                "sub": u["role"] + (" · you" if u["is_admin"] and u["name"] != "root" else ""),
+                "icon": "shield" if u["is_root"] else ("user-cog" if u["is_admin"] else "user"),
+                "host": True,
+            })
+    groups.append({"label": "This server", "targets": server})
+
+    svc: list[dict] = []
+    try:
+        result = await dockerapi.list_containers()
+        for c in result:
+            if c.get("state") != "running":
+                continue
+            ref = c["name"] if appstore._is_image_id(c["image"]) else c["image"]
+            meta = updates.service_meta(ref)
+            svc.append({
+                "id": "container:" + c["id"],
+                "label": meta.get("label") or c["name"],
+                "sub": c["name"] + " · " + (c["image"][:40]),
+                "icon": meta.get("icon") or "box",
+                "container": True,
+            })
+    except Exception:
+        pass
+    svc.sort(key=lambda t: t["label"].lower())
+    groups.append({"label": "Service containers", "targets": svc})
+
+    return {"groups": groups, "host_shell": host_ok}
+
 
 @app.websocket("/ws/terminal")
 async def ws_terminal(ws: WebSocket):

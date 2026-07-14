@@ -3,6 +3,57 @@
 All notable changes to Helmsman. Versions are the app version reported at
 `/api/info` and shown in *More → About*.
 
+## v0.12.1 — Visual polish, everywhere
+
+- **App-wide design refresh** (pure CSS layer, all five themes): ambient
+  theme-aware depth glow behind every screen, springy tab-bar with a glowing
+  active pill, gentle cross-fades between views, gradient metric bars with a
+  soft glow, satisfying press feedback on every button, message/tool-card
+  entrance animations in the chat, a glassy login card, blurred modal backdrop
+  with a spring slide-up, and input focus rings. Fully respects
+  `prefers-reduced-motion`.
+- **pocketadm.com relaunch of the hero**: the phone mockup is now a faithful,
+  *interactive* recreation of the real app — five screens (Home, Vibe Code,
+  Terminal, Health, Apps) with their own animations: metrics count up and bars
+  fill, the agent run plays out step by step (plan → tools → a pulsing Allow
+  that gets tapped → result), the terminal *types live* as
+  `maxaufknax@stream:~$` and launches `claude`, the Redis update runs and
+  finishes, app rows rise in. 3D cursor tilt with a moving glare, swipe to
+  switch screens on touch, auto-rotation that stops when you interact.
+  Fixed the landing container serving a stale named volume instead of the
+  bind-mounted `public/` directory.
+
+## v0.12.0 — A terminal you can actually use on a phone
+
+- **Real host-user shells.** The terminal can now open a genuine login shell as
+  any of your host's Linux users — e.g. `maxaufknax@stream` — not just the app's
+  own container. This is what lets you run the exact commands the agent suggests
+  (files in your home, `sudo`, the host's `docker`). It uses the same audited
+  chroot-into-host door the account manager already uses; no new trust boundary.
+- **A clear, grouped "Open a shell" picker** (`/api/terminal/targets`) replaces
+  the long flat dropdown: *This server* (the PocketADM app box + host logins)
+  and *Service containers*, each with an icon, name and one-line description.
+- **`claude` / `codex` now actually launch.** The base image's `/etc/profile`
+  reset `PATH` for login shells and dropped `~/.local/bin`, so installed agents
+  were "command not found". The persistent HOME now ships a `.bash_profile`
+  that restores the path (and a calm `pocketadm:` prompt via `.bashrc`).
+- **Mistral Vibe CLI** joins Claude Code and Codex in *Terminal → Agents*
+  (`vibe`, Devstral-powered; sign in with a Mistral account or API key).
+- **Mobile copy/paste.** A dedicated **Paste** button (with a long-press
+  fallback sheet when the browser blocks clipboard reads), plus **Copy
+  selection** in the overflow menu.
+- **Redesigned, phone-first terminal toolbar.** The Agent/Reconnect buttons no
+  longer run off-screen: a flexible target picker + compact icon buttons +
+  an overflow menu. **Simple / Advanced display modes** (Advanced adds control
+  keys: ^D ^Z ^R ^L ^A ^E, Home/End, PgUp/PgDn, `|`, `~`) and a text-size
+  control. The terminal also **auto-reconnects** when you reopen the app.
+- **See what the agent changes to files.** `write_file` / `edit_file` tool
+  cards now show a **+added / −removed** stat and an expandable, colored diff
+  — like a code review — for live turns and on reload.
+- **"What is this?" streams live.** The explainer now shows the answer forming
+  token-by-token (so you can tell it's working) and offers **Continue in chat**,
+  which carries the explanation into a Vibe chat as context.
+
 ## v0.11.0 — Polish for release: edit messages, richer updates, backups, coding CLIs
 
 - **Edit & retract sent messages** (Claude-Code-style rewind): tap any of your

@@ -79,6 +79,11 @@ const state = {
   term: null,
   fitAddon: null,
   ctrlArmed: false,
+  termContext: "local",
+  termTargets: null,       // grouped picker data (cached)
+  termFont: +(localStorage.getItem("pocketadm_term_font") || 13.5),
+  termReconnect: null,     // pending auto-reconnect timer
+  termWantOpen: false,     // did the user leave the terminal on purpose?
   dashTimer: null,
   streamEl: null,
   streamRaw: "",
@@ -367,6 +372,65 @@ function askAiButton(prompt, label = "Ask AI", iconSpec = "message-circle") {
     e.stopPropagation();
     openVibeWith(prompt);
   } }, ic(iconSpec), " " + label);
+}
+
+function scrollModal() {
+  const b = $("#modal-body");
+  if (b && b.scrollHeight - b.scrollTop - b.clientHeight < 120) b.scrollTop = b.scrollHeight;
+}
+
+/* Streamed "What is this?" explainer — the answer appears live (so you can see
+   it's actually working), then offers to *continue in a chat* from that answer. */
+async function runDescribe(cid, aiBox, button, seed = {}) {
+  button.disabled = true;
+  aiBox.innerHTML = "";
+  const status = el("div", { class: "describe-status muted iconled" },
+    ic("sparkles"), " reading logs & config…");
+  const live = el("div", { class: "app-why describe-live streaming" });
+  aiBox.append(status, live);
+  let text = "", started = false;
+  const render = () => { live.replaceChildren(mdDiv(text || "…")); scrollModal(); };
+  try {
+    const resp = await fetch(apiBase() + `/api/containers/${cid}/describe/stream?lang=` +
+      encodeURIComponent(navigator.language),
+      { headers: { Authorization: "Bearer " + state.token } });
+    if (!resp.ok || !resp.body) throw new Error("HTTP " + resp.status);
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, idx).split("\n").find((l) => l.startsWith("data: "));
+        buf = buf.slice(idx + 2);
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+        if (ev.delta) {
+          if (!started) { status.remove(); started = true; }
+          text += ev.delta; render();
+        } else if (ev.error) { throw new Error(ev.error); }
+      }
+    }
+  } catch (e) {
+    aiBox.innerHTML = "";
+    aiBox.append(el("div", { class: "error" }, "✕ " + (e.message || e)));
+    button.disabled = false;
+    return;
+  }
+  live.classList.remove("streaming");
+  if (!text.trim()) { live.replaceChildren(el("span", { class: "muted" }, "No answer.")); }
+  render();
+  aiBox.append(el("div", { class: "card-actions", style: "margin-top:10px" },
+    el("button", { class: "btn small ai iconled", onclick: () => {
+      attachContext({ kind: "note", key: "describe:" + cid, icon: "sparkles",
+        label: (seed.label || "Service") + " — explanation",
+        text: `PocketADM's explanation of ${seed.label || "this service"}:\n\n${text}` });
+      openVibeWith(seed.prompt || `About ${seed.label || "this service"}: `);
+    } }, ic("message-circle"), " Continue in chat")));
+  button.disabled = false;
 }
 
 /* Instruct the agent right now, from anywhere — a quick composer that sends
@@ -1259,21 +1323,10 @@ async function showContainerDetail(c) {
   // AI row
   const aiBox = el("div", {});
   body.append(el("div", { class: "card-actions", style: "margin:0 0 12px" },
-    el("button", { class: "btn small ai", onclick: async function () {
-      this.disabled = true;
-      aiBox.innerHTML = "";
-      aiBox.append(el("div", { class: "thinking" }, "AI is looking at this container"));
-      try {
-        const r = await api(`/containers/${c.id}/describe`, {
-          method: "POST", body: JSON.stringify({ lang: navigator.language }) });
-        aiBox.innerHTML = "";
-        aiBox.append(el("div", { class: "app-why" }, mdDiv(r.description)));
-      } catch (e) {
-        aiBox.innerHTML = "";
-        aiBox.append(el("div", { class: "error" }, "✕ " + e.message));
-      }
-      this.disabled = false;
-    }, class: "btn small ai iconled" }, ic("sparkles"), " What is this?"),
+    el("button", { class: "btn small ai iconled", onclick: function () {
+      runDescribe(c.id, aiBox, this, { label: d.name,
+        prompt: `About the container "${d.name}" (${d.image}) on my server — ` });
+    } }, ic("sparkles"), " What is this?"),
     askAiButton(`About the container "${d.name}" on my server (image ${d.image}, ` +
       `state: ${d.state}${d.health ? "/" + d.health : ""}, restarts: ${d.restart_count}). ` +
       `Please check how it's doing and whether its configuration can be improved.`,
@@ -1408,15 +1461,9 @@ async function showServiceUnit(u) {
   const names = u.members.map((m) => m.name).join(", ");
   const aiBox = el("div", {});
   body.append(el("div", { class: "card-actions", style: "margin:0 0 10px" },
-    el("button", { class: "btn small ai iconled", onclick: async function () {
-      this.disabled = true; aiBox.innerHTML = "";
-      aiBox.append(el("div", { class: "thinking" }, "AI is looking at this service"));
-      try {
-        const r = await api(`/containers/${u.primary.id}/describe`, {
-          method: "POST", body: JSON.stringify({ lang: navigator.language }) });
-        aiBox.innerHTML = ""; aiBox.append(el("div", { class: "app-why" }, mdDiv(r.description)));
-      } catch (e) { aiBox.innerHTML = ""; aiBox.append(el("div", { class: "error" }, "✕ " + e.message)); }
-      this.disabled = false;
+    el("button", { class: "btn small ai iconled", onclick: function () {
+      runDescribe(u.primary.id, aiBox, this, { label: u.label,
+        prompt: `About the service "${u.label}" (containers: ${names}) on my server — ` });
     } }, ic("sparkles"), " What is this?"),
     askAiButton(`The service "${u.label}" (${u.category}) on my server runs these containers: ` +
       `${names}. Please check how it's doing and whether anything can be improved.`, "Open in Vibe Chat")));
@@ -1532,9 +1579,9 @@ async function initVibeControls() {
 }
 
 function updateWsLabel() {
-  let p = (state.chatWorkdir || "…").replace(/^\/host/, "") || "/";
-  if (p.length > 26) p = "…" + p.slice(-25);
-  $("#ws-label").textContent = p;
+  const full = (state.chatWorkdir || "").replace(/^\/host/, "") || "/";
+  $("#ws-label").textContent = full.split("/").filter(Boolean).pop() || "/";
+  $("#chat-workspace-btn").title = "working folder: " + full;
 }
 
 function sendChatConfig() {
@@ -2077,6 +2124,7 @@ function toolCardEl(ev) {
   let card = document.getElementById("tool-" + ev.id);
   if (card) return card;
   card = el("div", { class: "tool-card", id: "tool-" + ev.id });
+  card._toolEv = ev;   // remember name/args so tool_result can build a diff
   const head = el("div", { class: "tool-head", onclick: () => card.classList.toggle("open") },
     el("span", { class: "tool-status" }, ic("hourglass")),
     el("span", { class: "tool-name" }, ev.name),
@@ -2100,6 +2148,48 @@ function setToolStatus(card, icon, cls) {
   card.querySelector(".tool-status").replaceChildren(icon ? ic(icon) : "");
   card.classList.remove("approved", "denied");
   if (cls) card.classList.add(cls);
+}
+
+/* File-edit visibility — so you can see the agent add/remove lines, like a
+   code review. Live edits carry a server-computed diff; on reload we rebuild
+   one for edit_file from its old_text/new_text args. */
+function clientDiffFromArgs(ev) {
+  if (!ev || ev.name !== "edit_file" || !ev.args) return null;
+  const oldT = ev.args.old_text, newT = ev.args.new_text;
+  if (oldT == null || newT == null) return null;
+  const oldL = String(oldT).split("\n"), newL = String(newT).split("\n");
+  const patch = ["@@ edit @@", ...oldL.map((l) => "-" + l), ...newL.map((l) => "+" + l)];
+  return { path: ev.args.path || "", added: newL.length, removed: oldL.length,
+    patch: patch.join("\n"), truncated: false };
+}
+
+function addDiffStat(card, diff) {
+  if (card.querySelector(".tool-diffstat")) return;
+  const summary = card.querySelector(".tool-summary");
+  const stat = el("span", { class: "tool-diffstat" },
+    diff.added ? el("span", { class: "diff-stat add" }, "+" + diff.added) : null,
+    diff.removed ? el("span", { class: "diff-stat del" }, " −" + diff.removed) : null);
+  summary?.after(stat);
+}
+
+function diffCardEl(diff) {
+  const short = (diff.patch.match(/\n/g) || []).length < 16;
+  const card = el("div", { class: "diff-card" + (short ? " open" : "") });
+  const head = el("div", { class: "diff-head", onclick: () => card.classList.toggle("open") },
+    svgIcon("file-code", "chev"),
+    el("span", { class: "diff-path" }, diff.path || "file"),
+    diff.added ? el("span", { class: "diff-stat add" }, "+" + diff.added) : null,
+    diff.removed ? el("span", { class: "diff-stat del" }, "−" + diff.removed) : null,
+    svgIcon("chevron-right", "chev"));
+  const pre = el("pre", {});
+  for (const line of diff.patch.split("\n")) {
+    const cls = line.startsWith("@@") || line.startsWith("\\") ? "hunk"
+      : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+    pre.append(el("span", { class: "diff-line " + cls }, line || " "));
+  }
+  if (diff.truncated) pre.append(el("span", { class: "diff-line hunk" }, "… (diff truncated)"));
+  card.append(head, el("div", { class: "diff-body" }, pre));
+  return card;
 }
 
 function ensureThinkBlock() {
@@ -2270,6 +2360,12 @@ function handleChatEvent(ev) {
       card.classList.remove("open");
       card.querySelector(".tool-body").append(el("div", { class: "tool-output" },
         ev.output.length > 2200 ? ev.output.slice(0, 2200) + " …" : ev.output));
+      // show *what changed* on file edits: +added/−removed on the head + a diff card
+      const diff = ev.diff || clientDiffFromArgs(card._toolEv);
+      if (diff && !denied) {
+        addDiffStat(card, diff);
+        log.append(diffCardEl(diff));
+      }
     }
     log.append(el("div", { class: "thinking" }, "working"));
     scrollChat();
@@ -2652,7 +2748,6 @@ function userBubble(text, ordinal) {
 }
 
 $("#chat-attach").addEventListener("click", openAttachMenu);
-$("#term-files")?.addEventListener("click", () => openExplorer());
 
 $("#chat-send").addEventListener("click", submitChat);
 $("#chat-stop").addEventListener("click", () => sendChat({ type: "stop" }));
@@ -2731,7 +2826,8 @@ function showSlashHelp() {
 /* ---------------------------------------------------------- terminal */
 
 async function initTerminal() {
-  await loadTermContexts();
+  applyTermMode(localStorage.getItem("pocketadm_term_mode") || "simple");
+  refreshTermTargets();               // background — fills the picker
   if (state.term && state.termWs && state.termWs.readyState <= 1) {
     state.fitAddon.fit();
     return;
@@ -2739,25 +2835,29 @@ async function initTerminal() {
   connectTerminal();
 }
 
+function setTermContext(ctx, label, icon) {
+  state.termContext = ctx;
+  const btn = $("#term-target");
+  if (btn) {
+    btn.querySelector(".tt-label").textContent = label || ctx;
+    if (icon) btn.querySelector(".tt-icon").replaceChildren(ic(icon));
+  }
+}
+
 async function openTerminalFor(c) {
   closeModal();
-  await loadTermContexts();
-  const sel = $("#term-context");
-  const val = "container:" + c.id;
-  if (![...sel.options].some((o) => o.value === val)) {
-    sel.append(el("option", { value: val }, c.name));
-  }
-  sel.value = val;
-  showView("terminal");        // initTerminal connects with the selected context
+  const meta = c.service || {};
+  setTermContext("container:" + c.id, meta.label || c.name, meta.icon || "box");
+  showView("terminal");
   connectTerminal();
 }
 
 // open the terminal and drop a command onto the prompt (ready to run & watch)
 function openTerminalWithCommand(cmd) {
   closeModal();
-  const sel = $("#term-context");
-  const localLive = sel.value === "local" && state.termWs && state.termWs.readyState <= 1;
-  sel.value = "local";
+  const localLive = state.termContext === "local" &&
+    state.termWs && state.termWs.readyState <= 1;
+  if (!localLive) setTermContext("local", "PocketADM app", "box");
   showView("terminal");
   if (!localLive) connectTerminal();
   let tries = 0;
@@ -2772,16 +2872,48 @@ function openTerminalWithCommand(cmd) {
   setTimeout(type, 120);
 }
 
-async function loadTermContexts() {
-  const sel = $("#term-context");
-  if (sel.dataset.loaded) return;
+async function refreshTermTargets() {
   try {
-    const containers = state.containers.length ? state.containers : await api("/containers");
-    for (const c of containers.filter((x) => x.state === "running")) {
-      sel.append(el("option", { value: "container:" + c.id }, c.name));
+    state.termTargets = await api("/terminal/targets");
+  } catch { state.termTargets = null; }
+  return state.termTargets;
+}
+
+// grouped, human-readable "who/where" picker — the app box, real host logins
+// (maxaufknax@stream), and each running service. Replaces the long dropdown.
+async function openTermTargets() {
+  const body = el("div", { class: "term-picker" },
+    el("div", { class: "thinking" }, "loading shells"));
+  openModal("Open a shell", body);
+  const data = state.termTargets || await refreshTermTargets();
+  body.innerHTML = "";
+  if (!data || !data.groups) {
+    body.append(el("div", { class: "error" }, "Could not load terminal targets.")); return;
+  }
+  for (const g of data.groups) {
+    if (!g.targets.length) continue;
+    body.append(el("div", { class: "term-picker-head" }, g.label));
+    for (const t of g.targets) {
+      const active = t.id === state.termContext;
+      body.append(el("button", { class: "term-picker-row" + (active ? " active" : ""),
+        onclick: () => {
+          setTermContext(t.id, t.label, t.icon);
+          closeModal();
+          showView("terminal");
+          connectTerminal();
+        } },
+        iconTile(t.icon || "box", t.label, "sm", t.label),
+        el("div", { class: "tp-text" },
+          el("div", { class: "tp-title" }, t.label),
+          t.sub ? el("div", { class: "tp-sub muted" }, t.sub) : null),
+        active ? ic("check") : (t.host ? el("span", { class: "chip host-chip" }, "host") : null)));
     }
-    sel.dataset.loaded = "1";
-  } catch {}
+  }
+  if (!(data.host_shell)) {
+    body.append(el("p", { class: "muted", style: "font-size:12px;margin-top:10px" },
+      "Host logins (like your own user) appear here when PocketADM can reach the " +
+      "host — they let you run the exact commands the agent suggests."));
+  }
 }
 
 function termTheme() {
@@ -2793,11 +2925,21 @@ function termTheme() {
   };
 }
 
+function termStatus(msg, cls) {
+  const bar = $("#term-status");
+  if (!bar) return;
+  if (!msg) { bar.classList.add("hidden"); return; }
+  bar.className = "term-status" + (cls ? " " + cls : "");
+  bar.textContent = msg;
+}
+
 function connectTerminal() {
-  if (state.termWs) { try { state.termWs.close(); } catch {} }
+  clearTimeout(state.termReconnect);
+  state.termWantOpen = true;
+  if (state.termWs) { try { state.termWs.onclose = null; state.termWs.close(); } catch {} }
   if (!state.term) {
     state.term = new Terminal({
-      fontSize: 13.5,
+      fontSize: state.termFont,
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       theme: termTheme(),
       cursorBlink: true,
@@ -2823,15 +2965,28 @@ function connectTerminal() {
       .observe($("#terminal"));
   }
   state.term.reset();
-  const ctx = $("#term-context").value;
+  termStatus("connecting…", "");
+  const ctx = state.termContext;
   const ws = new WebSocket(wsUrl("/ws/terminal", { context: ctx }));
   state.termWs = ws;
   ws.onopen = () => {
+    termStatus("", "");
     state.fitAddon.fit();
     ws.send(JSON.stringify({ type: "resize", cols: state.term.cols, rows: state.term.rows }));
   };
   ws.onmessage = (ev) => state.term.write(ev.data);
-  ws.onclose = () => state.term.write("\r\n\x1b[90m[disconnected — tap Reconnect]\x1b[0m\r\n");
+  ws.onclose = () => {
+    state.term.write("\r\n\x1b[90m[disconnected]\x1b[0m\r\n");
+    // auto-reconnect when the terminal is the active view (App re-opened, sleep, etc.)
+    if (state.termWantOpen && state.view === "terminal") {
+      termStatus("reconnecting…", "warn");
+      state.termReconnect = setTimeout(() => {
+        if (state.view === "terminal") connectTerminal();
+      }, 1500);
+    } else {
+      termStatus("disconnected — tap ⟳ to reconnect", "warn");
+    }
+  };
 }
 
 function setCtrl(on) {
@@ -2839,15 +2994,98 @@ function setCtrl(on) {
   $("#key-ctrl").classList.toggle("on", on);
 }
 
-$("#term-reconnect").addEventListener("click", connectTerminal);
-$("#term-context").addEventListener("change", connectTerminal);
+function sendTermInput(data) {
+  if (state.termWs?.readyState === 1) {
+    state.termWs.send(JSON.stringify({ type: "input", data }));
+    return true;
+  }
+  toast("Terminal isn't connected");
+  return false;
+}
+
+/* ---- clipboard: mobile browsers hide xterm's copy/paste, so give explicit
+   buttons. Reading the clipboard needs a user gesture (the tap) and may still
+   be blocked in a PWA → fall back to a paste sheet with a textarea. ---- */
+async function termPaste() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) { sendTermInput(text); state.term?.focus(); return; }
+  } catch {}
+  // fallback: let the user long-press → Paste into a field, then send
+  const ta = el("textarea", { class: "paste-area", rows: 4,
+    placeholder: "Long-press here and choose Paste, then tap Send…" });
+  const body = el("div", {}, ta,
+    el("div", { class: "card-actions", style: "margin-top:10px" },
+      el("button", { class: "btn small primary", onclick: () => {
+        if (ta.value) sendTermInput(ta.value);
+        closeModal(); state.term?.focus();
+      } }, "Send to terminal"),
+      el("button", { class: "btn small", onclick: closeModal }, "Cancel")));
+  openModal("Paste into terminal", body);
+  setTimeout(() => ta.focus(), 60);
+}
+
+async function termCopy() {
+  const sel = state.term?.getSelection?.() || "";
+  if (!sel) { toast("Select text in the terminal first (long-press & drag)"); return; }
+  try { await navigator.clipboard.writeText(sel); toast("Copied"); }
+  catch { toast("Copy blocked — try long-press → Copy"); }
+}
+
+function termClear() { state.term?.clear(); state.term?.focus(); }
+
+function setTermFont(delta) {
+  state.termFont = Math.max(9, Math.min(22, state.termFont + delta));
+  localStorage.setItem("pocketadm_term_font", state.termFont);
+  if (state.term) { state.term.options.fontSize = state.termFont; state.fitAddon?.fit(); }
+}
+
+function applyTermMode(mode) {
+  mode = mode === "advanced" ? "advanced" : "simple";
+  localStorage.setItem("pocketadm_term_mode", mode);
+  $("#view-terminal")?.setAttribute("data-termmode", mode);
+  setTimeout(() => { if (state.view === "terminal") state.fitAddon?.fit(); }, 60);
+}
+
+// overflow menu — keeps the toolbar uncluttered on a phone
+function openTermMenu() {
+  const mode = localStorage.getItem("pocketadm_term_mode") || "simple";
+  const item = (icon, label, fn, sub) => el("button", { class: "menu-row", onclick: () => { closeModal(); fn(); } },
+    ic(icon), el("div", { class: "tp-text" }, el("div", {}, label),
+      sub ? el("div", { class: "tp-sub muted" }, sub) : null));
+  const body = el("div", { class: "term-menu" },
+    item("clipboard", "Paste", termPaste, "insert clipboard text"),
+    item("copy", "Copy selection", termCopy),
+    item("folder-open", "Files", () => openExplorer(), "browse & edit files"),
+    item("sparkles", "Coding agents", openCliModal, "Claude Code · Codex · Mistral Vibe"),
+    item("refresh-cw", "Reconnect", connectTerminal),
+    item("eraser", "Clear screen", termClear),
+    el("div", { class: "menu-sep" }),
+    el("div", { class: "menu-row static" }, ic("type"),
+      el("div", { class: "tp-text", style: "flex:1" }, "Text size"),
+      el("div", { class: "font-ctl" },
+        el("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); setTermFont(-1); } }, "A−"),
+        el("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); setTermFont(1); } }, "A+"))),
+    el("div", { class: "menu-row static" }, ic("layout-grid"),
+      el("div", { class: "tp-text", style: "flex:1" }, "Display",
+        el("div", { class: "tp-sub muted" }, "advanced adds more control keys")),
+      el("div", { class: "seg mini", id: "term-mode-seg" },
+        el("button", { class: mode === "simple" ? "active" : "",
+          onclick: (e) => { e.stopPropagation(); applyTermMode("simple"); openTermMenu(); } }, "Simple"),
+        el("button", { class: mode === "advanced" ? "active" : "",
+          onclick: (e) => { e.stopPropagation(); applyTermMode("advanced"); openTermMenu(); } }, "Advanced"))));
+  openModal("Terminal", body);
+}
+
+$("#term-target")?.addEventListener("click", openTermTargets);
+$("#term-paste")?.addEventListener("click", termPaste);
+$("#term-more")?.addEventListener("click", openTermMenu);
 $$(".key-bar button").forEach((btn) => btn.addEventListener("click", () => {
   if (btn.dataset.mod === "ctrl") { setCtrl(!state.ctrlArmed); return; }
   let seq = btn.dataset.seq;
   if (btn.dataset.key === "Escape") seq = "\x1b";
   if (btn.dataset.key === "Tab") seq = "\t";
-  state.termWs?.readyState === 1 &&
-    state.termWs.send(JSON.stringify({ type: "input", data: seq }));
+  sendTermInput(seq);
   state.term?.focus();
 }));
 
@@ -3639,9 +3877,10 @@ async function openCliModal() {
   catch (e) { body.innerHTML = ""; body.append(el("div", { class: "error" }, e.message)); return; }
   body.innerHTML = "";
   body.append(el("p", { class: "muted", style: "margin-bottom:10px" },
-    "Run Anthropic's and OpenAI's terminal coding agents right here on your server. " +
-    "Sign in once with your existing subscription (Claude Pro/Max or ChatGPT) — " +
-    "usage is covered by that plan, and logins survive PocketADM updates."));
+    "Run the terminal coding agents from Anthropic, OpenAI and Mistral right here " +
+    "on your server. Sign in once with your existing subscription (Claude Pro/Max, " +
+    "ChatGPT or a Mistral account) — usage is covered by that plan, and logins " +
+    "survive PocketADM updates."));
   for (const c of r.clis) {
     const actions = el("div", { class: "card-actions" });
     if (c.installed) {
@@ -3667,7 +3906,7 @@ async function openCliModal() {
   }
   body.append(el("p", { class: "muted", style: "margin-top:8px;font-size:12px" },
     "They run in PocketADM's environment with the same access the Vibe agent has. " +
-    "Type the command in the Terminal tab any time — e.g. “claude” or “codex”."));
+    "Type the command in the Terminal tab any time — e.g. “claude”, “codex” or “vibe”."));
 }
 
 function installCli(c, verb) {
@@ -3677,8 +3916,6 @@ function installCli(c, verb) {
       () => openCliModal()))
     .catch((e) => alert(e.message));
 }
-
-$("#term-agents")?.addEventListener("click", openCliModal);
 
 /* ---------------------------------------------------------- settings */
 

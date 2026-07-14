@@ -23,15 +23,21 @@ straight into it; the top-bar hostname switches between multiple servers.
 
 ## Build
 
-Prerequisites: Node 18+, and Xcode (iOS) / Android Studio (Android).
+**No Mac? Ship it from the cloud.** The full App Store path — build, code
+signing and TestFlight upload on Codemagic's macOS VMs — is documented step by
+step in **[APPSTORE.md](APPSTORE.md)**. That is the recommended route; your
+iPhone (plus a browser for App Store Connect) is all you need.
+
+Local build (only if you *do* have a Mac / Android Studio):
 
 ```bash
 cd client
 npm install
 npm run sync            # copies ../web into ./www and runs `cap sync`
 npm run add:ios         # once, to create the ios/ project
-npm run add:android     # once, to create the android/ project
+npm run assets          # generate iOS icons + splash from ./assets
 npm run open:ios        # opens Xcode  -> Product > Archive -> upload to TestFlight
+npm run add:android     # once, to create the android/ project
 npm run open:android    # opens Android Studio -> Build > Generate Signed Bundle
 ```
 
@@ -51,6 +57,10 @@ Re-run `npm run sync` whenever `../web` changes to re-bundle the latest UI.
   server exists) needs a native SSH plugin and is not wired yet; today the SSH
   installer runs from a server you're already connected to. Until then, the
   Connect screen's one-line installer covers the very first server.
-- **Apple**: budget ~4 weeks before you need the paid Developer account — do the
-  TestFlight build first, pay when it's ready to upload (account verification is
-  the slow part).
+- **App icon / splash**: source art lives in `./assets` (`icon.png` 1024²,
+  `splash.png` / `splash-dark.png` 2732²). CI runs `@capacitor/assets` to produce
+  every platform size, so you never touch Xcode's asset catalog by hand.
+- **Apple**: the Developer account is active. Follow [APPSTORE.md](APPSTORE.md)
+  end to end — one-time App Store Connect setup, an API key, connect Codemagic,
+  run the `ios-release` workflow. First build lands in TestFlight; review is
+  usually under 24 h.

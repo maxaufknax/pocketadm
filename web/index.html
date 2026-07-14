@@ -138,19 +138,23 @@
       <div id="slash-hints" class="slash-hints hidden"></div>
       <div class="chat-input-row">
         <button id="chat-attach" class="btn round attach" title="attach context"><span data-icon="plus"></span></button>
-        <textarea id="chat-input" rows="1" placeholder="Ask, instruct, or type / for commands…"></textarea>
+        <textarea id="chat-input" rows="1" placeholder="Ask or type /…"></textarea>
         <button id="chat-send" class="btn primary round" title="send"><span data-icon="arrow-up"></span></button>
       </div>
     </section>
 
     <!-- Terminal -->
-    <section id="view-terminal" class="view hidden">
+    <section id="view-terminal" class="view hidden" data-termmode="simple">
       <div class="term-toolbar">
-        <select id="term-context" class="select"><option value="local">PocketADM shell</option></select>
-        <button id="term-files" class="btn small iconled" title="browse files"><span data-icon="folder-open"></span> Files</button>
-        <button id="term-agents" class="btn small iconled" title="coding agents (Claude Code, Codex)"><span data-icon="sparkles"></span> Agents</button>
-        <button id="term-reconnect" class="btn small">Reconnect</button>
+        <button id="term-target" class="term-target" title="choose where to open a shell">
+          <span class="tt-icon" data-icon="box"></span>
+          <span class="tt-label">PocketADM app</span>
+          <span class="tt-chev" data-icon="chevron-down"></span>
+        </button>
+        <button id="term-paste" class="ticon" title="paste from clipboard"><span data-icon="clipboard"></span></button>
+        <button id="term-more" class="ticon" title="more actions"><span data-icon="more-horizontal"></span></button>
       </div>
+      <div id="term-status" class="term-status hidden"></div>
       <div id="terminal" class="terminal"></div>
       <div class="key-bar">
         <button data-key="Escape">esc</button>
@@ -161,6 +165,18 @@
         <button data-seq="&#x1b;[D">←</button>
         <button data-seq="&#x1b;[C">→</button>
         <button data-seq="&#3;">^C</button>
+        <button class="adv" data-seq="&#4;">^D</button>
+        <button class="adv" data-seq="&#26;">^Z</button>
+        <button class="adv" data-seq="&#18;">^R</button>
+        <button class="adv" data-seq="&#12;">^L</button>
+        <button class="adv" data-seq="&#1;">^A</button>
+        <button class="adv" data-seq="&#5;">^E</button>
+        <button class="adv" data-seq="&#x1b;[H">home</button>
+        <button class="adv" data-seq="&#x1b;[F">end</button>
+        <button class="adv" data-seq="&#x1b;[5~">pgup</button>
+        <button class="adv" data-seq="&#x1b;[6~">pgdn</button>
+        <button class="adv" data-seq="|">|</button>
+        <button class="adv" data-seq="~">~</button>
         <button data-seq="/">/</button>
         <button data-seq="-">-</button>
       </div>
