@@ -72,7 +72,7 @@ workflows:
           agvtool new-marketing-version "$MARKETING_VERSION"
           agvtool new-version -all "$(date +%Y%m%d%H%M)"
 
-      - name: Set up code signing (create cert + profile, pin team)
+      - name: Set up code signing (create cert + profile from key)
         script: |
           set -eo pipefail
           # Apple's API can create/return a distribution certificate but NEVER its
@@ -95,38 +95,12 @@ workflows:
             --certificate-key @file:/tmp/cert_key.pem \
             --create
           keychain add-certificates
+          # use-profiles writes the fetched profile onto BOTH the App target's
+          # Debug/Release build configs (manual style, team, specifier, Apple
+          # Distribution identity) AND generates export_options.plist. Once the
+          # cert + profile actually exist (they do now, thanks to the key above),
+          # this fully configures signing — no manual xcodeproj patching needed.
           xcode-project use-profiles
-
-          # Belt-and-suspenders: a freshly generated Capacitor project defaults to
-          # automatic signing with an empty team, so pin every manual-signing
-          # setting (team, style, specifier, identity) onto the App target from
-          # the profile we just fetched. Fail loudly if no profile was produced
-          # rather than writing a bogus specifier.
-          PROFILE=$(ls -t "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision 2>/dev/null | head -n1 || true)
-          if [ -z "$PROFILE" ] || [ ! -f "$PROFILE" ]; then
-            echo "!! No provisioning profile was fetched — check the ASC API key"
-            echo "!! permissions (App Manager) and CERTIFICATE_PRIVATE_KEY_B64."
-            exit 1
-          fi
-          security cms -D -i "$PROFILE" -o /tmp/pp.plist
-          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' /tmp/pp.plist)
-          export PROFILE_NAME
-          echo "Using provisioning profile: $PROFILE_NAME"
-          ruby -e '
-            require "xcodeproj"
-            proj = Xcodeproj::Project.open("ios/App/App.xcodeproj")
-            proj.targets.each do |t|
-              next unless t.name == "App"
-              t.build_configurations.each do |c|
-                c.build_settings["DEVELOPMENT_TEAM"] = ENV["TEAM_ID"]
-                c.build_settings["CODE_SIGN_STYLE"] = "Manual"
-                c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ENV["PROFILE_NAME"]
-                c.build_settings["CODE_SIGN_IDENTITY"] = "Apple Distribution"
-                c.build_settings["CODE_SIGN_IDENTITY[sdk=iphoneos*]"] = "Apple Distribution"
-              end
-            end
-            proj.save
-          '
 
       - name: Build the signed IPA
         script: |
