@@ -1,6 +1,7 @@
 """Async Docker Engine API client over the unix socket (no SDK dependency)."""
 import json
 import os
+import time
 from typing import Any
 
 import httpx
@@ -122,6 +123,52 @@ async def container_action(cid: str, action: str) -> None:
     r = await client().post(f"/containers/{cid}/{action}")
     if r.status_code >= 400 and r.status_code != 304:
         raise RuntimeError(f"{action} failed: {r.text}")
+
+
+async def remove_container(cid: str, force: bool = False) -> None:
+    """Remove a container (its named volumes are left in place on purpose —
+    data survives; anonymous volumes go with the container as usual)."""
+    r = await client().delete(f"/containers/{cid}",
+                              params={"force": "true" if force else "false"})
+    if r.status_code >= 400:
+        raise RuntimeError(f"remove failed: {r.text[:300]}")
+
+
+async def events(since: float, until: float) -> list[dict]:
+    """Docker engine events in a time window (bounded → the stream terminates).
+    Used to explain metric anomalies: what started/died/was pulled around then.
+    `until` must lie in the past: with a future bound the engine keeps the
+    stream open until that wall-clock time (= a hanging request)."""
+    if demo():
+        return []
+    until = min(until, time.time() - 1)
+    if until <= since:
+        return []
+    r = await client().get("/events", params={
+        "since": str(int(since)), "until": str(int(until)),
+        "filters": json.dumps({"type": ["container", "image"]}),
+    }, timeout=15)
+    r.raise_for_status()
+    out = []
+    for line in r.text.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        action = (e.get("Action") or "").split(":")[0]
+        if action not in ("start", "die", "stop", "kill", "restart", "oom",
+                          "destroy", "create", "pull", "health_status"):
+            continue
+        attrs = (e.get("Actor") or {}).get("Attributes") or {}
+        name = attrs.get("name") or (e.get("Actor") or {}).get("ID", "")[:12]
+        out.append({
+            "t": e.get("time", 0),
+            "type": e.get("Type", ""),
+            "action": e.get("Action", ""),
+            "name": name,
+            "exit_code": attrs.get("exitCode"),
+        })
+    return out
 
 
 async def container_logs(cid: str, tail: int = 200) -> str:

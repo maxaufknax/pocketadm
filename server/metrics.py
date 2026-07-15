@@ -2,15 +2,26 @@
 10 seconds and keeps ~2 hours of points, so the UI can show live graphs when
 a stat tile is tapped. Also measures internet reachability/latency (TCP
 connect timing — no ICMP privileges needed inside a container).
+
+On top of the fine-grained ring there is a *long* history: 5-minute averages
+covering the last 7 days, persisted to the data volume so graphs survive
+restarts. That's what powers the 6h/24h/7d ranges in the metric sheets.
 """
 import asyncio
+import json
 import time
 from collections import deque
 
-from . import sysinfo
+from . import config, sysinfo
 
 INTERVAL = 10
 HISTORY = deque(maxlen=720)  # 720 × 10s = 2h
+
+LONG_BUCKET = 300                          # seconds per long-history point
+HISTORY_LONG = deque(maxlen=2016)          # 2016 × 5min = 7 days
+LONG_FILE = config.DATA_DIR / "metrics-long.json"
+_bucket: list[dict] = []                   # fine points of the bucket in progress
+_bucket_start = 0.0
 
 _task: asyncio.Task | None = None
 _last_net: tuple[float, int, int] | None = None  # (time, rx_bytes, tx_bytes)
@@ -65,10 +76,42 @@ async def _collect_once() -> dict:
     }
 
 
+def _fold_bucket() -> None:
+    """Average the finished 5-min bucket into the long history and persist."""
+    global _bucket
+    if not _bucket:
+        return
+    point: dict = {"t": _bucket[-1]["t"]}
+    for key in ("cpu", "mem", "disk", "load", "rx", "tx", "ping"):
+        vals = [p[key] for p in _bucket if p.get(key) is not None]
+        point[key] = round(sum(vals) / len(vals), 1) if vals else None
+    HISTORY_LONG.append(point)
+    _bucket = []
+    try:
+        LONG_FILE.write_text(json.dumps(list(HISTORY_LONG)))
+    except OSError:
+        pass
+
+
+def _load_long() -> None:
+    try:
+        pts = json.loads(LONG_FILE.read_text())
+        cutoff = time.time() - LONG_BUCKET * HISTORY_LONG.maxlen
+        HISTORY_LONG.extend(p for p in pts if isinstance(p, dict) and p.get("t", 0) >= cutoff)
+    except (OSError, ValueError):
+        pass
+
+
 async def _loop() -> None:
+    global _bucket_start
     while True:
         try:
-            HISTORY.append(await _collect_once())
+            point = await _collect_once()
+            HISTORY.append(point)
+            if point["t"] - _bucket_start >= LONG_BUCKET:
+                _fold_bucket()
+                _bucket_start = point["t"]
+            _bucket.append(point)
         except Exception:
             pass
         await asyncio.sleep(INTERVAL)
@@ -77,12 +120,19 @@ async def _loop() -> None:
 def start() -> None:
     global _task
     if _task is None or _task.done():
+        _load_long()
         _task = asyncio.ensure_future(_loop())
 
 
 def history(minutes: int = 60) -> list[dict]:
     cutoff = time.time() - minutes * 60
-    return [p for p in HISTORY if p["t"] >= cutoff]
+    fine = [p for p in HISTORY if p["t"] >= cutoff]
+    if minutes <= 130:
+        return fine
+    # long ranges: 5-min averages for the old part, fine points for the recent
+    fine_start = fine[0]["t"] if fine else time.time()
+    coarse = [p for p in HISTORY_LONG if cutoff <= p["t"] < fine_start]
+    return coarse + fine
 
 
 def latest() -> dict | None:

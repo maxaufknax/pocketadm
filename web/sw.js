@@ -1,5 +1,5 @@
 /* PocketADM service worker — cache the app shell, never cache API/WS. */
-const CACHE = "pocketadm-v19";
+const CACHE = "pocketadm-v20";
 const SHELL = ["/", "/style.css", "/app.js", "/native.js", "/icons.js", "/manifest.webmanifest",
   "/vendor/xterm.js", "/vendor/xterm.css", "/vendor/xterm-addon-fit.js",
   "/icons/icon.svg", "/icons/logo.svg", "/icons/wordmark.svg"];

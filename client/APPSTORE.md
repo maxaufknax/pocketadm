@@ -217,11 +217,28 @@ Thin website-wrappers get rejected. PocketADM is already well-positioned:
 - ✅ The UI is **bundled locally** (Capacitor serves `www/` from the app, it does
   not load a remote website), and there is a native **cold-start Connect screen**,
   multi-server switching and QR pairing — real client behavior, not a webview.
-- ✅ Native camera QR scanning, status bar, splash and haptics via Capacitor.
+- ✅ Native camera QR scanning via `@capacitor/barcode-scanner` (the web
+  `BarcodeDetector` doesn't exist in WKWebView — `PocketNative.scanQR` bridges to
+  the native scanner, the browser/PWA path keeps the web fallback). Plus native
+  status bar, splash, keyboard and haptics.
 - 🔜 Nice-to-have hardening for a smoother review / better app: native push
-  (APNs) for Sentinel alerts, native share sheet, and a native barcode scanner
-  (the web `BarcodeDetector` isn't available in WKWebView). Not blockers for a
+  (APNs) for Sentinel alerts and a native share sheet. Not blockers for a
   first submission, but on the roadmap.
+
+## Final-release checklist (work through top to bottom)
+
+1. **demo.pocketadm.com reachable** with `demo` / `demo` — reviewers depend on it
+   (see *Review notes*). `curl -s https://demo.pocketadm.com/api/info` must
+   answer with `"demo": true`.
+2. **TestFlight build verified on a real iPhone** — especially: pairing QR scan
+   (native scanner), keyboard behavior in Vibe, terminal sessions.
+3. Store listing + screenshots + App Privacy answered in App Store Connect.
+4. Flip **`submit_to_app_store: true`** in `codemagic.yaml` (root) and start
+   `ios-release` — or leave it `false` and press *Submit for Review* manually on
+   the processed build in App Store Connect. Until then it stays `false` on
+   purpose: every CI run only ships to TestFlight.
+5. After approval: switch the release toggle in ASC to *manual release* if you
+   want to control launch day.
 
 ## Android (later)
 
