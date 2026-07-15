@@ -12,6 +12,13 @@ services:
     # so a public demo can't touch a real host.
     volumes:
       - helmsman_demo_data:/data
+    networks:
+      - default
+      - homeserver_net          # reachable by the reverse proxy (demo.pocketadm.com)
 
 volumes:
   helmsman_demo_data:
+
+networks:
+  homeserver_net:
+    external: true

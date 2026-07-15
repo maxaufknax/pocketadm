@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                clis, config, dockerapi, hostuser, integrations, jobs, localai,
                metrics, pairing, permissions, reports, sessions, snapshots,
-               sysinfo, terminal, updates)
+               sysinfo, terminal, termsessions, updates)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -270,11 +270,67 @@ async def container_action(cid: str, action: str):
     return {"ok": True}
 
 
+@app.delete("/api/containers/{cid}", dependencies=[authed])
+async def container_remove(cid: str, force: bool = False):
+    """Remove a container. Named volumes stay on disk, so app data survives —
+    the UI says so. PocketADM refuses to remove itself."""
+    own = localai.own_container_name()
+    try:
+        info = await dockerapi.inspect_container(cid)
+        name = (info.get("Name") or "").lstrip("/")
+    except Exception:
+        raise HTTPException(404, "no such container")
+    if cid.startswith(own) or (info.get("Id") or "").startswith(own) or name == "helmsman":
+        raise HTTPException(400, "refusing to remove the PocketADM container from inside itself")
+    await dockerapi.remove_container(cid, force=force)
+    audit.record("container_remove", target=name or cid, detail="forced" if force else "")
+    return {"ok": True, "name": name}
+
+
 # ------------------------------------------------------------ metrics
 
 @app.get("/api/metrics/history", dependencies=[authed])
 async def metrics_history(minutes: int = 60):
-    return {"points": metrics.history(min(minutes, 120)), "interval": metrics.INTERVAL}
+    return {"points": metrics.history(min(minutes, 10080)), "interval": metrics.INTERVAL}
+
+
+@app.get("/api/metrics/context", dependencies=[authed])
+async def metrics_context(t: float, window: int = 240):
+    """What happened around a moment in time — used to explain anomaly markers
+    on the metric graphs: docker events, PocketADM actions (audit log) and jobs
+    in a ±window/2 slice around t."""
+    window = max(60, min(window, 3600))
+    lo, hi = t - window / 2, t + window / 2
+    try:
+        ev = await dockerapi.events(lo, hi)
+    except Exception:
+        ev = []
+    entries = []
+    for e in ev:
+        label = {
+            "start": "started", "die": "exited", "stop": "stopped",
+            "kill": "was killed", "restart": "restarted", "oom": "ran OUT OF MEMORY",
+            "destroy": "was removed", "create": "was created",
+        }.get((e["action"] or "").split(":")[0])
+        if e["type"] == "image":
+            label = "image pulled" if e["action"] == "pull" else None
+        if (e["action"] or "").startswith("health_status"):
+            label = "health turned " + e["action"].split(":")[-1].strip()
+        if not label:
+            continue
+        summary = f'{e["name"]} {label}'
+        if e.get("exit_code") not in (None, "", "0"):
+            summary += f' (exit {e["exit_code"]})'
+        entries.append({"t": e["t"], "kind": "docker", "summary": summary})
+    for a in audit.recent(limit=400)["events"]:
+        ts = a.get("t") or 0
+        if lo <= ts <= hi:
+            entries.append({"t": ts, "kind": "action",
+                            "summary": f'{a.get("action", "?")} {a.get("target", "")}'.strip()
+                                       + (f' · {a.get("detail")}' if a.get("detail") else "")
+                                       + f' — via {a.get("source", "ui")}'})
+    entries.sort(key=lambda x: x["t"])
+    return {"events": entries[:40], "window": window}
 
 
 # ---------------------------------------------------------- fs browser
@@ -1249,11 +1305,51 @@ async def terminal_targets():
     return {"groups": groups, "host_shell": host_ok}
 
 
+@app.get("/api/terminal/sessions", dependencies=[authed])
+async def terminal_sessions():
+    """Server-side terminal sessions — they keep running when the app closes,
+    stream to any number of devices, and replay scrollback on attach."""
+    return {"sessions": termsessions.list_meta(), "max_live": termsessions.MAX_LIVE}
+
+
+class TermSessionBody(BaseModel):
+    context: str = "local"
+    title: str = ""
+
+
+@app.post("/api/terminal/sessions", dependencies=[authed])
+async def terminal_session_create(body: TermSessionBody):
+    try:
+        s = termsessions.create(body.context, body.title.strip()[:60])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record("terminal", target=body.context, detail=f"session {s.id}")
+    return {"session": s.meta()}
+
+
+@app.delete("/api/terminal/sessions/{sid}", dependencies=[authed])
+async def terminal_session_close(sid: str):
+    if not termsessions.close(sid):
+        raise HTTPException(404, "no such session")
+    audit.record("terminal_kill", target=sid)
+    return {"ok": True}
+
+
 @app.websocket("/ws/terminal")
 async def ws_terminal(ws: WebSocket):
     await ws.accept()
     if not await auth.require_auth_ws(ws):
         return
+    sid = ws.query_params.get("session", "")
+    if sid:
+        s = termsessions.get(sid)
+        if not s:
+            await ws.send_text("\r\n[pocketadm] session-gone\r\n")
+            await ws.close()
+            return
+        await s.attach(ws)
+        return
+    # legacy path: an ephemeral PTY bound to this one websocket
     ctx = ws.query_params.get("context", "local")
     audit.record("terminal", target=ctx)
     await terminal.handle_terminal(ws, ctx)

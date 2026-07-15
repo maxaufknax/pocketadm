@@ -1909,3 +1909,147 @@ button, .tab, .seg, .tabbar, .topbar, .stat, .suggest, .msg-actions,
 @media (prefers-reduced-motion: reduce) {
   .tabbar, .composer, #chat-send, #chat-send span, .scroll-fab { transition: none; }
 }
+
+/* ============================================================ v0.14 layer
+   Services home redesign · terminal sessions · anomaly context · app feel */
+
+/* ---- app feel: kill the browser tells ---- */
+html, body { overscroll-behavior: none; }
+.view, .chat-log, .modal-body { overscroll-behavior-y: contain; }
+
+/* ---- desktop rail: the active tab is the row highlight — the icon must NOT
+   also carry the phone's pill (the polish layer's gradient painted a square
+   box because the rail resets its border-radius). ---- */
+@media (min-width: 900px) {
+  .tab.active .ico { background: none; box-shadow: none; animation: none; }
+}
+
+/* ---- topbar: connection dot lives inside the server switcher ---- */
+.hostname { display: inline-flex; align-items: center; gap: 8px; }
+.hostname .dot { width: 8px; height: 8px; flex: none; }
+.iconbtn { border-radius: 10px; transition: background .15s, transform .12s; }
+.iconbtn:active { background: var(--bg3); transform: scale(.92); }
+
+/* ---- Home: services section ---- */
+.svc-sum.ok { color: var(--accent2); font-weight: 600; }
+.svc-sum.bad { color: var(--danger); font-weight: 600; }
+.svc-sum.dim { color: var(--muted); }
+.svc-search-wrap {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 0 10px; margin-top: 8px;
+}
+.svc-search-wrap svg.i { width: 15px; height: 15px; color: var(--muted); flex: none; }
+.svc-search-wrap .svc-search {
+  flex: 1; background: none; border: none; outline: none; color: var(--text);
+  font: inherit; font-size: 13.5px; padding: 9px 0; min-width: 0;
+}
+.svc-group-head {
+  position: sticky; top: 4px; z-index: 3;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 12px;
+}
+.svc-card { transition: transform .12s, border-color .15s; }
+.svc-card:active { transform: scale(.985); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.svc-chev { color: var(--muted); opacity: .55; }
+.svc-chev svg, svg.i.svc-chev { width: 15px; height: 15px; }
+.chip.portchip { color: var(--accent); font-variant-numeric: tabular-nums; }
+.tile-wrap { position: relative; flex: none; display: inline-flex; }
+.tile-dot {
+  position: absolute; right: -2.5px; bottom: -2.5px;
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2.5px solid var(--bg2);          /* card background ring */
+  background: var(--muted);
+}
+.tile-dot.running { background: var(--accent2); }
+.tile-dot.exited, .tile-dot.dead { background: var(--danger); }
+.tile-dot.restarting, .tile-dot.paused { background: var(--warn); }
+
+/* ---- pull-to-refresh (Home) ---- */
+.ptr {
+  position: absolute; left: 0; right: 0; top: 4px; height: 0;
+  display: flex; justify-content: center; pointer-events: none; z-index: 4;
+}
+.ptr-spin {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--bg2); border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+  color: var(--muted);
+  transform: translateY(calc(var(--pull, 0px) - 46px)) rotate(calc(var(--pull, 0px) * 3.2deg));
+  opacity: min(1, calc(var(--pull, 0px) / 40));
+  transition: transform .18s cubic-bezier(.25, .9, .3, 1.2);
+}
+.ptr-spin svg.i { width: 16px; height: 16px; }
+.ptr.armed .ptr-spin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ptr.loading .ptr-spin {
+  transform: translateY(12px); color: var(--accent);
+  animation: ptr-rot .8s linear infinite;
+}
+@keyframes ptr-rot { to { transform: translateY(12px) rotate(360deg); } }
+
+/* ---- metric sheets: richer KPIs, legend, anomaly context card ---- */
+.kpi-minmax { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.graph-legend { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 8px; font-size: 11.5px; color: var(--muted); }
+.graph-legend .leg { display: inline-flex; align-items: center; gap: 5px; }
+.graph-legend .leg i {
+  width: 9px; height: 9px; border-radius: 3px; display: inline-block;
+}
+.graph-legend .leg-anom {
+  width: 9px; height: 9px; border-radius: 50%; background: transparent;
+  border: 2px solid var(--danger); box-shadow: 0 0 5px color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.anomaly-card { margin-bottom: 12px; border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); animation: msg-in .25s ease-out; }
+.anomaly-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.anom-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  background: var(--chart-2); box-shadow: 0 0 8px color-mix(in srgb, var(--chart-2) 70%, transparent);
+}
+.anom-dot.high { background: var(--danger); box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 70%, transparent); }
+.anomaly-ev {
+  display: flex; align-items: baseline; gap: 8px; padding: 4px 0;
+  font-size: 12.5px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.anomaly-ev:last-of-type { border-bottom: none; }
+.anomaly-ev svg.i { width: 13px; height: 13px; color: var(--muted); flex: none; align-self: center; }
+.anomaly-ev .ev-time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.anomaly-ev .ev-text { min-width: 0; }
+
+/* ---- terminal session picker ---- */
+.tp-head-note { font-weight: 400; color: var(--muted); margin-left: 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.sess-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none; margin: 0 11px;
+  background: var(--muted); opacity: .5;
+}
+.sess-dot.live {
+  background: var(--accent2); opacity: 1;
+  box-shadow: 0 0 7px color-mix(in srgb, var(--accent2) 70%, transparent);
+  animation: sess-pulse 2.2s ease-in-out infinite;
+}
+@keyframes sess-pulse { 50% { box-shadow: 0 0 2px transparent; } }
+.sess-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9px; color: var(--muted); flex: none;
+}
+.sess-x:active { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+.sess-x svg.i { width: 14px; height: 14px; }
+
+/* ---- ghost-danger buttons (destructive, but not shouting) ---- */
+.btn.danger-ghost {
+  background: transparent; color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+.btn.danger-ghost:active { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* ---- keyboard-open: give the conversation every pixel ----
+   While typing, the mode/model/workspace strip and the plan panel fold away —
+   the transcript and the composer are all that matter. (They return the
+   moment the keyboard closes; the chat header stays for orientation.) */
+@media (max-width: 899px) {
+  body.kb-open .vibe-controls, body.kb-open .usage-row, body.kb-open #plan-panel {
+    display: none;
+  }
+}
+

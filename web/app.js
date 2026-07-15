@@ -80,6 +80,8 @@ const state = {
   fitAddon: null,
   ctrlArmed: false,
   termContext: "local",
+  termSessionId: "",       // server-side session this device is attached to
+  termTitle: "",           // its human label (shown in the toolbar)
   termTargets: null,       // grouped picker data (cached)
   termFont: +(localStorage.getItem("pocketadm_term_font") || 13.5),
   termReconnect: null,     // pending auto-reconnect timer
@@ -746,12 +748,45 @@ function drawGraph(canvas, seriesList, points, opts = {}) {
       const r = canvas.getBoundingClientRect();
       const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
       renderChart(canvas, cx);
+      // scrubbing feedback: a soft tick each time the crosshair snaps to the
+      // next sample, a firmer one when it lands on an anomaly marker
+      const c = canvas._chart;
+      const best = nearestPoint(c, cx);
+      if (best && best.t !== canvas._lastSnapT) {
+        canvas._lastSnapT = best.t;
+        const onAnomaly = c.anomalies.some((a) => a.t === best.t);
+        hap(onAnomaly ? "medium" : "tick");
+      }
+    };
+    const tapAnomaly = (e) => {
+      const c = canvas._chart;
+      if (!c || !c.opts.onAnomaly || !c.anomalies.length) return;
+      const r = canvas.getBoundingClientRect();
+      const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+      const cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+      let hit = null, hd = 1e9;
+      for (const a of c.anomalies) {
+        const d = Math.hypot(c.x(a.t) - cx, c.y(a.v) - cy);
+        if (d < hd) { hd = d; hit = a; }
+      }
+      if (hit && hd <= 22) { hap("light"); c.opts.onAnomaly(hit); }
     };
     canvas.addEventListener("pointermove", move);
-    canvas.addEventListener("pointerdown", move);
+    canvas.addEventListener("pointerdown", (e) => { move(e); tapAnomaly(e); });
     canvas.addEventListener("pointerleave", () => canvas._chart && renderChart(canvas, null));
     canvas.addEventListener("touchmove", (e) => { move(e); }, { passive: true });
   }
+}
+
+function nearestPoint(c, cx) {
+  const clamped = Math.max(c.padL, Math.min(c.w - c.padR, cx));
+  const frac = (clamped - c.padL) / Math.max(1, c.w - c.padL - c.padR);
+  const t = c.t0 + frac * (c.t1 - c.t0);
+  let best = null;
+  for (const p of c.points) {
+    if (best == null || Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+  }
+  return best;
 }
 
 function renderChart(canvas, hoverX) {
@@ -785,13 +820,14 @@ function renderChart(canvas, hoverX) {
       ctx.fillStyle = col + "22"; ctx.fill();
     }
   }
-  // anomaly markers
+  // anomaly markers (tappable → context card, so draw them inviting)
   for (const a of c.anomalies) {
     const px = c.x(a.t), py = c.y(a.v);
     const col = chartColor(a.high ? "--danger" : "--chart-2");
-    ctx.beginPath(); ctx.arc(px, py, 5, 0, 7); ctx.strokeStyle = col + "88";
-    ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.beginPath(); ctx.arc(px, py, 2.4, 0, 7); ctx.fillStyle = col; ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, 9, 0, 7); ctx.fillStyle = col + "1e"; ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, 5.5, 0, 7); ctx.strokeStyle = col + "99";
+    ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, py, 2.6, 0, 7); ctx.fillStyle = col; ctx.fill();
   }
   // hi/lo labels
   ctx.fillStyle = cssVar("--muted"); ctx.font = "10.5px sans-serif";
@@ -803,13 +839,7 @@ function renderChart(canvas, hoverX) {
 }
 
 function drawCrosshair(ctx, c, hoverX) {
-  const clamped = Math.max(c.padL, Math.min(c.w - c.padR, hoverX));
-  const frac = (clamped - c.padL) / Math.max(1, c.w - c.padL - c.padR);
-  const t = c.t0 + frac * (c.t1 - c.t0);
-  let best = null;
-  for (const p of c.points) {
-    if (best == null || Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
-  }
+  const best = nearestPoint(c, hoverX);
   if (!best) return;
   const px = c.x(best.t);
   ctx.strokeStyle = cssVar("--muted") + "aa"; ctx.lineWidth = 1;
@@ -824,8 +854,10 @@ function drawCrosshair(ctx, c, hoverX) {
     ctx.beginPath(); ctx.arc(px, c.y(best[s.key]), 3, 0, 7); ctx.fillStyle = col; ctx.fill();
     rows.push({ col, text: `${s.label}  ${c.fmt(best[s.key])}` });
   }
-  // tooltip box: time on top, one line per series
-  const when = new Date(best.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // tooltip box: time on top, one line per series (add the day on long ranges)
+  const longRange = (c.t1 - c.t0) > 6 * 3600;
+  const when = new Date(best.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: longRange ? undefined : "2-digit" })
+    + (longRange ? " · " + new Date(best.t * 1000).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) : "");
   ctx.font = "11px sans-serif";
   ctx.textAlign = "left";
   const contentW = Math.max(ctx.measureText(when).width,
@@ -858,20 +890,24 @@ async function openMetricModal(kind) {
   const kpis = el("div", { class: "metric-kpis" });
   const canvas = el("canvas", { class: "graph-canvas" });
   const canvas2 = cfg.extra ? el("canvas", { class: "graph-canvas", style: "height:110px" }) : null;
+  const anomalyBox = el("div", {});
   const rangeSeg = el("div", { class: "seg", style: "margin-bottom:10px" });
-  for (const [label, m] of [["15 min", 15], ["30 min", 30], ["2 h", 120]]) {
+  for (const [label, m] of [["30 min", 30], ["2 h", 120], ["6 h", 360], ["24 h", 1440], ["7 d", 10080]]) {
     const b = el("button", { class: m === minutes ? "active" : "", onclick: () => {
       minutes = m;
       rangeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+      anomalyBox.innerHTML = "";
       render();
     } }, label);
     rangeSeg.append(b);
   }
-  const legend = el("div", { class: "muted", style: "margin-bottom:6px" },
-    cfg.series.map((s) => s.label).join(" · ") + (cfg.extra ? " · " + cfg.extra.label : ""));
+  const legend = el("div", { class: "graph-legend" },
+    ...cfg.series.concat(cfg.extra ? [cfg.extra] : []).map((s) =>
+      el("span", { class: "leg" }, el("i", { style: `background:${chartColor(s.color)}` }), s.label)),
+    el("span", { class: "leg hint" }, el("i", { class: "leg-anom" }), "unusual moment — tap it"));
   body.append(rangeSeg, kpis, canvas);
   if (canvas2) body.append(canvas2);
-  body.append(legend);
+  body.append(legend, anomalyBox);
   body.append(el("div", { class: "card-actions" },
     askAiButton(`Look at my server's ${cfg.title} usage and tell me if anything is unusual. ` +
                 `Check top consumers and give me plain-language advice.`, "Ask AI about this")));
@@ -887,12 +923,15 @@ async function openMetricModal(kind) {
         const cur = vals[vals.length - 1], avg = vals.reduce((a, b) => a + b, 0) / vals.length;
         const fmt = cfg.fmt && s.key !== "ping" ? cfg.fmt
           : (v) => Math.round(v * 10) / 10 + (s.key === "ping" ? " ms" : cfg.unit || "");
-        kpis.append(el("div", { class: "kpi" }, el("b", {}, fmt(cur)), `${s.label} · avg ${fmt(avg)}`));
+        kpis.append(el("div", { class: "kpi" }, el("b", {}, fmt(cur)),
+          `${s.label} · avg ${fmt(avg)}`,
+          el("span", { class: "kpi-minmax" }, `low ${fmt(Math.min(...vals))} · high ${fmt(Math.max(...vals))}`)));
       }
+      const onAnomaly = (a) => showAnomalyContext(cfg, a, anomalyBox);
       drawGraph(canvas, cfg.series, points,
-        { max: cfg.max, unit: cfg.unit, fmt: cfg.fmt });
+        { max: cfg.max, unit: cfg.unit, fmt: cfg.fmt, onAnomaly });
       if (canvas2 && cfg.extra) {
-        drawGraph(canvas2, [cfg.extra], points, { unit: " ms" });
+        drawGraph(canvas2, [cfg.extra], points, { unit: " ms", onAnomaly });
       }
     } catch (e) {
       kpis.innerHTML = "";
@@ -900,6 +939,54 @@ async function openMetricModal(kind) {
     }
   }
   render();
+}
+
+/* Tapping an anomaly dot answers "what WAS that?" — we pull the server's
+   docker events + PocketADM action log around that moment and show them under
+   the graph, with a one-tap way to hand the whole thing to the AI. */
+async function showAnomalyContext(cfg, a, box) {
+  const when = new Date(a.t * 1000);
+  const timeStr = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    + " · " + when.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  const valStr = (cfg.fmt && a.key !== "ping") ? cfg.fmt(a.v)
+    : Math.round(a.v * 10) / 10 + (a.key === "ping" ? " ms" : cfg.unit || "");
+  const word = a.high ? "spike" : "dip";
+  const list = el("div", { class: "anomaly-events" }, el("div", { class: "thinking" }, "checking what happened"));
+  box.replaceChildren(el("div", { class: "card anomaly-card" },
+    el("div", { class: "anomaly-head" },
+      el("span", { class: "anom-dot" + (a.high ? " high" : "") }),
+      el("div", { style: "flex:1;min-width:0" },
+        el("div", { class: "card-title" }, `${cfg.title} ${word} — ${valStr}`),
+        el("div", { class: "card-sub" }, `${timeStr} · ${Math.abs(a.z).toFixed(1)}× further from normal than usual`)),
+      el("button", { class: "btn small iconled", onclick: () => box.replaceChildren() }, ic("x"))),
+    list));
+
+  let events = [];
+  try { events = (await api(`/metrics/context?t=${a.t}&window=300`)).events; }
+  catch { /* the card still explains the anomaly itself */ }
+  list.innerHTML = "";
+  if (events.length) {
+    list.append(el("div", { class: "card-sub", style: "margin-bottom:6px" }, "Around that moment:"));
+    for (const ev of events.slice(0, 8)) {
+      const tt = new Date(ev.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      list.append(el("div", { class: "anomaly-ev" },
+        ic(ev.kind === "docker" ? "box" : "zap"),
+        el("span", { class: "ev-time" }, tt),
+        el("span", { class: "ev-text" }, ev.summary)));
+    }
+  } else {
+    list.append(el("div", { class: "card-sub" },
+      "No container events or PocketADM actions recorded near this moment — " +
+      "it likely came from inside a running service (a cron job, a backup, a burst of traffic)."));
+  }
+  const evLines = events.slice(0, 8).map((ev) =>
+    `- ${new Date(ev.t * 1000).toLocaleTimeString()} ${ev.summary}`).join("\n");
+  list.append(el("div", { class: "card-actions", style: "margin-top:8px" },
+    askAiButton(`On my server, ${cfg.title} had a ${word} of ${valStr} at ${timeStr} ` +
+      `(statistically unusual vs. the surrounding period).\n` +
+      (evLines ? `Events recorded around that moment:\n${evLines}\n` : `No docker/app events were recorded around it.\n`) +
+      `Please find the likely cause (check container stats, logs of suspicious services) ` +
+      `and tell me plainly whether it's harmless or needs action.`, "Ask AI what caused this")));
 }
 
 $$(".stat").forEach((s) => s.addEventListener("click", () => openMetricModal(s.dataset.metric)));
@@ -1102,14 +1189,21 @@ const GROUP_MODES = [["category", "Function"], ["stack", "Stack"], ["flat", "Raw
 function renderServices() {
   const all = state.containers;
   ensureAppsData();
-  $("#container-count").textContent =
-    `${all.filter((c) => c.state === "running").length}/${all.length} running`;
+  const runningN = all.filter((c) => c.state === "running").length;
+  const problemCount = all.filter(svcProblem).length;
+  // colored at-a-glance summary in the section head
+  const count = $("#container-count");
+  count.innerHTML = "";
+  count.append(el("span", { class: "svc-sum ok" }, `${runningN} running`));
+  if (problemCount) count.append(" · ", el("span", { class: "svc-sum bad" }, `${problemCount} issue${problemCount > 1 ? "s" : ""}`));
+  if (all.length - runningN - problemCount > 0)
+    count.append(" · ", el("span", { class: "svc-sum dim" }, `${all.length - runningN} off`));
+
   const wrap = $("#service-list");
   wrap.innerHTML = "";
 
   // controls: status filter · grouping mode · search. Rebuilt only on
   // filter/group change so the search box keeps focus while typing.
-  const problemCount = all.filter(svcProblem).length;
   const bar = el("div", { class: "svc-filter" });
   const seg = el("div", { class: "seg" });
   const modes = [["all", "All"], ["running", "Running"],
@@ -1127,10 +1221,11 @@ function renderServices() {
       onclick: () => { state.svcGroup = id;
         localStorage.setItem("helmsman_svc_group", id); renderServices(); } }, label));
   }
-  const search = el("input", { class: "svc-search", type: "search", placeholder: "Filter services…",
+  const search = el("input", { class: "svc-search", type: "search", placeholder: "Search services…",
     value: svcFilter.q, autocapitalize: "off",
     oninput: (e) => { svcFilter.q = e.target.value; renderSvcResults(); } });
-  bar.append(el("div", { class: "svc-filter-row" }, seg, gseg), search);
+  bar.append(el("div", { class: "svc-filter-row" }, seg, gseg),
+    el("div", { class: "svc-search-wrap" }, ic("search"), search));
   wrap.append(bar, el("div", { id: "svc-results" }));
   renderSvcResults();
 }
@@ -1227,19 +1322,24 @@ function unitCard(u) {
   sub.push(healthWord(u));
   const chips = [];
   if (u.problems) chips.push(el("span", { class: "pill crit" }, "issue"));
-  for (const p of u.ports.slice(0, 2)) {
-    chips.push(el("a", { class: "chip", href: `http://${serverHost()}:${p}`, target: "_blank",
-      onclick: (e) => e.stopPropagation() }, `:${p}`));
+  // one clean "open" affordance instead of a row of raw port chips
+  if (u.ports.length) {
+    chips.push(el("a", { class: "chip portchip", href: `http://${serverHost()}:${u.ports[0]}`,
+      target: "_blank", title: `open :${u.ports[0]}`,
+      onclick: (e) => e.stopPropagation() },
+      `:${u.ports[0]}${u.ports.length > 1 ? " +" + (u.ports.length - 1) : ""}`));
   }
+  // status lives on the tile (like app badges) — the title stays clean
+  const tile = el("span", { class: "tile-wrap" },
+    iconTile(u.icon, u.category || u.label, "", `${u.label} ${u.primary.name} ${u.primary.image}`),
+    el("span", { class: "tile-dot " + healthDot(u) }));
   return el("div", { class: "card svc-card", onclick: () => showServiceUnit(u) },
     el("div", { class: "card-row" },
-      iconTile(u.icon, u.category || u.label, "", `${u.label} ${u.primary.name} ${u.primary.image}`),
+      tile,
       el("div", { style: "min-width:0;flex:1" },
-        el("div", { class: "card-title" },
-          el("span", { class: "state-dot " + healthDot(u), style: "display:inline-block;margin-right:7px" }),
-          u.label),
+        el("div", { class: "card-title" }, u.label),
         el("div", { class: "card-sub" }, sub.join(" · "))),
-      el("div", { class: "svc-meta" }, ...chips)));
+      el("div", { class: "svc-meta" }, ...chips, svgIcon("chevron-right", "svc-chev"))));
 }
 
 function healthWord(u) {
@@ -1339,6 +1439,8 @@ async function showContainerDetail(c) {
       onclick: () => { closeModal(); startUpdateJob(upd); },
     }, ic("arrow-up-circle"), " update available"));
   }
+  actions.append(el("button", { class: "btn small danger-ghost", title: "delete this container",
+    onclick: () => confirmRemoveContainers([c], d.name) }, "remove"));
   body.append(actions);
 
   // AI row
@@ -1476,6 +1578,12 @@ async function showServiceUnit(u) {
     for (const cl of link.app?.clients || []) row.append(el("a", {
       class: "chip iconled", href: cl.url, target: "_blank" }, ic("smartphone"), " " + cl.name));
     body.append(row);
+  } else {
+    // self-managed services can be removed too — not only App Store installs
+    body.append(el("div", { class: "card-actions", style: "margin:0 0 12px" },
+      el("button", { class: "btn small danger-ghost",
+        onclick: () => confirmRemoveContainers(u.members, u.label) },
+        u.multi ? "Remove service…" : "Remove…")));
   }
 
   // AI helpers for the whole service
@@ -1519,6 +1627,45 @@ async function showServiceUnit(u) {
     u.multi ? "Containers in this service" : "Container"), parts);
 
   openModal(u.label, body);
+}
+
+/* Remove one container or a whole service unit — works for anything, not just
+   App-Store installs. Named volumes stay on disk, so data survives; a compose
+   stack can always recreate what it owned. */
+function confirmRemoveContainers(members, label) {
+  const names = members.map((m) => m.name);
+  const running = members.filter((m) => m.state === "running").length;
+  const status = el("p", { class: "muted" });
+  const body = el("div", {},
+    el("p", { style: "margin-bottom:8px" },
+      `Remove ${members.length > 1 ? `all ${members.length} containers of` : "the container"} `,
+      el("b", {}, label), "?"),
+    el("ul", { class: "mount-list", style: "margin-bottom:10px" },
+      ...names.slice(0, 8).map((n) => el("li", {}, n)),
+      names.length > 8 ? el("li", {}, `… ${names.length - 8} more`) : null),
+    el("p", { class: "muted", style: "font-size:12.5px;margin-bottom:6px" },
+      (running ? `${running} still running — they will be stopped and deleted. ` : "") +
+      "Data stored in named volumes stays on disk. If the service came from a compose file, " +
+      "“docker compose up” can bring it back; otherwise this is final."),
+    el("div", { class: "card-actions", style: "margin-top:12px" },
+      el("button", { class: "btn danger", onclick: async function () {
+        this.disabled = true;
+        status.textContent = "removing…";
+        const failed = [];
+        for (const m of members) {
+          try { await api(`/containers/${m.id}?force=true`, { method: "DELETE" }); }
+          catch (e) { failed.push(`${m.name}: ${e.message}`); }
+        }
+        hap(failed.length ? "error" : "success");
+        if (failed.length) { status.textContent = "✕ " + failed.join(" · "); this.disabled = false; return; }
+        closeModal();
+        toast(`Removed ${label}`);
+        state.appsData = null;               // installed-map may have changed
+        refreshDashboard();
+      } }, `Remove${members.length > 1 ? " all" : ""}`),
+      el("button", { class: "btn", onclick: closeModal }, "Cancel")),
+    status);
+  openModal(`Remove ${label}`, body);
 }
 
 // short role tag for a dependency container in the parts list
@@ -2792,6 +2939,9 @@ function userBubble(text, ordinal) {
 
 $("#chat-attach").addEventListener("click", openAttachMenu);
 
+// tapping Send must not steal focus from the textarea — the keyboard staying
+// up between messages is what makes the chat feel native (ChatGPT behavior)
+$("#chat-send").addEventListener("pointerdown", (e) => e.preventDefault());
 $("#chat-send").addEventListener("click", () => {
   if ($("#chat-send").classList.contains("stop-mode")) {
     hap("medium");
@@ -2844,6 +2994,51 @@ window.addEventListener("pocketadm-kb", (e) => {
     fab.classList.toggle("show", log.scrollHeight - log.scrollTop - log.clientHeight > 420);
   }, { passive: true });
   fab.addEventListener("click", () => log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }));
+}
+
+/* pull-to-refresh on Home — the app gesture a web page can't have.
+   Pure touch handling on the view's own scroller; spring numbers match iOS. */
+if (matchMedia("(pointer: coarse)").matches) {
+  const view = $("#view-dashboard");
+  const ind = el("div", { class: "ptr" }, el("span", { class: "ptr-spin" }, ic("refresh-cw")));
+  view.prepend(ind);
+  let startY = 0, pulling = false, armed = false;
+  view.addEventListener("touchstart", (e) => {
+    pulling = view.scrollTop <= 0 && !document.body.classList.contains("kb-open");
+    if (pulling) { startY = e.touches[0].clientY; armed = false; }
+  }, { passive: true });
+  view.addEventListener("touchmove", (e) => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || view.scrollTop > 0) {
+      ind.style.setProperty("--pull", "0px");
+      if (armed) { armed = false; ind.classList.remove("armed"); }
+      return;
+    }
+    const pull = Math.min(84, dy * 0.42);
+    ind.style.setProperty("--pull", pull + "px");
+    const nowArmed = pull >= 56;
+    if (nowArmed !== armed) {
+      armed = nowArmed;
+      ind.classList.toggle("armed", nowArmed);
+      hap(nowArmed ? "light" : "tick");
+    }
+  }, { passive: true });
+  const release = async () => {
+    if (!pulling) return;
+    pulling = false;
+    if (armed) {
+      armed = false;
+      ind.classList.add("loading");
+      hap("medium");
+      try { await refreshDashboard(); } catch {}
+      ind.classList.remove("loading");
+    }
+    ind.classList.remove("armed");
+    ind.style.setProperty("--pull", "0px");
+  };
+  view.addEventListener("touchend", release);
+  view.addEventListener("touchcancel", release);
 }
 
 // Android back: close what's open before letting the OS minimize the app
@@ -2919,6 +3114,8 @@ function showSlashHelp() {
 
 async function initTerminal() {
   applyTermMode(localStorage.getItem("pocketadm_term_mode") || "simple");
+  const st = $("#term-status");
+  if (st && !st._tap) { st._tap = true; st.addEventListener("click", () => connectTerminal()); }
   refreshTermTargets();               // background — fills the picker
   if (state.term && state.termWs && state.termWs.readyState <= 1) {
     state.fitAddon.fit();
@@ -2929,6 +3126,7 @@ async function initTerminal() {
 
 function setTermContext(ctx, label, icon) {
   state.termContext = ctx;
+  state.termTitle = label || ctx;
   const btn = $("#term-target");
   if (btn) {
     btn.querySelector(".tt-label").textContent = label || ctx;
@@ -2936,12 +3134,29 @@ function setTermContext(ctx, label, icon) {
   }
 }
 
+/* ---- server-side sessions: the shell lives on the server (like the Vibe
+   chats), websockets only attach. Locking the phone or switching devices
+   leaves whatever runs (Claude Code, a build…) untouched. ---- */
+
+async function listTermSessions() {
+  try { return (await api("/terminal/sessions")).sessions || []; }
+  catch { return []; }
+}
+
+// reuse an existing live session for the same place, otherwise start one there
+async function openTermSessionFor(ctx, label, icon) {
+  const sessions = await listTermSessions();
+  const existing = sessions.find((s) => s.alive && s.context === ctx);
+  setTermContext(ctx, label, icon);
+  state.termSessionId = existing ? existing.id : "";
+  showView("terminal");
+  connectTerminal();
+}
+
 async function openTerminalFor(c) {
   closeModal();
   const meta = c.service || {};
-  setTermContext("container:" + c.id, meta.label || c.name, meta.icon || "box");
-  showView("terminal");
-  connectTerminal();
+  await openTermSessionFor("container:" + c.id, meta.label || c.name, meta.icon || "box");
 }
 
 // open the terminal and drop a command onto the prompt (ready to run & watch)
@@ -2949,9 +3164,8 @@ function openTerminalWithCommand(cmd) {
   closeModal();
   const localLive = state.termContext === "local" &&
     state.termWs && state.termWs.readyState <= 1;
-  if (!localLive) setTermContext("local", "PocketADM app", "box");
   showView("terminal");
-  if (!localLive) connectTerminal();
+  if (!localLive) openTermSessionFor("local", "PocketADM app", "box");
   let tries = 0;
   const type = () => {
     if (state.termWs && state.termWs.readyState === 1) {
@@ -2971,25 +3185,59 @@ async function refreshTermTargets() {
   return state.termTargets;
 }
 
-// grouped, human-readable "who/where" picker — the app box, real host logins
-// (maxaufknax@stream), and each running service. Replaces the long dropdown.
+// grouped picker: live sessions first (attach/close), then everywhere a NEW
+// shell can open — the app box, real host logins, each running service.
 async function openTermTargets() {
   const body = el("div", { class: "term-picker" },
     el("div", { class: "thinking" }, "loading shells"));
-  openModal("Open a shell", body);
-  const data = state.termTargets || await refreshTermTargets();
+  openModal("Terminal sessions", body);
+  const [sessions, data] = await Promise.all([
+    listTermSessions(), state.termTargets ? Promise.resolve(state.termTargets) : refreshTermTargets()]);
   body.innerHTML = "";
+
+  if (sessions.length) {
+    body.append(el("div", { class: "term-picker-head" }, "Open sessions",
+      el("span", { class: "tp-head-note" }, "keep running when you leave")));
+    for (const s of sessions) {
+      const attached = s.id === state.termSessionId;
+      const sub = [s.alive ? timeAgo(s.created).replace(" ago", "") : "ended",
+        s.clients ? `${s.clients} device${s.clients > 1 ? "s" : ""} watching` : null]
+        .filter(Boolean).join(" · ");
+      const row = el("button", { class: "term-picker-row" + (attached ? " active" : ""),
+        onclick: () => {
+          state.termSessionId = s.id;
+          setTermContext(s.context, s.title);
+          closeModal(); showView("terminal"); connectTerminal();
+        } },
+        el("span", { class: "sess-dot" + (s.alive ? " live" : "") }),
+        el("div", { class: "tp-text" },
+          el("div", { class: "tp-title" }, s.title || s.context),
+          el("div", { class: "tp-sub muted" }, sub)),
+        attached ? ic("check") : null,
+        el("span", { class: "sess-x", title: "end this session", onclick: async (e) => {
+          e.stopPropagation();
+          if (!confirm(`End session “${s.title || s.context}”? Anything running in it stops.`)) return;
+          try { await api(`/terminal/sessions/${s.id}`, { method: "DELETE" }); } catch {}
+          if (s.id === state.termSessionId) state.termSessionId = "";
+          hap("light");
+          openTermTargets();
+        } }, ic("x")));
+      body.append(row);
+    }
+  }
+
   if (!data || !data.groups) {
     body.append(el("div", { class: "error" }, "Could not load terminal targets.")); return;
   }
   for (const g of data.groups) {
     if (!g.targets.length) continue;
-    body.append(el("div", { class: "term-picker-head" }, g.label));
+    body.append(el("div", { class: "term-picker-head" },
+      sessions.length ? "New shell — " + g.label.toLowerCase() : g.label));
     for (const t of g.targets) {
-      const active = t.id === state.termContext;
-      body.append(el("button", { class: "term-picker-row" + (active ? " active" : ""),
+      body.append(el("button", { class: "term-picker-row",
         onclick: () => {
           setTermContext(t.id, t.label, t.icon);
+          state.termSessionId = "";          // force a fresh session
           closeModal();
           showView("terminal");
           connectTerminal();
@@ -2998,7 +3246,7 @@ async function openTermTargets() {
         el("div", { class: "tp-text" },
           el("div", { class: "tp-title" }, t.label),
           t.sub ? el("div", { class: "tp-sub muted" }, t.sub) : null),
-        active ? ic("check") : (t.host ? el("span", { class: "chip host-chip" }, "host") : null)));
+        t.host ? el("span", { class: "chip host-chip" }, "host") : null));
     }
   }
   if (!(data.host_shell)) {
@@ -3006,6 +3254,9 @@ async function openTermTargets() {
       "Host logins (like your own user) appear here when PocketADM can reach the " +
       "host — they let you run the exact commands the agent suggests."));
   }
+  body.append(el("p", { class: "muted", style: "font-size:12px;margin-top:10px" },
+    "Sessions live on the server: close the app, switch devices — they keep running. " +
+    "They end when you close them here or the server restarts."));
 }
 
 function termTheme() {
@@ -3025,7 +3276,7 @@ function termStatus(msg, cls) {
   bar.textContent = msg;
 }
 
-function connectTerminal() {
+async function connectTerminal() {
   clearTimeout(state.termReconnect);
   state.termWantOpen = true;
   if (state.termWs) { try { state.termWs.onclose = null; state.termWs.close(); } catch {} }
@@ -3058,17 +3309,39 @@ function connectTerminal() {
   }
   state.term.reset();
   termStatus("connecting…", "");
-  const ctx = state.termContext;
-  const ws = new WebSocket(wsUrl("/ws/terminal", { context: ctx }));
+
+  // no session yet (or it was closed) → mint one server-side, then attach
+  if (!state.termSessionId) {
+    try {
+      const r = await api("/terminal/sessions", { method: "POST",
+        body: JSON.stringify({ context: state.termContext, title: state.termTitle }) });
+      state.termSessionId = r.session.id;
+    } catch (e) {
+      termStatus("couldn't open a session — " + e.message, "warn");
+      return;
+    }
+  }
+
+  const ws = new WebSocket(wsUrl("/ws/terminal", { session: state.termSessionId }));
   state.termWs = ws;
   ws.onopen = () => {
     termStatus("", "");
     state.fitAddon.fit();
     ws.send(JSON.stringify({ type: "resize", cols: state.term.cols, rows: state.term.rows }));
   };
-  ws.onmessage = (ev) => state.term.write(ev.data);
+  ws.onmessage = (ev) => {
+    // the server tells us when the session id no longer exists (restart, closed
+    // elsewhere) — mint a fresh one instead of writing the marker to the screen
+    if (typeof ev.data === "string" && ev.data.includes("[pocketadm] session-gone")) {
+      state.termSessionId = "";
+      ws.onclose = null; try { ws.close(); } catch {}
+      connectTerminal();
+      return;
+    }
+    state.term.write(ev.data);
+  };
   ws.onclose = () => {
-    state.term.write("\r\n\x1b[90m[disconnected]\x1b[0m\r\n");
+    state.term.write("\r\n\x1b[90m[detached — session keeps running]\x1b[0m\r\n");
     // auto-reconnect when the terminal is the active view (App re-opened, sleep, etc.)
     if (state.termWantOpen && state.view === "terminal") {
       termStatus("reconnecting…", "warn");
@@ -3076,7 +3349,7 @@ function connectTerminal() {
         if (state.view === "terminal") connectTerminal();
       }, 1500);
     } else {
-      termStatus("disconnected — tap ⟳ to reconnect", "warn");
+      termStatus("detached — the session keeps running. Tap to reconnect.", "warn");
     }
   };
 }
@@ -3152,6 +3425,13 @@ function openTermMenu() {
     item("sparkles", "Coding agents", openCliModal, "Claude Code · Codex · Mistral Vibe"),
     item("refresh-cw", "Reconnect", connectTerminal),
     item("eraser", "Clear screen", termClear),
+    item("x", "End this session", async () => {
+      if (!state.termSessionId) return connectTerminal();
+      if (!confirm("End this terminal session? Anything running in it stops.")) return;
+      try { await api(`/terminal/sessions/${state.termSessionId}`, { method: "DELETE" }); } catch {}
+      state.termSessionId = "";
+      connectTerminal();
+    }, "stop what's running and start fresh"),
     el("div", { class: "menu-sep" }),
     el("div", { class: "menu-row static" }, ic("type"),
       el("div", { class: "tp-text", style: "flex:1" }, "Text size"),
@@ -3977,9 +4257,8 @@ async function openCliModal() {
     const actions = el("div", { class: "card-actions" });
     if (c.installed) {
       actions.append(
-        el("button", { class: "btn small primary iconled", onclick: () => {
-          closeModal(); openTerminalWithCommand(c.launch);
-        } }, ic("terminal"), " Launch"),
+        el("button", { class: "btn small primary iconled", onclick: () => openCliLaunch(c) },
+          ic("terminal"), " Launch"),
         el("button", { class: "btn small", onclick: () => installCli(c, "Update") }, "Update"));
     } else {
       actions.append(el("button", { class: "btn small primary iconled",
@@ -4007,6 +4286,74 @@ function installCli(c, verb) {
       "Installed onto PocketADM's data volume — it survives updates.",
       () => openCliModal()))
     .catch((e) => alert(e.message));
+}
+
+/* Launch a coding agent where the user actually wants it: pick who runs it
+   (the app box or a real host login) and which folder it starts in — instead
+   of always landing in PocketADM's own home. */
+async function openCliLaunch(c) {
+  const data = state.termTargets || await refreshTermTargets();
+  const targets = (data?.groups || [])[0]?.targets ||
+    [{ id: "local", label: "PocketADM app", icon: "box" }];
+  let target = targets[0];
+  let dir = state.me?.default_workspace || "";
+  const hostPath = (p) => (p || "").replace(/^\/host(?=\/|$)/, "") || (p ? "/" : "");
+
+  const rows = el("div", { class: "term-picker", style: "margin-bottom:4px" });
+  const dirName = el("div", { class: "card-title" });
+  const note = el("p", { class: "muted", style: "font-size:12px;margin:8px 0 0" });
+  const paint = () => {
+    [...rows.children].forEach((r, i) => r.classList.toggle("active", targets[i] === target));
+    dirName.textContent = target.id === "local"
+      ? (dir || "app home") : (hostPath(dir) || "~ (their home)");
+    note.textContent = target.id === "local"
+      ? "Runs in PocketADM's own box — sign-ins & installs survive updates. Your server's files are under /host."
+      : `Runs as ${target.label} on the real host — “${c.bin || c.launch}” must be installed for that user (PocketADM's install button only covers its own box).`;
+  };
+  for (const t of targets) {
+    rows.append(el("button", { class: "term-picker-row",
+      onclick: () => { target = t; paint(); } },
+      iconTile(t.icon || "box", t.label, "sm", t.label),
+      el("div", { class: "tp-text" }, el("div", { class: "tp-title" }, t.label),
+        t.sub ? el("div", { class: "tp-sub muted" }, t.sub) : null)));
+  }
+  const body = el("div", {},
+    el("div", { class: "term-picker-head" }, "Run as"), rows,
+    el("div", { class: "term-picker-head" }, "Start in"),
+    el("div", { class: "ws-current" },
+      el("span", { class: "tile-icon sm tint-1" }, ic("folder")),
+      el("div", { style: "flex:1;min-width:0" }, dirName,
+        el("div", { class: "card-sub" }, "working folder")),
+      el("button", { class: "btn small", onclick: () => openFolderPicker({
+        title: "Start in folder", start: dir || "",
+        chooseLabel: (p) => `Start in ${p}`,
+        onChoose: (p) => { dir = p; openCliLaunch2(); },
+      }) }, "Change")),
+    note,
+    el("button", { class: "btn primary wide iconled", style: "margin-top:14px", onclick: launch },
+      ic("terminal"), ` Launch ${c.name}`));
+  // reopening after the folder picker replaced the modal
+  function openCliLaunch2() { openModal(`Launch ${c.name}`, body); paint(); }
+
+  async function launch() {
+    closeModal();
+    hap("light");
+    setTermContext(target.id, c.name, "bot");
+    state.termSessionId = "";                       // a fresh session per launch
+    showView("terminal");
+    await connectTerminal();
+    const d = target.id === "local" ? dir : hostPath(dir);
+    const cmd = (d ? `cd ${shellQuote(d)} && ` : "") + c.launch + "\n";
+    let tries = 0;
+    const send = () => {
+      if (state.termWs?.readyState === 1) {
+        state.termWs.send(JSON.stringify({ type: "input", data: cmd }));
+        state.term?.focus();
+      } else if (tries++ < 60) setTimeout(send, 150);
+    };
+    setTimeout(send, 300);
+  }
+  openCliLaunch2();
 }
 
 /* ---------------------------------------------------------- settings */
@@ -5659,6 +6006,22 @@ async function openPairModal() {
   const stopScan = () => { scanning = false; if (stream) stream.getTracks().forEach((t) => t.stop()); };
 
   const startScan = async () => {
+    // native shell: WKWebView has no BarcodeDetector — use the native scanner
+    if (window.PocketNative?.scanQR) {
+      video.classList.add("hidden");
+      const raw = await window.PocketNative.scanQR();
+      if (raw) {
+        const parsed = parsePairPayload(raw);
+        if (parsed) return claim(parsed.u, parsed.c, parsed.chat);
+        status.textContent = "That code isn't a PocketADM pairing QR.";
+      } else {
+        status.textContent = "Scan cancelled.";
+      }
+      status.after(el("button", { class: "btn wide iconled", style: "margin-top:8px",
+        onclick: (e) => { e.target.closest("button").remove(); startScan(); } },
+        ic("camera"), " Scan again"));
+      return;
+    }
     if (!("BarcodeDetector" in window)) {
       status.textContent = "This device can’t scan QR codes in-browser — use the manual code below.";
       video.classList.add("hidden");

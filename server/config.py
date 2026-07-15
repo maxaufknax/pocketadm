@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"

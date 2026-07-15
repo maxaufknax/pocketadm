@@ -144,6 +144,26 @@
     if (vv) vv.addEventListener("resize", update);
   }
 
+  /* -------------------------------------------------------- QR scanning
+     WKWebView has no Web BarcodeDetector, so the native shell scans with
+     the official Capacitor plugin (fullscreen native camera UI). app.js
+     checks for PocketNative.scanQR and falls back to the web path.       */
+
+  if (isNative && P.CapacitorBarcodeScanner) {
+    N.scanQR = async () => {
+      try {
+        const res = await P.CapacitorBarcodeScanner.scanBarcode({
+          hint: 0,                  // 0 = QR_CODE (Html5QrcodeSupportedFormats)
+          scanInstructions: "Point the camera at the pairing QR",
+          cameraDirection: 1,       // back camera
+        });
+        return (res && (res.ScanResult || res.scanResult)) || null;
+      } catch (e) {
+        return null;                // cancelled or permission denied
+      }
+    };
+  }
+
   /* ------------------------------------- status bar & keyboard appearance
      Called by app.js whenever the theme changes (incl. first paint).      */
 

@@ -3,6 +3,57 @@
 All notable changes to Helmsman. Versions are the app version reported at
 `/api/info` and shown in *More → About*.
 
+## v0.14.0 — Terminal sessions that survive, and graphs that explain themselves
+
+- **Persistent terminal sessions.** The shell now lives on the *server*
+  (like the Vibe chats) — websockets only attach to it. Lock your phone,
+  switch to the laptop, come back: the session is still there, scrollback
+  replays, and several devices can watch the same session live. Claude Code
+  or a long build keeps running while the app is closed. The picker
+  (toolbar title) lists open sessions first — attach, or end them — then
+  everywhere a new shell can open. Sessions end on server restart; the UI
+  says so.
+- **Launch coding agents where you mean.** *Launch* on Claude Code / Codex /
+  Mistral Vibe now asks **who runs it** (PocketADM's box or a real host
+  login like `maxaufknax@stream`) and **which folder it starts in**
+  (defaults to your workspace) — no more landing as the app user inside
+  PocketADM's own home.
+- **Metric graphs grew up.** New 6 h / 24 h / 7 d ranges backed by a
+  5-minute long-history that survives restarts (7 days, persisted to the
+  data volume). KPIs now show low/high next to current/average; the legend
+  is color-keyed; the crosshair tooltip carries the date on long ranges.
+- **Scrub haptics.** Dragging a finger across a graph ticks softly as the
+  crosshair snaps from sample to sample — and taps firmer when it lands on
+  an anomaly marker.
+- **Anomaly markers explain themselves.** The red/blue dots are now
+  tappable: PocketADM pulls the Docker engine events and its own action log
+  from around that moment ("nextcloud restarted", "update applied …") and
+  shows them under the graph — plus *Ask AI what caused this*, prefilled
+  with the anomaly and those events.
+- **Remove anything.** Containers and whole service units can be removed
+  from their detail sheets — including self-managed ones, not just App
+  Store installs (with a clear explanation that named volumes stay).
+  PocketADM refuses to remove itself.
+- **Services on Home, tidied.** Colored running/issues summary in the
+  header, a proper search field, sticky group headers, status as a badge on
+  the service icon, one clean port chip and a chevron — cards read calmer
+  and tap better.
+- **Pull-to-refresh** on Home, with the arming tick and spinner you expect
+  from a native app; over-scroll chaining and browser bounce are gone
+  app-wide.
+- **Keyboard & composer.** While typing, the mode/model strip and plan
+  panel fold away so the conversation gets every pixel; tapping Send no
+  longer steals focus (the keyboard stays up between messages).
+- **Native QR scanning.** The pairing scanner uses the official Capacitor
+  barcode plugin in the iOS/Android shell (`BarcodeDetector` doesn't exist
+  in WKWebView); the browser/PWA keeps the web path.
+- **Desktop rail fix.** The active tab no longer shows a stray transparent
+  square around its icon — the rail row highlight is the indicator.
+- Fixes: `docker events` queries are clamped to the past (a future bound
+  made the engine hold the request open); PTY children are reaped (no more
+  zombie processes from closed shells); connection dot moved into the
+  server switcher.
+
 ## v0.13.0 — It feels like a phone app now
 
 The whole release is about one thing: PocketADM on a phone should feel as
