@@ -261,6 +261,16 @@ def recommend(installed_names: set[str], ram_gb: float | None = None) -> list[di
 
 
 async def status() -> dict:
+    if config.DEMO:
+        # never probe sibling containers from the public demo — canned data only
+        installed = [
+            {"name": "llama3.2:3b", "size": 2019393189, "params": "3.2B", "quant": "Q4_K_M"},
+            {"name": "qwen2.5:7b", "size": 4683073184, "params": "7.6B", "quant": "Q4_K_M"},
+        ]
+        return {"running": True, "base": "http://ollama:11434 (demo)",
+                "version": "0.3.0 (demo)", "can_install": False, "existing": None,
+                "ram_gb": 8.0, "cpu_count": 4, "installed": installed,
+                "recommended": recommend({m["name"] for m in installed})}
     base = await base_url()
     installed = await tags(base) if base else []
     # an Ollama container that exists but we can't reach → offer "Connect"

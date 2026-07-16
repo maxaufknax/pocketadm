@@ -10,9 +10,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
-               clis, config, dockerapi, hostuser, integrations, jobs, localai,
-               metrics, pairing, permissions, reports, sessions, snapshots,
-               sysinfo, terminal, termsessions, updates)
+               clis, config, demodata, dockerapi, hostuser, integrations, jobs,
+               localai, metrics, pairing, permissions, reports, sessions,
+               snapshots, sysinfo, terminal, termsessions, updates)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -42,7 +42,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 @app.on_event("startup")
 async def _startup():
     metrics.start()
-    if not config.DEMO:
+    if config.DEMO:
+        demodata.seed()
+    else:
         reports.start_scheduler()
         agents.start_scheduler()
         asyncio.ensure_future(appstore.remote_refresher())
@@ -1339,6 +1341,10 @@ async def terminal_session_close(sid: str):
 async def ws_terminal(ws: WebSocket):
     await ws.accept()
     if not await auth.require_auth_ws(ws):
+        return
+    if config.DEMO:
+        # public playground: never spawn a real shell — serve a safe simulation
+        await terminal.demo_terminal(ws)
         return
     sid = ws.query_params.get("session", "")
     if sid:

@@ -9,16 +9,26 @@ services:
     environment:
       - HELMSMAN_DEMO=1        # public read-only playground; password is "demo"
     # NOTE: no docker.sock / host mount — demo mode serves canned sample data,
-    # so a public demo can't touch a real host.
+    # so a public demo can't touch a real host. It is also NOT on the main
+    # homeserver network: the only network it shares with the reverse proxy is
+    # the dedicated "demoedge" below, so a demo visitor can never reach the
+    # real internal services (vaultwarden, databases, Ollama, …). Defense in
+    # depth on top of the app-level demo guards (terminal is simulated, every
+    # mutation is blocked, no AI provider is reachable).
+    mem_limit: 512m
+    cpus: 1.5
+    pids_limit: 256
     volumes:
       - helmsman_demo_data:/data
     networks:
-      - default
-      - homeserver_net          # reachable by the reverse proxy (demo.pocketadm.com)
+      - default        # the demo's own private bridge (outbound only)
+      - demoedge       # shared ONLY with the reverse proxy
 
 volumes:
   helmsman_demo_data:
 
 networks:
-  homeserver_net:
-    external: true
+  # A tiny network whose only members are this demo and the reverse proxy.
+  # Create the proxy side once:  docker network connect pocketadm_demoedge nginx-proxy-manager
+  demoedge:
+    name: pocketadm_demoedge

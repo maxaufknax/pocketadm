@@ -217,6 +217,13 @@ class Session:
     async def _runner(self) -> None:
         """Owns the agent while there is user input to answer. Survives client
         disconnects; only a `stop` or completion ends it."""
+        if config.DEMO:
+            await self.broadcast(type="error", live=False,
+                                 message="This is a read-only demo. Open the sample chat to see "
+                                         "the AI agent in action — or install PocketADM on your "
+                                         "own server and add an API key to chat live.")
+            self._drain_inbox_into_history()
+            return
         if not self.provider:
             await self.broadcast(type="error", live=False,
                                  message="No AI provider configured. Add a key under More → AI, "

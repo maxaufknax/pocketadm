@@ -204,3 +204,130 @@ async def _safe_send(ws: WebSocket, data: bytes) -> None:
         await ws.send_text(data.decode("utf-8", "replace"))
     except Exception:
         pass
+
+
+# ============================================================ demo terminal
+# In the public demo there is no host, no docker socket and a shared password,
+# so a real PTY would hand every visitor a root shell. Instead we serve a
+# *simulated* shell: it renders the same xterm UI (proving the native terminal,
+# key bar and resize all work — the Guideline 4.2 argument) while only ever
+# replaying canned output for the fake demo homeserver. Nothing is executed.
+
+_DEMO_PROMPT = "\x1b[38;5;39mdemo\x1b[0m:\x1b[38;5;245m~\x1b[0m$ "
+_DEMO_BANNER = (
+    "\x1b[38;5;245mPocketADM demo shell — a sandbox, not a real host.\r\n"
+    "Try: \x1b[0mls  ps  docker ps  free  df  uptime  cat readme.txt\x1b[38;5;245m  ·  "
+    "install PocketADM on your own server for a real terminal.\x1b[0m\r\n\r\n")
+
+
+def _demo_exec(line: str) -> str:
+    """Canned output for one command line against the fake demo homeserver."""
+    from . import demodata
+    parts = line.split()
+    if not parts:
+        return ""
+    cmd, args = parts[0], parts[1:]
+    if cmd in ("help", "?"):
+        return ("Available in the demo: ls, pwd, whoami, id, hostname, uname, "
+                "uptime, date, free, df, ps, docker ps|images, cat, echo, clear.\r\n"
+                "This is a read-only sandbox — nothing is really executed.")
+    if cmd == "ls":
+        return ("compose  data  media  \x1b[38;5;39mreadme.txt\x1b[0m"
+                if not args else "readme.txt")
+    if cmd == "pwd":
+        return "/home/demo"
+    if cmd in ("whoami",):
+        return "demo"
+    if cmd == "id":
+        return "uid=1000(demo) gid=1000(demo) groups=1000(demo)"
+    if cmd == "hostname":
+        return "demo"
+    if cmd == "uname":
+        return ("Linux demo 6.8.0-demo x86_64 GNU/Linux"
+                if "-a" in args else "Linux")
+    if cmd == "uptime":
+        return " 12:00:00 up 30 days,  4:12,  1 user,  load average: 0.18, 0.22, 0.19"
+    if cmd == "date":
+        return "Sat Jul 11 12:00:00 UTC 2026"
+    if cmd == "free":
+        return ("               total        used        free      shared\r\n"
+                "Mem:            7.7Gi       3.1Gi       2.0Gi       0.3Gi\r\n"
+                "Swap:           2.0Gi          0B       2.0Gi")
+    if cmd == "df":
+        return ("Filesystem      Size  Used Avail Use% Mounted on\r\n"
+                "/dev/sda1       226G   78G  137G  37% /")
+    if cmd == "echo":
+        return " ".join(args)
+    if cmd == "cat":
+        if args and args[0] in ("readme.txt", "./readme.txt", "~/readme.txt"):
+            return ("This is the PocketADM public demo. The data is sample data and\r\n"
+                    "this shell is simulated — install PocketADM on your own server\r\n"
+                    "for a real terminal, dashboard and AI agent. https://pocketadm.com")
+        return f"cat: {args[0] if args else ''}: No such file or directory"
+    if cmd == "clear":
+        return "\x1b[2J\x1b[H"
+    if cmd == "docker":
+        if args[:1] == ["ps"]:
+            rows = ["CONTAINER ID   IMAGE                       STATUS          NAMES"]
+            for c in demodata.list_containers(all_=False):
+                rows.append(f"{c['id']:<14} {c['image'][:26]:<26} "
+                            f"{'Up':<15} {c['name']}")
+            return "\r\n".join(rows)
+        if args[:1] == ["images"]:
+            return ("REPOSITORY                 TAG       SIZE\r\n"
+                    "nextcloud                  29        1.1GB\r\n"
+                    "jellyfin/jellyfin          latest    412MB\r\n"
+                    "vaultwarden/server         latest    198MB")
+        return "docker: only 'ps' and 'images' are available in the demo."
+    if cmd == "ps":
+        return ("  PID TTY          TIME CMD\r\n"
+                "    1 ?        00:00:01 pocketadm\r\n"
+                "   42 pts/0    00:00:00 bash\r\n"
+                "   57 pts/0    00:00:00 ps")
+    if cmd in ("sudo", "su", "rm", "apt", "apt-get", "curl", "wget", "ssh", "nc",
+               "kill", "chmod", "chown", "mkfs", "dd"):
+        return f"{cmd}: disabled in the read-only demo."
+    return f"demo: {cmd}: command not found (this is a simulated demo shell)"
+
+
+async def demo_terminal(ws: WebSocket) -> None:
+    """A safe, simulated shell for demo mode — never spawns a process."""
+    buf = ""
+    try:
+        await ws.send_text(_DEMO_BANNER + _DEMO_PROMPT)
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("type") != "input":
+                continue
+            for ch in msg.get("data", ""):
+                if ch in ("\r", "\n"):
+                    await ws.send_text("\r\n")
+                    out = _demo_exec(buf.strip())
+                    buf = ""
+                    if out:
+                        await ws.send_text(out.replace("\n", "\r\n")
+                                           if "\r" not in out else out)
+                        await ws.send_text("\r\n")
+                    await ws.send_text(_DEMO_PROMPT)
+                elif ch in ("\x7f", "\b"):
+                    if buf:
+                        buf = buf[:-1]
+                        await ws.send_text("\b \b")
+                elif ch == "\x03":            # Ctrl-C
+                    buf = ""
+                    await ws.send_text("^C\r\n" + _DEMO_PROMPT)
+                elif ch == "\x0c":            # Ctrl-L
+                    buf = ""
+                    await ws.send_text("\x1b[2J\x1b[H" + _DEMO_PROMPT)
+                elif ch >= " ":
+                    buf += ch
+                    await ws.send_text(ch)
+    except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
+        pass
+    except Exception:
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
