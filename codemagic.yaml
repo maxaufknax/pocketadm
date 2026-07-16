@@ -54,10 +54,28 @@ workflows:
           fi
           npx cap sync ios
 
-      - name: Generate app icons & splash from assets/
+      - name: Generate app icons & splash, and guarantee opaque icons
         script: |
-          npx @capacitor/assets generate --ios --assetPath assets || \
-            echo "asset generation skipped (assets/ missing) — using template icons"
+          set -eo pipefail
+          # Generate from assets/. Do NOT swallow failures: a missing or invalid
+          # AppIcon is a top cause of App Store *processing* rejections (the
+          # binary uploads fine, then Apple drops the build and emails you).
+          npx @capacitor/assets generate --ios --assetPath assets
+          ICONSET="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+          [ -d "$ICONSET" ] || { echo "!! $ICONSET missing — icon generation failed"; exit 1; }
+          # App Store rejects any icon with an alpha channel (ITMS-90717).
+          # @capacitor/assets can emit RGBA PNGs even from an RGB source, so
+          # flatten every icon to opaque. sips has no direct "remove alpha", but
+          # a round-trip through a format without alpha (BMP) drops it reliably.
+          find "$ICONSET" -name '*.png' -print0 | while IFS= read -r -d '' png; do
+            sips -s format bmp "$png" --out "/tmp/_icon.bmp" >/dev/null
+            sips -s format png "/tmp/_icon.bmp" --out "$png" >/dev/null
+          done
+          # Sanity: the 1024 marketing icon must exist and now be opaque.
+          MARKETING=$(find "$ICONSET" \( -name '*1024*' -o -name '*512@2x*' \) -name '*.png' | head -n1)
+          [ -n "$MARKETING" ] || { echo "!! no 1024 marketing icon in $ICONSET"; exit 1; }
+          echo "✓ icons generated + flattened to opaque; marketing icon: $(basename "$MARKETING")"
+          sips -g hasAlpha "$MARKETING" || true
 
       - name: Apply native iOS configuration (Info.plist)
         script: bash scripts/ios-configure.sh
