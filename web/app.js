@@ -1974,8 +1974,11 @@ function renderWelcome() {
   }
   wrap.append(grid);
   if (!state.aiConfigured) {
-    wrap.append(el("p", { class: "warn", id: "vibe-no-ai" },
-      "No AI key configured yet → More"));
+    // was "→ More" — a tab that no longer exists. Make it the way there, not
+    // just a label: the keys live under Server → AI providers.
+    wrap.append(el("button", { class: "warn", id: "vibe-no-ai",
+      onclick: () => { showView("server"); selectSettingsGroup("ai"); } },
+      "No AI key configured yet — add one under Server → AI"));
   }
   return wrap;
 }
@@ -6569,6 +6572,16 @@ async function boot() {
       sessionStorage.removeItem("helmsman_open_chat");
       state.chatId = openChat;
       localStorage.setItem("helmsman_chat", openChat);
+    }
+    // Demo visitors arrive with no localStorage, so they'd land on a blank new
+    // chat — the one feature the demo exists to show, showing nothing. Open the
+    // seeded conversation instead. (Real users resume their own last chat.)
+    if (!state.chatId && state.me.demo) {
+      try {
+        const { chats } = await api("/chats");
+        const seeded = (chats || []).find((c) => c.message_count > 0);
+        if (seeded) state.chatId = seeded.id;
+      } catch {}
     }
     await populateModels();   // picker ready before the first session snapshot
     showView(openChat ? "vibe" : "server");

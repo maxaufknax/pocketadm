@@ -85,11 +85,59 @@ uploads to **TestFlight**.
 
 ## 4. 👤 Submit for review
 
-When TestFlight looks good, fill the App Store listing (metadata below), attach
-screenshots, answer App Privacy (§ *App privacy* below), then either:
+`codemagic.yaml` already has `submit_to_app_store: true`, so **every green build
+submits itself**. There is nothing left to flip — but the submission only goes
+through once the listing below is complete.
 
-- set `submit_to_app_store: true` in `codemagic.yaml` and re-run, **or**
-- click *Submit for Review* in App Store Connect on the processed build.
+### The listing is the whole job (⚠️ read this first)
+
+The build succeeding tells you nothing about the submission succeeding. They are
+separate: the 2026-07-16 build signed, uploaded and reached TestFlight fine, then
+the App Store step failed with a 409 because the listing was empty. Codemagic
+marks the *whole build* red when that happens, even though the IPA is already in
+App Store Connect and TestFlight already has it. **A red build with
+`UPLOAD SUCCEEDED` in the log means "not submitted", not "not built".**
+
+Everything below is manual work in App Store Connect — no API, no CI step does
+it for you. This is the exact list Apple returned, so nothing here is guesswork:
+
+**App information**
+- [ ] **Primary category** (`primaryCategory` — Developer Tools)
+- [ ] **Content rights declaration** (`contentRightsDeclaration` — contains no
+      third-party content)
+- [ ] **Age rating questionnaire** — all of it. Apple named every attribute:
+      medical/treatment info, gambling + simulated gambling, sexual content
+      (both attributes), nudity, violence (cartoon, realistic, prolonged),
+      horror/fear, mature/suggestive, profanity, alcohol/tobacco/drugs, guns,
+      contests, loot box, **unrestricted web access**, **messaging and chat**,
+      **user generated content**, advertising, parental controls, health or
+      wellness topics, age assurance. Answer *No* to all of them **except**
+      the ones flagged in § *Age rating* below — read that section, the honest
+      answers there are not all "No".
+
+**Pricing and availability**
+- [ ] **Price: Free** (`App is missing required pricing` — this alone blocks the
+      submission). Requires the **Free Apps agreement** to be accepted first
+      (§ 1). No tax/banking forms needed for a free app.
+
+**Version (1.0.0) → App Store**
+- [ ] **Description**, **Keywords**, **Support URL**, **Privacy Policy URL**,
+      **Copyright** — all copy-paste ready in § *Store listing* below. The URLs
+      are live: https://pocketadm.com/support/ and https://pocketadm.com/privacy/
+- [ ] **Screenshots — `APP_IPHONE_65` (1242 x 2688)**. Ready to upload from
+      `client/screenshots/iphone-65/` (see the README there for what they show).
+      `APP_IPAD_PRO_3GEN_129` is **no longer required**: the app now ships
+      iPhone-only (`TARGETED_DEVICE_FAMILY = 1`, set in `scripts/ios-configure.sh`).
+- [ ] **App Review Information** (`appStoreReviewDetail was not found`) — the
+      demo account and notes from § *Review notes*.
+
+**App privacy** (separate section, must be *published*)
+- [ ] Answer and **publish** the data-usage questions — § *App privacy*.
+      "Answers to what data your app collects are needed" means published, not
+      just saved.
+
+Once all of it is filled, re-run the `ios-release` workflow (or hit *Submit for
+Review* on the already-processed build — the binary is there already).
 
 Apple review is usually **under 24 h** today. Budget one possible rejection
 round (see § *Review notes* — the demo account is your safety net).
@@ -180,10 +228,19 @@ live only on the device. (See `/privacy/`.)
 
 ## Age rating
 
-Likely **4+**. One caveat: the questionnaire asks about *unrestricted web access*
-— the terminal/AI can reach arbitrary content on the user's own server, so if you
-answer that truthfully the rating may become **17+**. Either is fine; answer
-honestly.
+Answer *No* to everything except the three below, which sound like they apply to
+this app but mostly don't. Apple names all three explicitly in its rejection, so
+decide them deliberately rather than clicking through:
+
+| Attribute | Answer | Why |
+| --- | --- | --- |
+| `unrestrictedWebAccess` | **Yes** | The terminal and the agent can fetch arbitrary URLs (`fetch_url`, `curl`). That is honest and it likely makes the rating **17+**. Fine — the app is a root shell for grown-ups. |
+| `messagingAndChat` | **No** | The chat is the user talking to an AI about *their own* server. The attribute is about communicating with *other people*; PocketADM has no user-to-user messaging. |
+| `userGeneratedContent` | **No** | Nothing a user writes is shared with, or visible to, anyone else. There is no shared surface at all — every install is a private server. |
+
+Do not answer *Yes* to the last two just because the word "chat" appears in the
+product. That would gratuitously raise the rating and invite questions about
+moderation tooling you have no need for.
 
 ## Review notes (paste into "App Review Information → Notes")
 
