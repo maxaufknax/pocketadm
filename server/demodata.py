@@ -115,3 +115,132 @@ def engine_info() -> dict:
     cs = list_containers()
     return {"containers": len(cs), "running": sum(c["state"] == "running" for c in cs),
             "images": len(cs) + 4, "version": "27.0 (demo)", "os": "Demo Linux"}
+
+
+# ============================================================ seed content
+# A public demo looks dead if Vibe, Health and the bell are empty. Seed one
+# believable finished agent session, a health report and a few notifications so
+# a reviewer sees the whole product alive — without any live model or host.
+
+import json  # noqa: E402
+import time  # noqa: E402
+
+from . import config  # noqa: E402
+
+_SEED_CHAT_ID = "de300000c0ffee01"
+
+
+def _seed_chat() -> dict:
+    t0 = _NOW - 3 * 3600
+    messages = [
+        {"role": "user",
+         "content": "Jellyfin keeps buffering in the evenings. Can you find out why and fix it?"},
+        {"role": "assistant",
+         "content": "Let me look at how hard Jellyfin is working and check its recent logs.",
+         "tool_calls": [{"id": "c1", "name": "run_command",
+                         "args": {"command": "docker stats --no-stream jellyfin"}}]},
+        {"role": "tool", "tool_call_id": "c1",
+         "content": "CONTAINER   CPU %     MEM USAGE / LIMIT\n"
+                    "jellyfin    182.4%    1.83GiB / 8GiB"},
+        {"role": "assistant",
+         "content": "182% CPU means it is transcoding video on the CPU. Let me confirm from the logs.",
+         "tool_calls": [{"id": "c2", "name": "run_command",
+                         "args": {"command": "docker logs --tail 5 jellyfin"}}]},
+        {"role": "tool", "tool_call_id": "c2",
+         "content": "[INFO] Playback: DirectPlay not possible, falling back to transcode\n"
+                    "[INFO] Transcoding H265 -> H264 (software, libx264)\n"
+                    "[WARN] Encoder falling behind real-time"},
+        {"role": "assistant",
+         "content": "Found it. Jellyfin is **software-transcoding** every evening stream, so "
+                    "the CPU maxes out and playback buffers. Your box has an Intel iGPU that can "
+                    "do this in hardware (QSV) almost for free.\n\n"
+                    "**Fix:** pass the iGPU into the container and enable QSV hardware "
+                    "acceleration. I can add `devices: [/dev/dri:/dev/dri]` to the Jellyfin "
+                    "compose and turn on QSV in its config — want me to apply it?\n\n"
+                    "_(In this demo nothing is actually changed — this is a saved sample "
+                    "conversation.)_"},
+    ]
+    return {"id": _SEED_CHAT_ID, "title": "Jellyfin keeps buffering in the evenings",
+            "created": t0, "updated": t0 + 240, "archived": False,
+            "messages": messages,
+            "usage": {"input": 2140, "output": 386, "cost": 0.0, "turns": 1}}
+
+
+def _seed_report() -> dict:
+    now = _NOW - 1800
+    checks = [
+        {"id": "res-cpu", "group": "Resources", "title": "CPU & memory", "icon": "📊",
+         "status": "ok", "summary": "Load is healthy (0.2), 2.0 GiB RAM free of 7.7 GiB."},
+        {"id": "disk", "group": "Resources", "title": "Disk space", "icon": "💾",
+         "status": "warn", "summary": "Root filesystem 78% full (137 GB free).",
+         "recommendation": "Prune old Docker images: `docker image prune -a` frees ~6 GB."},
+        {"id": "ssh-root", "group": "SSH", "title": "SSH root login", "icon": "🔐",
+         "status": "ok", "summary": "PermitRootLogin is disabled and password auth is off."},
+        {"id": "fail2ban", "group": "SSH", "title": "fail2ban", "icon": "🛡️",
+         "status": "ok", "summary": "Active — 3 IPs currently banned on the sshd jail."},
+        {"id": "updates", "group": "Updates", "title": "Container image updates", "icon": "⬆️",
+         "status": "warn", "summary": "2 images have newer versions (nextcloud, vaultwarden).",
+         "recommendation": "Review and apply from the Updates tab; snapshots let you roll back."},
+        {"id": "backups", "group": "Backups", "title": "Volume backups", "icon": "🗄️",
+         "status": "crit", "summary": "No backup ran in the last 7 days for 'cloud' and 'vault'.",
+         "recommendation": "Set up a scheduled volume backup — this is your biggest risk."},
+        {"id": "ports", "group": "Network", "title": "Exposed ports", "icon": "🌐",
+         "status": "ok", "summary": "Only 80/443 are public; everything else is bound to localhost."},
+    ]
+    counts = {s: sum(1 for c in checks if c["status"] == s) for s in ("ok", "info", "warn", "crit")}
+    return {"time": now, "duration": 1.9, "trigger": "scheduled", "counts": counts,
+            "score": "crit", "checks": checks}
+
+
+def _seed_notifications() -> list[dict]:
+    base = _NOW
+    raw = [
+        ("update", "warn", "2 container updates available",
+         "nextcloud and vaultwarden have newer images. Review them in the Updates tab.", 3600),
+        ("security", "crit", "No recent backups",
+         "The 'cloud' and 'vault' stacks have not been backed up in 7 days.", 7200),
+        ("health", "ok", "Nightly health check passed",
+         "6 of 7 checks are green. One warning: disk at 78%.", 10800),
+    ]
+    out = []
+    for src, status, title, body, ago in raw:
+        import hashlib
+        import re
+        import secrets
+        fp = hashlib.sha1(f"{src}|{status}|{re.sub(r'[\\W\\d]+', ' ', title.lower()).strip()}"
+                          .encode()).hexdigest()[:16]
+        out.append({"id": secrets.token_hex(5), "time": base - ago, "source": src,
+                    "status": status, "title": title, "body": body, "fp": fp,
+                    "count": 1, "last_seen": base - ago})
+    return out
+
+
+def seed() -> None:
+    """Idempotently plant sample content so the demo isn't empty. Safe to call
+    on every startup — each store is only seeded when it is still empty."""
+    try:
+        # a stable identity + skip the first-run wizard so the demo lands
+        # straight on the dashboard (both survive a wiped volume — re-seeded here)
+        if not config.get_server_name():
+            config.set_server_name("PocketADM Demo")
+        if not config.get_onboarded():
+            config.set_onboarded()
+
+        chats_dir = config.DATA_DIR / "chats"
+        chats_dir.mkdir(exist_ok=True)
+        seed_chat_file = chats_dir / f"{_SEED_CHAT_ID}.json"
+        if not seed_chat_file.exists():
+            seed_chat_file.write_text(json.dumps(_seed_chat()))
+
+        reports_dir = config.DATA_DIR / "reports"
+        reports_dir.mkdir(exist_ok=True)
+        if not any(reports_dir.glob("*.json")):
+            rep = _seed_report()
+            fname = time.strftime("%Y%m%d-%H%M%S", time.localtime(rep["time"])) + ".json"
+            (reports_dir / fname).write_text(json.dumps(rep))
+
+        notif_file = config.DATA_DIR / "notifications.json"
+        if not notif_file.exists():
+            notif_file.write_text(json.dumps(_seed_notifications()))
+    except Exception:
+        pass

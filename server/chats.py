@@ -40,6 +40,11 @@ def create() -> dict:
 
 def save(chat: dict) -> None:
     chat["updated"] = time.time()
+    # In the public demo, visitor chats stay in memory only: the list keeps
+    # showing just the curated sample, and one visitor's messages never persist
+    # or leak to the next. The seeded sample is written directly by demodata.
+    if config.DEMO:
+        return
     _path(chat["id"]).write_text(json.dumps(chat))
 
 
