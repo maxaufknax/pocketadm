@@ -2179,3 +2179,13 @@ html, body { overscroll-behavior: none; }
   background: var(--bg); border-top: 1px solid var(--border);
   white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto;
 }
+
+/* The "no AI key" line in the Vibe welcome is a button now (it jumps straight
+   to Server → AI), so strip the browser's button chrome and let it keep
+   reading as the quiet warning it is. */
+#vibe-no-ai {
+  background: none; border: 0; font: inherit; cursor: pointer;
+  color: var(--warn); font-size: 13px; padding: 6px 4px;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px;
+}
+#vibe-no-ai:active { opacity: .6; }
