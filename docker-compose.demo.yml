@@ -1,7 +1,16 @@
+# Deploy with:  docker compose -f docker-compose.demo.yml up -d --build
+#
+# The --build matters. This file pairs `build: .` with an `image:` tag, and
+# compose only builds when that tag is missing locally -- so a plain `up -d`
+# will happily (re)start whatever image already carries the tag and never look
+# at the source. That is exactly how the public demo once ended up serving a
+# months-old build whose terminal had no demo guard. The tag below is a local
+# build artifact on purpose: it must never name a remote registry path, or a
+# stale pull can silently become the demo.
 services:
   helmsman-demo:
     build: .
-    image: ghcr.io/maxaufknax/helmsman:latest
+    image: pocketadm-demo:local
     container_name: helmsman-demo
     restart: unless-stopped
     ports:

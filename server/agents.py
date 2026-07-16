@@ -130,7 +130,8 @@ def _fingerprint(source: str, status: str, title: str) -> str:
     return hashlib.sha1(f"{source}|{status}|{norm}".encode()).hexdigest()[:16]
 
 
-def add_notification(source: str, status: str, title: str, body: str) -> dict:
+def add_notification(source: str, status: str, title: str, body: str,
+                     steps: list | None = None) -> dict:
     """Store a notification. If the newest notification from the same source
     reports the same finding (status + title), it is bumped instead of
     duplicated: `count` grows, `last_seen` updates, `time` (first seen — used
@@ -144,13 +145,16 @@ def add_notification(source: str, status: str, title: str, body: str) -> dict:
         prev["count"] = int(prev.get("count", 1)) + 1
         prev["last_seen"] = time.time()
         prev["body"] = body[:6000]
+        # a repeat is a *fresh* look at the same finding: keep the newest trace
+        if steps is not None:
+            prev["steps"] = steps
         items.remove(prev)
         items.insert(0, prev)
         NOTIF_FILE.write_text(json.dumps(items[:MAX_NOTIFICATIONS]))
         return {**prev, "_repeat": True}
     notif = {"id": secrets.token_hex(5), "time": time.time(), "source": source,
              "status": status, "title": title[:120], "body": body[:6000],
-             "fp": fp, "count": 1, "last_seen": time.time()}
+             "steps": steps or [], "fp": fp, "count": 1, "last_seen": time.time()}
     NOTIF_FILE.write_text(json.dumps(([notif] + items)[:MAX_NOTIFICATIONS]))
     return notif
 
@@ -190,8 +194,27 @@ async def _push_ntfy(url: str, status: str, title: str, body: str) -> None:
 
 # ------------------------------------------------------------- agent runs
 
-async def _run_mini_agent(prompt: str, sysprompt: str) -> str:
-    """Autonomous non-streaming agent loop with read-only tools."""
+MAX_TRACE_STEPS = 40
+_TRACE_OUT_CHARS = 400
+
+
+def _args_summary(name: str, args: dict) -> str:
+    """One readable line describing what a tool call actually asked for."""
+    for key in ("command", "path", "pattern", "url", "query"):
+        if args.get(key):
+            return str(args[key])[:200]
+    return ", ".join(f"{k}={str(v)[:40]}" for k, v in list(args.items())[:3])
+
+
+async def _run_mini_agent(prompt: str, sysprompt: str,
+                          trace: list | None = None) -> str:
+    """Autonomous non-streaming agent loop with read-only tools.
+
+    `trace` (optional) collects what the agent actually did — every tool call,
+    its argument and a snippet of what came back. Without it a finding arrives
+    as an assertion the user has no way to check; the report reader shows these
+    steps so "your SSH is exposed" can be traced back to the command that said so.
+    """
     default = config.get_ai_default()
     if not default["provider"]:
         raise RuntimeError("No AI key configured")
@@ -223,10 +246,22 @@ async def _run_mini_agent(prompt: str, sysprompt: str) -> str:
         if not tool_calls:
             break
         for tc in tool_calls:
+            t0 = time.time()
             out = await ai.execute_tool(tc["name"], tc["args"], ai.DEFAULT_WORKDIR)
+            if trace is not None and len(trace) < MAX_TRACE_STEPS:
+                trace.append({
+                    "tool": tc["name"],
+                    "detail": _args_summary(tc["name"], tc.get("args") or {}),
+                    "output": str(out)[:_TRACE_OUT_CHARS],
+                    "truncated": len(str(out)) > _TRACE_OUT_CHARS,
+                    "ms": int((time.time() - t0) * 1000),
+                })
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
     cost = ai.estimate_cost(cfg["provider"], cfg["model"], usage["input"], usage["output"])
     ai._persist_usage(cfg, usage, cost)
+    if trace is not None:
+        trace.append({"_meta": True, "cost": cost, "model": cfg["model"],
+                      "tokens_in": usage["input"], "tokens_out": usage["output"]})
     return final
 
 
@@ -296,13 +331,14 @@ async def run_loop(loop: dict, trigger: str = "schedule") -> dict | None:
         prompt = (f"Scheduled run of loop \"{loop['name']}\" ({trigger}). "
                   f"Current server context:\n{ctx or '(no context available)'}\n\n"
                   "Investigate now and report.")
+        trace: list = []
         try:
-            text = await _run_mini_agent(prompt, sysprompt)
+            text = await _run_mini_agent(prompt, sysprompt, trace=trace)
             status, title, body = _parse_result(text)
         except Exception as e:
             status, title, body = "warn", f"{loop['name']} failed", \
                 f"The background loop could not run: {type(e).__name__}: {e}"
-        notif = add_notification(loop["name"], status, title, body)
+        notif = add_notification(loop["name"], status, title, body, steps=trace)
         repeat = notif.pop("_repeat", False)
         _update_loop(loop["id"], last_run=time.time(), last_status=status, last_title=title)
         audit.record("loop_run", target=loop["name"], source="sentinel",
