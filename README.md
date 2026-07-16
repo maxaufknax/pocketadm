@@ -102,8 +102,17 @@ docker compose logs helmsman   # shows the generated admin password on first run
 ```
 
 Prefer a prebuilt image? CI publishes a **multi-arch image (amd64 + arm64)** to
-`ghcr.io/maxaufknax/pocketadm:latest` on every push — so it runs on a Raspberry Pi or ARM VPS
-unchanged. Point the `image:` in `docker-compose.yml` at it and drop `build: .`.
+`ghcr.io/maxaufknax/pocketadm` — so it runs on a Raspberry Pi or ARM VPS unchanged. Point the
+`image:` in `docker-compose.yml` at it and drop `build: .`.
+
+| Tag | What you get |
+| --- | --- |
+| `:latest` | the newest release |
+| `:0.15.0` | that exact version — **pin this** if you want to choose when to move |
+| `:0.15` | the newest 0.15.x patch |
+
+Pinning a version is the honest default for a server tool: `:latest` means a `docker compose
+pull` can change your admin panel underneath you.
 
 Want to try it first? Spin up the read-only demo (password `demo`):
 
