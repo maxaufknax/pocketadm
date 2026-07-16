@@ -44,7 +44,7 @@
       <summary>New here? Install PocketADM on a server</summary>
       <p class="muted">SSH into your server and run the one-line installer —
       it sets up Docker (if needed) and PocketADM, then prints your admin password:</p>
-      <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash</pre>
+      <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash</pre>
       <p class="muted">Afterwards open <code>http://&lt;server&gt;:8090</code> on your phone
       and add it to your home screen.</p>
     </details>
@@ -64,7 +64,7 @@
       <summary>No server yet? Install PocketADM</summary>
       <p class="muted">SSH into any Linux server and run the one-line installer —
       it sets up Docker (if needed) and PocketADM, then prints your admin password:</p>
-      <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash</pre>
+      <pre>curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash</pre>
       <p class="muted">Then tap <b>Add a server</b> above with its address and password.</p>
     </details>
   </div>
@@ -81,22 +81,6 @@
   </header>
 
   <main id="views">
-
-    <!-- Home: overview + services -->
-    <section id="view-dashboard" class="view">
-      <div class="stat-grid">
-        <button class="stat" data-metric="cpu"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></button>
-        <button class="stat" data-metric="mem"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></button>
-        <button class="stat" data-metric="disk"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></button>
-        <button class="stat" data-metric="net"><div class="stat-label">Internet</div><div class="stat-value" id="stat-net">–</div><div class="stat-sub" id="stat-net-sub"></div></button>
-        <button class="stat stat-wide" data-metric="load"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></button>
-      </div>
-      <div class="section-head">
-        <h2>Services</h2>
-        <span id="container-count" class="muted"></span>
-      </div>
-      <div id="service-list"></div>
-    </section>
 
     <!-- Vibe Code -->
     <section id="view-vibe" class="view hidden">
@@ -157,6 +141,10 @@
         <button id="term-more" class="ticon" title="more actions"><span data-icon="more-horizontal"></span></button>
       </div>
       <div id="term-status" class="term-status hidden"></div>
+      <!-- Shown instead of a dead black rectangle when nothing is running:
+           somewhere to start a shell, and a way back into sessions that are
+           still alive from earlier (they live on the server, not on this tab). -->
+      <div id="term-start" class="term-start hidden"></div>
       <div id="terminal" class="terminal"></div>
       <div class="key-bar">
         <button data-key="Escape">esc</button>
@@ -184,8 +172,18 @@
       </div>
     </section>
 
-    <!-- Health: updates + checks -->
+    <!-- Health: vitals + updates + checks -->
     <section id="view-health" class="view hidden">
+      <!-- Live vitals. These used to sit on Home, but "is my server OK?" is the
+           question Health answers — the tiles and the checks below belong together.
+           Each tile still opens its interactive history graph. -->
+      <div class="stat-grid">
+        <button class="stat" data-metric="cpu"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></button>
+        <button class="stat" data-metric="mem"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></button>
+        <button class="stat" data-metric="disk"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></button>
+        <button class="stat" data-metric="net"><div class="stat-label">Internet</div><div class="stat-value" id="stat-net">–</div><div class="stat-sub" id="stat-net-sub"></div></button>
+        <button class="stat stat-wide" data-metric="load"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></button>
+      </div>
       <div class="seg wide-seg" id="health-seg">
         <button data-hview="updates" class="active">Updates</button>
         <button data-hview="checks">Checks</button>
@@ -219,14 +217,44 @@
       </div>
     </section>
 
-    <!-- Apps -->
+    <!-- Apps: what's running here + what you can add. Services and the store used
+         to live on separate tabs, which made no sense: "what is on my server" and
+         "what can I put on my server" are two halves of one question. -->
     <section id="view-apps" class="view hidden">
-      <div class="section-head"><h2>App Store</h2><span class="muted">one-tap installs for your server</span></div>
-      <div id="app-list"></div>
+      <div class="seg wide-seg" id="apps-seg">
+        <button data-aview="installed" class="active">On this server</button>
+        <button data-aview="store">Add new</button>
+      </div>
+
+      <div id="apps-installed">
+        <div class="section-head">
+          <div class="row-inline">
+            <h2>On this server</h2>
+            <span id="container-count" class="muted"></span>
+          </div>
+        </div>
+        <p class="muted apps-lede">Every program running here — the ones you installed from the
+          store, and the ones that were already here. Tap any of them to see what it is, what it
+          does, and how to reach it.</p>
+        <div id="service-list"></div>
+      </div>
+
+      <div id="apps-store" class="hidden">
+        <div class="section-head"><h2>Add new</h2><span class="muted">one-tap installs</span></div>
+        <div id="app-list"></div>
+      </div>
     </section>
 
-    <!-- More / Settings -->
-    <section id="view-settings" class="view hidden">
+    <!-- Server: this server at a glance, plus everything you can configure about it
+         and about the other tabs. Home and More were merged here — once services
+         moved to Apps and the vitals moved to Health, Home had nothing of its own
+         left, and two "meta" tabs side by side was one too many. -->
+    <section id="view-server" class="view">
+      <!-- Pinned: survives buildSettingsNav()'s rebuild, so the glance stays put
+           above the group chips no matter which settings group is selected. -->
+      <div id="server-pinned">
+        <div id="server-glance" class="glance"></div>
+      </div>
       <div class="section-head"><h2>Server</h2></div>
       <div id="server-identity" class="card ident-card"><div class="muted">Loading server details…</div></div>
       <div class="card form-card">
@@ -503,12 +531,11 @@
 
   <nav class="tabbar">
     <div class="rail-brand"><img class="rail-logo" src="/icons/logo.svg" alt=""><span class="rail-name">PocketADM</span></div>
-    <button class="tab active" data-view="dashboard"><span class="ico" data-icon="layout-grid"></span><span class="tab-label">Home</span></button>
+    <button class="tab active" data-view="server"><span class="ico" data-icon="server"></span><span id="server-badge" class="badge hidden"></span><span class="tab-label">Server</span></button>
     <button class="tab" data-view="vibe"><span class="ico" data-icon="sparkles"></span><span class="tab-label">Vibe</span></button>
     <button class="tab" data-view="terminal"><span class="ico" data-icon="terminal"></span><span class="tab-label">Term</span></button>
     <button class="tab" data-view="health"><span class="ico" data-icon="heart-pulse"></span><span id="health-badge" class="badge hidden"></span><span class="tab-label">Health</span></button>
     <button class="tab" data-view="apps"><span class="ico" data-icon="blocks"></span><span class="tab-label">Apps</span></button>
-    <button class="tab" data-view="settings"><span class="ico" data-icon="settings"></span><span class="tab-label">More</span></button>
   </nav>
 </div>
 

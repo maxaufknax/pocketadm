@@ -1870,7 +1870,20 @@ button, .tab, .seg, .tabbar, .topbar, .stat, .suggest, .msg-actions,
     margin-bottom: calc(-1 * var(--tabbar-real, calc(var(--tabbar-h) + var(--safe-bottom))));
     pointer-events: none;
   }
+  /* Autohide: scrolling down a long list hands those pixels to the content.
+     Same slide-away mechanics as the keyboard case above. */
+  body.tabs-hidden .tabbar {
+    transform: translateY(102%);
+    margin-bottom: calc(-1 * var(--tabbar-real, calc(var(--tabbar-h) + var(--safe-bottom))));
+    pointer-events: none;
+  }
 }
+
+/* ---- chrome-off: the topbar belongs to the Server tab only ----
+   Terminal, Vibe and Apps want every pixel of height; the server switcher,
+   bell and instruct button live on Server, and the bell's badge is mirrored
+   onto the Server tab so nothing becomes invisible. */
+body.chrome-off .topbar { display: none; }
 
 /* ---- jump-to-latest bubble over the transcript ---- */
 .scroll-fab-anchor { position: relative; height: 0; overflow: visible; z-index: 5; flex: none; }
@@ -1968,27 +1981,38 @@ html, body { overscroll-behavior: none; }
 .tile-dot.restarting, .tile-dot.paused { background: var(--warn); }
 
 /* ---- pull-to-refresh (Home) ---- */
+/* Pull-to-refresh ring. The drag writes --pull (px, position) and --pull-k
+   (0..1, how close to triggering) from JS; nothing here transitions during the
+   drag, or the ring would lag behind the finger. See attachPullToRefresh(). */
 .ptr {
   position: absolute; left: 0; right: 0; top: 4px; height: 0;
   display: flex; justify-content: center; pointer-events: none; z-index: 4;
 }
-.ptr-spin {
+.ptr-ring {
   display: flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: 50%;
   background: var(--bg2); border: 1px solid var(--border);
   box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
-  color: var(--muted);
-  transform: translateY(calc(var(--pull, 0px) - 46px)) rotate(calc(var(--pull, 0px) * 3.2deg));
-  opacity: min(1, calc(var(--pull, 0px) / 40));
-  transition: transform .18s cubic-bezier(.25, .9, .3, 1.2);
+  transform: translateY(calc(var(--pull, 0px) - 46px));
+  opacity: var(--pull-k, 0);
 }
-.ptr-spin svg.i { width: 16px; height: 16px; }
-.ptr.armed .ptr-spin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.ptr.loading .ptr-spin {
-  transform: translateY(12px); color: var(--accent);
-  animation: ptr-rot .8s linear infinite;
+/* the spring exists only for the release */
+.ptr.snap .ptr-ring {
+  transition: transform .34s cubic-bezier(.2, .9, .25, 1), opacity .22s ease;
 }
-@keyframes ptr-rot { to { transform: translateY(12px) rotate(360deg); } }
+.ptr-ring svg { width: 21px; height: 21px; transform: rotate(-90deg); }
+.ptr-track { fill: none; stroke: var(--border); stroke-width: 3; }
+.ptr-arc {
+  fill: none; stroke: var(--muted); stroke-width: 3; stroke-linecap: round;
+  stroke-dasharray: 88;                                  /* 2πr, r=14 ≈ 87.96 */
+  stroke-dashoffset: calc(88 - 88 * var(--pull-k, 0));   /* fills as you pull */
+}
+.ptr.armed .ptr-ring { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ptr.armed .ptr-arc { stroke: var(--accent); }
+.ptr.loading .ptr-ring { transform: translateY(10px); opacity: 1; }
+.ptr.loading .ptr-arc { stroke: var(--accent); stroke-dasharray: 20 88; stroke-dashoffset: 0; }
+.ptr.loading svg { animation: ptr-rot .7s linear infinite; }
+@keyframes ptr-rot { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 
 /* ---- metric sheets: richer KPIs, legend, anomaly context card ---- */
 .kpi-minmax { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
@@ -2053,3 +2077,105 @@ html, body { overscroll-behavior: none; }
   }
 }
 
+
+/* ---- Server glance: the doorways at the top of the Server tab ----
+   Home used to hold the vitals and the service list; those now live on Health
+   and Apps, so the glance summarises them and hands off to the tab that owns
+   the detail. Pinned above the settings group chips. */
+.glance { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.glance-row {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 11px 12px; border-radius: 14px; cursor: pointer; text-align: left;
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  transition: transform .12s ease, border-color .15s;
+}
+.glance-row:active { transform: scale(.985); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.glance-main { flex: 1; min-width: 0; }
+.glance-title {
+  font-weight: 600; font-size: 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glance-sub {
+  font-size: 11.5px; color: var(--muted); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glance-chev { color: var(--muted); opacity: .6; flex: none; }
+.glance-chev svg.i { width: 15px; height: 15px; }
+
+.apps-lede { margin: -4px 0 12px; font-size: 12px; line-height: 1.45; }
+
+/* ---- terminal launcher ----
+   Shown instead of an empty black rectangle when no shell is attached. The
+   sessions live server-side, so this is also the way back into one that is
+   still running from another device. */
+.term-start {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 10px 14px calc(14px + var(--safe-bottom));
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ts-hero { text-align: center; padding: 20px 8px 10px; }
+.ts-ico { color: var(--accent); opacity: .9; }
+.ts-ico svg.i { width: 34px; height: 34px; }
+.ts-title { font-weight: 650; font-size: 17px; margin-top: 8px; }
+.ts-sub {
+  color: var(--muted); font-size: 12.5px; line-height: 1.5;
+  margin: 5px auto 0; max-width: 320px;
+}
+.ts-head {
+  font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin: 12px 2px 2px;
+}
+.ts-row {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: 13px; cursor: pointer;
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  transition: transform .12s ease, border-color .15s;
+}
+.ts-row:active { transform: scale(.985); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.ts-row-main { flex: 1; min-width: 0; }
+.ts-row-title { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-row-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted);
+}
+.ts-dot.live {
+  background: var(--accent2, #2ecc71);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent2, #2ecc71) 22%, transparent);
+}
+.ts-kill { color: var(--muted); flex: none; padding: 4px; border-radius: 8px; }
+.ts-kill:active { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.ts-kill svg.i { width: 14px; height: 14px; }
+.ts-actions { display: flex; gap: 8px; margin-top: 14px; }
+.ts-actions .btn { flex: 1; justify-content: center; }
+
+/* ---- background agent report reader ----
+   A finding used to be a claim with a "Discuss & fix" button. These styles are
+   for the evidence: the steps the agent ran to reach it. */
+.rep-head { display: flex; align-items: center; gap: 11px; margin-bottom: 6px; }
+.rep-title { font-weight: 650; font-size: 15px; line-height: 1.3; }
+.rep-sec {
+  font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin: 16px 0 7px;
+}
+.rep-step {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 11px; margin-bottom: 6px; overflow: hidden;
+}
+.rep-step > summary {
+  list-style: none; cursor: pointer; padding: 8px 10px;
+}
+.rep-step > summary::-webkit-details-marker { display: none; }
+.rep-step-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rep-tool {
+  font-size: 10.5px; font-weight: 650; padding: 2px 7px; border-radius: 999px; flex: none;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+}
+.rep-detail {
+  font-size: 11.5px; color: var(--muted); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rep-out {
+  margin: 0; padding: 9px 11px; font-size: 11px; line-height: 1.45;
+  background: var(--bg); border-top: 1px solid var(--border);
+  white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto;
+}

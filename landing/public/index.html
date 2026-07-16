@@ -634,7 +634,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
       then prints your admin password. Open it on your phone, add to home screen, done.</p>
     <div class="install-box reveal">
       <div class="code-line">
-        <code class="mono"><span class="pr">$</span> curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash</code>
+        <code class="mono"><span class="pr">$</span> curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash</code>
         <button class="copy" id="copyBtn">Copy</button>
       </div>
       <div class="steps">
@@ -683,7 +683,7 @@ addEventListener('scroll',()=>nav.classList.toggle('scrolled',scrollY>10));
 
 // copy install command
 document.getElementById('copyBtn').addEventListener('click',function(){
-  navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash');
+  navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash');
   this.textContent='Copied ✓';setTimeout(()=>this.textContent='Copy',1600);
 });
 

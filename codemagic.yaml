@@ -13,7 +13,7 @@
 #      key) to the ios-release group — the distribution cert's private key, which
 #      Apple's API can't hand out. See APPSTORE.md §Signing for how to generate it.
 #   4. Start the "ios-release" workflow. First build → TestFlight.
-# When you're ready for the public release, flip submit_to_app_store to true.
+# This workflow submits to App Review on every green build (submit_to_app_store).
 # ---------------------------------------------------------------------------
 
 workflows:
@@ -150,5 +150,8 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
-        # Ready for the public store? Flip this to true (and set the group/notes).
-        submit_to_app_store: false
+        # Public release: each green build is submitted to App Review, not just
+        # TestFlight. The App Store listing itself (price = Free, screenshots,
+        # description) is managed in App Store Connect -- see client/APPSTORE.md.
+        # Apple reviews the build; nothing goes live without release approval.
+        submit_to_app_store: true

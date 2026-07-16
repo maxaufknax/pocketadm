@@ -64,7 +64,7 @@ function addRemoteServer(base, token, name, demo) {
 }
 
 const state = {
-  view: "dashboard",
+  view: "server",
   healthView: "updates",
   aiConfigured: false,
   me: null,
@@ -92,6 +92,7 @@ const state = {
   thinkEl: null,
   thinkRaw: "",
   containers: [],
+  appsView: "installed",
   appsData: null,
   updates: null,
   svcGroup: localStorage.getItem("helmsman_svc_group") || "category", // category | stack | flat
@@ -619,11 +620,14 @@ function showView(name) {
   state.view = name;
   $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
-  if (name === "dashboard") refreshDashboard();
+  // The topbar (server switcher, bell, instruct) only belongs on Server: the
+  // working tabs want every pixel of height they can get.
+  document.body.classList.toggle("chrome-off", name !== "server");
+  showTabbar();                       // a tab tap must never leave the bar hidden
+  if (name === "server") { loadSettings(); refreshLive(); }
   if (name === "terminal") initTerminal();
-  if (name === "apps") loadApps();
-  if (name === "health") loadHealth();
-  if (name === "settings") loadSettings();
+  if (name === "apps") { loadApps(); refreshLive(); }
+  if (name === "health") { loadHealth(); refreshLive(); }
   if (name === "vibe") {
     initVibeControls();
     if (!$("#chat-log").children.length) renderChatEvents([]);
@@ -638,10 +642,39 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.v
 
 /* ---------------------------------------------------------- dashboard */
 
-async function refreshDashboard() {
+/* One poll, three tabs. The vitals tiles live on Health, the service list on
+   Apps and the glance on Server — fetching per-tab would mean three timers and
+   three ways to go stale, so this fetches only what the current tab needs and
+   feeds whichever of them is on screen. */
+const LIVE_VIEWS = ["health", "apps", "server"];
+
+async function refreshLive() {
+  const wantVitals = state.view === "health" || state.view === "server";
+  const wantServices = state.view === "apps" || state.view === "server";
   try {
-    const s = await api("/system");
+    if (wantVitals) { state.system = await api("/system"); renderVitals(state.system); }
+    if (wantServices) {
+      state.containers = await api("/containers");
+      // keep the search box's focus/caret while the user is typing in it
+      const search = $("#service-list .svc-search");
+      if (search && document.activeElement === search) renderSvcResults();
+      else renderServices();
+    }
     $("#conn-dot").className = "dot ok";
+  } catch (e) {
+    $("#conn-dot").className = "dot bad";
+  }
+  // Deliberately outside the fetch try: a rendering bug in the glance must not
+  // masquerade as "your server is unreachable" (it did exactly that once).
+  if (state.view === "server") {
+    try { renderGlance(); } catch (e) { console.error("glance render failed", e); }
+  }
+  clearTimeout(state.dashTimer);
+  if (LIVE_VIEWS.includes(state.view)) state.dashTimer = setTimeout(refreshLive, 6000);
+}
+
+function renderVitals(s) {
+  try {
     $("#stat-cpu").textContent = s.cpu_percent + "%";
     $("#stat-mem").textContent = s.memory.percent + "%";
     $("#stat-disk").textContent = s.disk.percent + "%";
@@ -660,17 +693,55 @@ async function refreshDashboard() {
       $("#stat-net").textContent = "…";
       $("#stat-net-sub").textContent = "measuring";
     }
-    state.containers = await api("/containers");
-    // on the periodic refresh, keep the search box's focus/caret by only
-    // re-rendering results while the user is typing in it.
-    const search = $("#service-list .svc-search");
-    if (search && document.activeElement === search) renderSvcResults();
-    else renderServices();
   } catch (e) {
-    $("#conn-dot").className = "dot bad";
+    // the tiles only exist on Health; ignore when that markup isn't mounted
   }
-  clearTimeout(state.dashTimer);
-  if (state.view === "dashboard") state.dashTimer = setTimeout(refreshDashboard, 6000);
+}
+
+/* Server tab: this server at a glance. Everything here is a doorway — the
+   numbers that used to *be* Home now live on Health and Apps, so the glance
+   summarises them and hands you off to the tab that owns the detail. */
+function renderGlance() {
+  const box = $("#server-glance");
+  if (!box) return;
+  const s = state.system, cs = state.containers || [];
+  const running = cs.filter((c) => (c.state || c.status || "").toLowerCase().includes("run")).length;
+  // /updates answers { docker: [...] } — not a bare list
+  const ups = ((state.updates && state.updates.docker) || []).filter((u) => u.update_available).length;
+  const rep = state.report || null;
+  const score = rep && rep.score ? rep.score : null;
+  const scoreLabel = { ok: "all clear", warn: "needs a look", crit: "needs attention" }[score] || "not run yet";
+
+  const row = (opts) => el("button", { class: "glance-row", onclick: opts.go },
+    el("span", { class: "tile-icon sm " + (opts.tint || "tint-1"), "data-icon": opts.icon }),
+    el("div", { class: "glance-main" },
+      el("div", { class: "glance-title" }, opts.title),
+      el("div", { class: "glance-sub" }, opts.sub)),
+    el("span", { class: "glance-chev", "data-icon": "chevron-right" }));
+
+  box.innerHTML = "";
+  box.append(
+    row({ icon: "heart-pulse", tint: "tint-2",
+      title: s ? `CPU ${s.cpu_percent}% · RAM ${s.memory.percent}% · Disk ${s.disk.percent}%` : "Vitals",
+      sub: "Live graphs, updates and security checks", go: () => showView("health") }),
+    row({ icon: "blocks", tint: "tint-1",
+      title: cs.length ? `${running} of ${cs.length} running` : "Programs",
+      sub: "Everything installed on this server, and the store", go: () => showView("apps") }),
+    // "Up to date" would be a lie before /updates has ever answered — the
+    // registry check is expensive and only runs when you open Health, so say
+    // what we actually know.
+    row({ icon: "refresh-cw", tint: ups ? "tint-3" : "tint-1",
+      title: !state.updates ? "Updates"
+        : ups ? `${ups} update${ups === 1 ? "" : "s"} available` : "Everything up to date",
+      sub: !state.updates ? "Check what's out of date"
+        : "Apply here, in the terminal, or with the agent",
+      go: () => { showView("health"); selectHealthView("updates"); } }),
+    row({ icon: "shield", tint: score === "crit" ? "tint-3" : "tint-2",
+      title: "Security checks: " + scoreLabel,
+      sub: "What your background agents found",
+      go: () => { showView("health"); selectHealthView("checks"); } }),
+  );
+  hydrateIcons(box);
 }
 
 /* ----- metric graphs ----- */
@@ -1178,7 +1249,7 @@ function appForContainers(names) {
 
 async function ensureAppsData() {
   if (state.appsData) return;
-  try { state.appsData = await api("/apps"); if (state.view === "dashboard") renderServices(); }
+  try { state.appsData = await api("/apps"); if (state.view === "apps") renderServices(); }
   catch { /* linkage is optional */ }
 }
 
@@ -1718,9 +1789,19 @@ async function populateModels() {
     sel.innerHTML = "";
     for (const p of providers) {
       const label = p.local ? "local (Ollama)" : p.provider;
-      const og = el("optgroup", { label });
-      for (const m of p.models) og.append(el("option", { value: `${p.provider}|${m.id}` }, m.name || m.id));
-      if (p.models.length) sel.append(og);
+      // Free models get their own group so "costs nothing" is visible at the
+      // moment of choosing, not buried in a name. Only tool-capable free
+      // models reach us, so Agent/Auto work on any of them.
+      const addGroup = (lbl, list) => {
+        if (!list.length) return;
+        const og = el("optgroup", { label: lbl });
+        for (const m of list) {
+          og.append(el("option", { value: `${p.provider}|${m.id}` }, m.name || m.id));
+        }
+        sel.append(og);
+      };
+      addGroup(label + " · free", p.models.filter((m) => m.free));
+      addGroup(label, p.models.filter((m) => !m.free));
     }
     state.defaultModel = def.provider ? `${def.provider}|${def.model}` : "";
     modelsReady = true;
@@ -2028,7 +2109,7 @@ $("#chat-workspace-btn").addEventListener("click", () => openFolderPicker({
   title: "Working folder",
   start: state.chatWorkdir || "",
   intro: "Pick where the agent should work. These are your allowed workspaces " +
-    "(configure under More → Default workspace).",
+    "(configure under Server → Default workspace).",
   chooseLabel: (p) => `Work here: ${p}`,
   onChoose: (path) => { state.chatWorkdir = path; updateWsLabel(); sendChatConfig(); },
 }));
@@ -2996,56 +3077,120 @@ window.addEventListener("pocketadm-kb", (e) => {
   fab.addEventListener("click", () => log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }));
 }
 
-/* pull-to-refresh on Home — the app gesture a web page can't have.
-   Pure touch handling on the view's own scroller; spring numbers match iOS. */
-if (matchMedia("(pointer: coarse)").matches) {
-  const view = $("#view-dashboard");
-  const ind = el("div", { class: "ptr" }, el("span", { class: "ptr-spin" }, ic("refresh-cw")));
+/* Pull-to-refresh — the app gesture a web page can't have.
+
+   Rewritten because the motion was wrong in three separate ways:
+     1. `transition: transform .18s <overshoot curve>` sat on the indicator
+        permanently, so *every* touchmove animated toward the finger instead of
+        tracking it. With an overshoot easing that reads as lag + wobble. The
+        spring now goes on only for the release (the `snap` class).
+     2. opacity was `calc(var(--pull) / 40)` — px/number is a *length*, which is
+        invalid for opacity, so the browser dropped the declaration entirely.
+        The drag now also writes a unitless `--pull-k` (0..1) for opacity and
+        for the ring's fill.
+     3. the loading keyframe animated `transform` while the transition was also
+        animating `transform`; they fought on every class flip.
+   The spinner is now a ring that fills as you pull, so the gesture shows how
+   far you have to go instead of just spinning. */
+const PTR_MAX = 96, PTR_TRIGGER = 58;
+
+function attachPullToRefresh(view, onRefresh) {
+  if (!view || !matchMedia("(pointer: coarse)").matches) return;
+  const ind = el("div", { class: "ptr" });
+  // built as markup so the SVG lands in the SVG namespace (createElement won't)
+  ind.innerHTML =
+    '<span class="ptr-ring"><svg viewBox="0 0 36 36" aria-hidden="true">' +
+    '<circle class="ptr-track" cx="18" cy="18" r="14"></circle>' +
+    '<circle class="ptr-arc" cx="18" cy="18" r="14"></circle></svg></span>';
   view.prepend(ind);
+
   let startY = 0, pulling = false, armed = false;
+  const setPull = (px) => {
+    ind.style.setProperty("--pull", px + "px");
+    ind.style.setProperty("--pull-k", (Math.min(1, px / PTR_TRIGGER)).toFixed(3));
+  };
+
   view.addEventListener("touchstart", (e) => {
+    if (ind.classList.contains("loading")) return;
     pulling = view.scrollTop <= 0 && !document.body.classList.contains("kb-open");
-    if (pulling) { startY = e.touches[0].clientY; armed = false; }
+    if (pulling) {
+      startY = e.touches[0].clientY;
+      armed = false;
+      ind.classList.remove("snap");     // drag tracks the finger 1:1
+    }
   }, { passive: true });
+
   view.addEventListener("touchmove", (e) => {
     if (!pulling) return;
     const dy = e.touches[0].clientY - startY;
     if (dy <= 0 || view.scrollTop > 0) {
-      ind.style.setProperty("--pull", "0px");
+      setPull(0);
       if (armed) { armed = false; ind.classList.remove("armed"); }
       return;
     }
-    const pull = Math.min(84, dy * 0.42);
-    ind.style.setProperty("--pull", pull + "px");
-    const nowArmed = pull >= 56;
+    // rubber band: the further you pull the less it gives
+    const pull = Math.min(PTR_MAX, dy * 0.5 * (1 - Math.min(0.55, dy / 800)));
+    setPull(pull);
+    const nowArmed = pull >= PTR_TRIGGER;
     if (nowArmed !== armed) {
       armed = nowArmed;
       ind.classList.toggle("armed", nowArmed);
       hap(nowArmed ? "light" : "tick");
     }
   }, { passive: true });
+
   const release = async () => {
     if (!pulling) return;
     pulling = false;
+    ind.classList.remove("armed");
+    ind.classList.add("snap");          // spring, only now
     if (armed) {
       armed = false;
       ind.classList.add("loading");
       hap("medium");
-      try { await refreshDashboard(); } catch {}
+      try { await onRefresh(); } catch {}
       ind.classList.remove("loading");
     }
-    ind.classList.remove("armed");
-    ind.style.setProperty("--pull", "0px");
+    setPull(0);
   };
   view.addEventListener("touchend", release);
   view.addEventListener("touchcancel", release);
 }
 
+/* Tab bar autohide. Scrolling down a long list of services or settings hands
+   those ~62px back to the content; any deliberate scroll up brings the bar
+   straight back, as does switching tabs. Direction is accumulated so a jittery
+   finger doesn't flap the bar. */
+function showTabbar() { document.body.classList.remove("tabs-hidden"); }
+
+if (matchMedia("(pointer: coarse)").matches) {
+  const onScroll = (e) => {
+    const v = e.target;
+    if (!v.classList || !v.classList.contains("view")) return;
+    const y = v.scrollTop;
+    const dy = y - (v._lastY || 0);
+    v._lastY = y;
+    if (document.body.classList.contains("kb-open")) return;
+    if (y <= 8) { showTabbar(); v._acc = 0; return; }
+    // reset the accumulator whenever the scroll direction flips
+    if (Math.sign(dy) !== Math.sign(v._acc || 0)) v._acc = 0;
+    v._acc = (v._acc || 0) + dy;
+    if (v._acc > 52) { document.body.classList.add("tabs-hidden"); v._acc = 0; }
+    else if (v._acc < -36) { showTabbar(); v._acc = 0; }
+  };
+  $$(".view").forEach((v) => v.addEventListener("scroll", onScroll, { passive: true }));
+}
+
+// Every tab that shows live server data can be pulled to refresh.
+attachPullToRefresh($("#view-health"), async () => { await refreshLive(); await loadHealth(); });
+attachPullToRefresh($("#view-apps"), async () => { await refreshLive(); await loadApps(); });
+attachPullToRefresh($("#view-server"), async () => { await refreshLive(); await loadSettings(); });
+
 // Android back: close what's open before letting the OS minimize the app
 window.addEventListener("pocketadm-back", (e) => {
   if (!$("#modal").classList.contains("hidden")) { e.preventDefault(); closeModal(); return; }
-  if (!$("#app").classList.contains("hidden") && state.view !== "dashboard") {
-    e.preventDefault(); showView("dashboard");
+  if (!$("#app").classList.contains("hidden") && state.view !== "server") {
+    e.preventDefault(); showView("server");
   }
 });
 
@@ -3116,12 +3261,101 @@ async function initTerminal() {
   applyTermMode(localStorage.getItem("pocketadm_term_mode") || "simple");
   const st = $("#term-status");
   if (st && !st._tap) { st._tap = true; st.addEventListener("click", () => connectTerminal()); }
-  refreshTermTargets();               // background — fills the picker
   if (state.term && state.termWs && state.termWs.readyState <= 1) {
+    hideTermStart();
     state.fitAddon.fit();
     return;
   }
-  connectTerminal();
+  // Nothing attached: show the launcher rather than silently spawning a shell
+  // into a black rectangle. Sessions live on the server, so there may well be
+  // one still running from another device to walk back into.
+  showTermStart();
+}
+
+/* ---- terminal launcher (no session attached) ---- */
+
+function hideTermStart() {
+  $("#term-start")?.classList.add("hidden");
+  $("#terminal")?.classList.remove("hidden");
+  $(".key-bar")?.classList.remove("hidden");
+}
+
+async function showTermStart() {
+  const panel = $("#term-start");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  $("#terminal")?.classList.add("hidden");
+  $(".key-bar")?.classList.add("hidden");   // no shell to type into yet
+  $("#term-status")?.classList.add("hidden");
+  panel.innerHTML = "";
+  panel.append(el("div", { class: "ts-hero" },
+    el("span", { class: "ts-ico", "data-icon": "terminal" }),
+    el("div", { class: "ts-title" }, "No terminal open"),
+    el("div", { class: "ts-sub" },
+      "A shell here runs on the server itself — it keeps going when you close the app.")));
+
+  const [targets, sessions] = await Promise.all([refreshTermTargets(), listTermSessions()]);
+  const live = sessions.filter((s) => s.alive);
+
+  // Sessions minted before this screen existed carry their raw context as the
+  // title ("local"), so fall back to the target's human label.
+  const targetFor = (ctx) => {
+    for (const g of (targets?.groups || [])) {
+      for (const t of (g.targets || [])) if (t.id === ctx) return t;
+    }
+    return null;
+  };
+  const niceTitle = (s) => {
+    if (s.title && s.title !== s.context) return s.title;
+    return targetFor(s.context)?.label || s.context;
+  };
+
+  if (live.length) {
+    panel.append(el("div", { class: "ts-head" }, `Still running (${live.length})`));
+    for (const s of live) {
+      panel.append(el("button", { class: "ts-row", onclick: () => {
+        state.termSessionId = s.id;
+        setTermContext(s.context, niceTitle(s), targetFor(s.context)?.icon || "terminal");
+        hideTermStart();
+        connectTerminal();
+      } },
+        el("span", { class: "ts-dot live" }),
+        el("div", { class: "ts-row-main" },
+          el("div", { class: "ts-row-title" }, niceTitle(s)),
+          el("div", { class: "ts-row-sub" }, "opened " + timeAgo(s.created))),
+        el("span", { class: "ts-kill", title: "end this session", onclick: async (e) => {
+          e.stopPropagation();
+          try { await api("/terminal/sessions/" + s.id, { method: "DELETE" }); } catch {}
+          showTermStart();
+        }, "data-icon": "x" })));
+    }
+  }
+
+  panel.append(el("div", { class: "ts-head" }, live.length ? "Or start a new one" : "Start a shell"));
+  // the handful of places worth one tap; the full list stays in the picker
+  const quick = [];
+  for (const g of (targets?.groups || [])) {
+    for (const t of (g.targets || [])) {
+      if (!String(t.id || "").startsWith("container:")) quick.push(t);
+    }
+  }
+  for (const t of quick.slice(0, 4)) {
+    panel.append(el("button", { class: "ts-row", onclick: () => {
+      hideTermStart();
+      openTermSessionFor(t.id, t.label, t.icon);
+    } },
+      el("span", { class: "tile-icon sm tint-1", "data-icon": t.icon || "box" }),
+      el("div", { class: "ts-row-main" },
+        el("div", { class: "ts-row-title" }, t.label),
+        el("div", { class: "ts-row-sub" }, t.sub || "")),
+      el("span", { class: "glance-chev", "data-icon": "chevron-right" })));
+  }
+  panel.append(el("div", { class: "ts-actions" },
+    el("button", { class: "btn primary iconled", onclick: () => openTermTargets() },
+      ic("plus"), " Somewhere else…"),
+    el("button", { class: "btn iconled", onclick: () => openExplorer() },
+      ic("folder"), " Browse files")));
+  hydrateIcons(panel);
 }
 
 function setTermContext(ctx, label, icon) {
@@ -3160,12 +3394,17 @@ async function openTerminalFor(c) {
 }
 
 // open the terminal and drop a command onto the prompt (ready to run & watch)
-function openTerminalWithCommand(cmd) {
+/* Place a command on a terminal prompt without running it — the user presses
+   Enter. `target` picks which shell: the app's own box by default, or e.g.
+   { ctx: "host:maxaufknax", label: "maxaufknax@stream", icon: "user-cog" } for
+   work that must happen on the real host (compose files, apt …). */
+function openTerminalWithCommand(cmd, target) {
   closeModal();
-  const localLive = state.termContext === "local" &&
+  const t = target || { ctx: "local", label: "PocketADM app", icon: "box" };
+  const live = state.termContext === t.ctx &&
     state.termWs && state.termWs.readyState <= 1;
   showView("terminal");
-  if (!localLive) openTermSessionFor("local", "PocketADM app", "box");
+  if (!live) openTermSessionFor(t.ctx, t.label, t.icon);
   let tries = 0;
   const type = () => {
     if (state.termWs && state.termWs.readyState === 1) {
@@ -3279,6 +3518,7 @@ function termStatus(msg, cls) {
 async function connectTerminal() {
   clearTimeout(state.termReconnect);
   state.termWantOpen = true;
+  hideTermStart();
   if (state.termWs) { try { state.termWs.onclose = null; state.termWs.close(); } catch {} }
   if (!state.term) {
     state.term = new Terminal({
@@ -3468,13 +3708,18 @@ function loadHealth() {
   else loadChecks();
 }
 
-$$("#health-seg button").forEach((b) => b.addEventListener("click", () => {
-  $$("#health-seg button").forEach((x) => x.classList.toggle("active", x === b));
-  state.healthView = b.dataset.hview;
-  $("#health-updates").classList.toggle("hidden", state.healthView !== "updates");
-  $("#health-checks").classList.toggle("hidden", state.healthView !== "checks");
+/* Named so the Server glance can deep-link straight to "Updates" or "Checks"
+   instead of dropping you on Health and making you find the segment. */
+function selectHealthView(name) {
+  state.healthView = name;
+  $$("#health-seg button").forEach((x) => x.classList.toggle("active", x.dataset.hview === name));
+  $("#health-updates").classList.toggle("hidden", name !== "updates");
+  $("#health-checks").classList.toggle("hidden", name !== "checks");
   loadHealth();
-}));
+}
+
+$$("#health-seg button").forEach((b) =>
+  b.addEventListener("click", () => selectHealthView(b.dataset.hview)));
 
 /* ----- updates ----- */
 
@@ -3628,14 +3873,95 @@ function miniUpdateRow(u) {
     }, u.ignored ? "unignore" : ic("bell-off")));
 }
 
+/* A host login to run host-side work in, if this server has one. Compose and
+   apt have to run on the host itself — our container shares the daemon, but
+   relative paths in a compose file would resolve under /host and rewrite the
+   stack's bind mounts. */
+function hostShellTarget() {
+  for (const g of (state.termTargets?.groups || [])) {
+    for (const t of (g.targets || [])) {
+      if (String(t.id || "").startsWith("host:")) {
+        return { ctx: t.id, label: t.label || "host shell", icon: t.icon || "user-cog" };
+      }
+    }
+  }
+  return null;                       // e.g. running natively, or no /host mount
+}
+
+/* The terminal command that does this update by hand.
+
+   The compose two-step is only offered when we have a *host* shell to run it
+   in. Our own container shares the Docker daemon, so `docker compose` there
+   would appear to work while resolving the stack's relative bind mounts under
+   /host — quietly recreating containers with wrong paths. Without a host
+   login we hand over the plain pull and say so. */
+function updateCommandFor(u, cont, host) {
+  if (host && cont && cont.compose_dir && cont.compose_service) {
+    return `cd ${shellQuote(cont.compose_dir)} && docker compose pull ${shellQuote(cont.compose_service)}` +
+           ` && docker compose up -d ${shellQuote(cont.compose_service)}`;
+  }
+  return `docker pull ${shellQuote(u.image)}`;
+}
+
+/* Three ways to do the same thing — the whole point of this app: a button, a
+   real terminal, or the agent. Updates used to offer only the button. */
+async function openUpdateWays(u) {
+  const names = u.used_by || [];
+  const cont = (state.containers || []).find((c) => names.includes(c.name));
+  // targets are normally only fetched when the terminal picker opens; without
+  // them we'd wrongly conclude "no host shell" and offer the weaker command
+  if (!state.termTargets) await refreshTermTargets();
+  const host = hostShellTarget();
+  const composed = !!(host && cont && cont.compose_dir && cont.compose_service);
+  const cmd = updateCommandFor(u, cont, host);
+  const body = el("div", {});
+
+  const pick = (icon, tint, title, sub, go) =>
+    el("button", { class: "pick-row", onclick: () => { closeModal(); go(); } },
+      el("span", { class: "tile-icon sm " + tint, "data-icon": icon }),
+      el("div", { style: "flex:1;min-width:0" },
+        el("div", { class: "card-title" }, title),
+        el("div", { class: "card-sub" }, sub)));
+
+  body.append(
+    pick("arrow-up-circle", "tint-1", "Update it for me",
+      "Pins a restore point, pulls, recreates and waits for health — roll back in one tap if it misbehaves.",
+      () => startUpdateJob(u)),
+    pick("terminal", "tint-2", "I'll do it in the terminal",
+      composed
+        ? `Opens ${host.label} with the compose pull + up ready. You press Enter.`
+        : "Opens a shell with the pull ready — recreating the container is then up to you.",
+      () => openTerminalWithCommand(cmd, composed ? host : null)),
+    pick("sparkles", "tint-3", "Let the agent do it",
+      "Hands it to Vibe with the image, the containers and the release notes as context.",
+      () => {
+        attachContext({
+          kind: "update", label: u.label || u.image,
+          text: `Update task on my server:\n` +
+            `- image: ${u.image}${u.version ? " (installed " + u.version + ")" : ""}\n` +
+            `- used by: ${names.join(", ") || "(unknown)"}\n` +
+            (composed ? `- compose: project "${cont.compose_project}", service "${cont.compose_service}", dir ${cont.compose_dir}\n` : "") +
+            `- priority: ${u.priority || "normal"}`,
+        });
+        openVibeWith(`Please update ${u.label || u.image} on my server. Check what changed first, ` +
+          `tell me if anything looks risky, then do it and verify it came back healthy.`);
+      }),
+  );
+  openModal("Update " + (u.label || u.image), body);
+  hydrateIcons(body);
+}
+
 function updateCard(group) {
   const u = group[0];
   const multi = group.length > 1;
   const actions = el("div", { class: "card-actions" });
   if (!multi) {
     actions.append(el("button", {
-      class: "btn small primary", onclick: () => startUpdateJob(u),
+      onclick: () => startUpdateJob(u),
       class: "btn small primary iconled" }, ic("arrow-up-circle"), " Update"));
+    actions.append(el("button", {
+      title: "other ways to do this", onclick: () => openUpdateWays(u),
+      class: "btn small iconled" }, ic("more-horizontal")));
   }
   actions.append(el("button", {
     class: "btn small iconled", onclick: () => openUpdateDetail(u) }, ic("info"), " Details"));
@@ -3846,12 +4172,13 @@ async function loadChecks() {
   const cfg = state.me?.report_config;
   if (cfg) {
     $("#report-schedule-note").textContent = cfg.auto
-      ? `Checks run automatically every ${cfg.interval_min >= 60 ? (cfg.interval_min / 60) + " h" : cfg.interval_min + " min"} — configure under More.`
-      : "Automatic checks are off — enable them under More.";
+      ? `Checks run automatically every ${cfg.interval_min >= 60 ? (cfg.interval_min / 60) + " h" : cfg.interval_min + " min"} — configure under Server.`
+      : "Automatic checks are off — enable them under Server.";
   }
 }
 
 function renderReport(r) {
+  state.report = r;                 // the Server glance summarises this score
   $("#report-time").textContent = timeAgo(r.time) + ` · ${r.duration}s`;
   const banner = $("#report-score");
   banner.className = "score-banner " + r.score;
@@ -3951,9 +4278,24 @@ function updateHealthBadge(report) {
 
 const appsFilter = { q: "", cat: "all" };
 
+/* Apps has two halves: what is already on this server, and what you can add.
+   They used to be two different tabs (Home's "Services" and the App Store),
+   which split one question in half. */
+function selectAppsView(name) {
+  state.appsView = name;
+  $$("#apps-seg button").forEach((x) => x.classList.toggle("active", x.dataset.aview === name));
+  $("#apps-installed").classList.toggle("hidden", name !== "installed");
+  $("#apps-store").classList.toggle("hidden", name !== "store");
+  if (name === "store") loadApps();
+  else refreshLive();
+}
+
+$$("#apps-seg button").forEach((b) =>
+  b.addEventListener("click", () => selectAppsView(b.dataset.aview)));
+
 async function loadApps() {
   const wrap = $("#app-list");
-  wrap.innerHTML = "<div class='muted'>Loading apps…</div>";
+  if (!wrap.children.length) wrap.innerHTML = "<div class='muted'>Loading apps…</div>";
   try {
     state.appsData = await api("/apps");
     renderApps();
@@ -3963,9 +4305,11 @@ async function loadApps() {
   }
 }
 
-/* Jump from the App Store to a running app's unified service view in Home. */
+/* Jump from the store half of Apps to the running app on the "On this server"
+   half — same tab, other segment. */
 async function openServiceForApp(inst) {
-  showView("dashboard");
+  showView("apps");
+  selectAppsView("installed");
   if (!state.containers.length) {
     try { state.containers = await api("/containers"); } catch {}
   }
@@ -4386,22 +4730,27 @@ function groupForHead(text) {
 
 function selectSettingsGroup(id) {
   localStorage.setItem(SETTINGS_KEY, id);
-  $$("#view-settings .settings-group").forEach((g) =>
+  $$("#view-server .settings-group").forEach((g) =>
     g.classList.toggle("hidden", g.dataset.group !== id));
   $$("#settings-nav .set-chip").forEach((c) =>
     c.classList.toggle("active", c.dataset.group === id));
-  const view = $("#view-settings");
+  const view = $("#view-server");
   if (view) view.scrollTop = 0;
 }
 
 function buildSettingsNav() {
-  const view = $("#view-settings");
+  const view = $("#view-server");
   if (!view || view.dataset.nav === "1") return;
+
+  // The glance is pinned: it must stay above the group chips whichever group is
+  // selected, and survive the innerHTML rebuild below.
+  const pinned = view.querySelector("#server-pinned");
 
   // slice the flat children into sections that each start at a .section-head
   const sections = [];
   let cur = null;
   for (const child of [...view.children]) {
+    if (child === pinned || child.classList.contains("ptr")) continue;
     if (child.classList.contains("section-head")) {
       cur = { head: child.querySelector("h2")?.textContent || "", nodes: [child] };
       sections.push(cur);
@@ -4427,7 +4776,10 @@ function buildSettingsNav() {
       onclick: () => selectSettingsGroup(g.id) }, ic(g.icon), el("span", {}, g.label)));
   }
 
+  const ptr = view.querySelector(".ptr");
   view.innerHTML = "";
+  if (ptr) view.append(ptr);          // pull-to-refresh indicator stays mounted
+  if (pinned) view.append(pinned);
   view.append(nav);
   for (const g of SETTINGS_GROUPS) view.append(groups.get(g.id));
   view.dataset.nav = "1";
@@ -5255,9 +5607,16 @@ function auditRow(e, meta) {
 async function refreshNotifs() {
   try {
     const r = await api("/notifications");
-    const badge = $("#notif-badge");
-    badge.textContent = r.unseen > 9 ? "9+" : r.unseen;
-    badge.classList.toggle("hidden", !r.unseen);
+    state.notifs = r;
+    // The bell only exists on the Server tab now (chrome-off elsewhere), so the
+    // count is mirrored onto the Server tab itself — otherwise a finding raised
+    // while you're in the terminal would be invisible until you wandered back.
+    for (const id of ["#notif-badge", "#server-badge"]) {
+      const badge = $(id);
+      if (!badge) continue;
+      badge.textContent = r.unseen > 9 ? "9+" : r.unseen;
+      badge.classList.toggle("hidden", !r.unseen);
+    }
     return r;
   } catch { return { items: [], unseen: 0 }; }
 }
@@ -5269,15 +5628,16 @@ async function openNotifications() {
   openModal("Notifications", body);
   const r = await refreshNotifs();
   api("/notifications/seen", { method: "POST" })
-    .then(() => $("#notif-badge").classList.add("hidden")).catch(() => {});
+    .then(() => { $("#notif-badge")?.classList.add("hidden");
+                  $("#server-badge")?.classList.add("hidden"); }).catch(() => {});
   body.append(el("div", { class: "card-actions", style: "margin-bottom:10px" },
     el("button", { class: "btn small", onclick: () => {
-      closeModal(); showView("settings");
+      closeModal(); showView("server");
       setTimeout(() => $("#loops-list")?.scrollIntoView({ behavior: "smooth" }), 150);
     }, class: "btn small iconled" }, ic("settings"), " Configure background agents")));
   if (!r.items.length) {
     body.append(el("p", { class: "muted" },
-      "Nothing yet. Enable a Sentinel loop under More → Background agents — " +
+      "Nothing yet. Enable a Sentinel loop under Server → Background agents — " +
       "it will watch your server and report here (and via ntfy push, if configured)."));
     return;
   }
@@ -5300,11 +5660,87 @@ async function openNotifications() {
       card.append(n.body.length > 500 ? fold("details", md) : md);
     }
     card.append(el("div", { class: "card-actions" },
+      el("button", { class: "btn small primary iconled",
+        onclick: () => openReportDetail(n) }, ic("file-text"), " Read report"),
       askAiButton(`My background agent "${n.source}" reported (${n.status}): ${n.title}\n\n` +
         `${n.body.slice(0, 1500)}\n\nLet's look into this together — investigate and help me fix it.`,
         "Discuss & fix")));
     body.append(card);
   }
+}
+
+/* Read a background agent's report properly.
+
+   Before this, a finding was a title, a blob and a "Discuss & fix" button —
+   the only way to engage with it was to start chatting to a *different* agent
+   about it. You could not see what the background agent actually looked at, so
+   "your SSH is exposed" was an assertion you had to take on faith. The loop now
+   records its steps (see agents._run_mini_agent), and this shows them:
+   the finding, the full write-up, and every command it ran to get there. */
+async function openReportDetail(n) {
+  const icons = { ok: "check-circle-2", info: "info", warn: "alert-triangle", crit: "siren" };
+  const body = el("div", {});
+  const steps = (n.steps || []).filter((s) => !s._meta);
+  const meta = (n.steps || []).find((s) => s._meta);
+
+  body.append(el("div", { class: "rep-head " + (n.status || "info") },
+    el("span", { class: "check-ico st-" + (n.status || "info") }, ic(icons[n.status] || "bell")),
+    el("div", { style: "min-width:0;flex:1" },
+      el("div", { class: "rep-title" }, n.title),
+      el("div", { class: "card-sub" },
+        `${n.source} · ${timeAgo(n.time)}` +
+        ((n.count || 1) > 1 ? ` · seen ${n.count}× (last ${timeAgo(n.last_seen || n.time)})` : "")))));
+
+  body.append(el("div", { class: "rep-sec" }, "What it found"));
+  body.append(mdDiv(n.body || "_(no details)_", "notif-body"));
+
+  // The evidence. This is the part that turns a claim into something checkable.
+  body.append(el("div", { class: "rep-sec" },
+    steps.length ? `How it checked · ${steps.length} step${steps.length === 1 ? "" : "s"}`
+                 : "How it checked"));
+  if (!steps.length) {
+    body.append(el("p", { class: "muted", style: "font-size:12px" },
+      "This report predates step recording, or the agent answered from the context it was " +
+      "given without running anything. New runs record every command."));
+  }
+  for (const s of steps) {
+    const out = el("pre", { class: "rep-out" }, (s.output || "").trim() || "(no output)");
+    const head = el("div", { class: "rep-step-head" },
+      el("span", { class: "rep-tool" }, s.tool),
+      el("code", { class: "rep-detail" }, s.detail || ""),
+      el("span", { class: "muted", style: "margin-left:auto;font-size:10.5px;flex:none" },
+        (s.ms != null ? s.ms + " ms" : "")));
+    const d = el("details", { class: "rep-step" }, el("summary", {}, head), out);
+    if (s.truncated) d.append(el("div", { class: "muted", style: "font-size:10.5px" }, "output truncated"));
+    body.append(d);
+  }
+
+  if (meta) {
+    body.append(el("p", { class: "muted", style: "font-size:11px;margin-top:10px" },
+      `${meta.model} · ${meta.tokens_in}+${meta.tokens_out} tokens` +
+      (meta.cost ? ` · ${fmtCost(meta.cost)}` : "")));
+  }
+
+  body.append(el("div", { class: "card-actions", style: "margin-top:12px" },
+    askAiButton(`My background agent "${n.source}" reported (${n.status}): ${n.title}\n\n` +
+      `${(n.body || "").slice(0, 1500)}\n\n` +
+      (steps.length ? `It checked:\n${steps.map((s) => `- ${s.tool}: ${s.detail}`).join("\n")}\n\n` : "") +
+      `Let's look into this together — investigate and help me fix it.`, "Discuss & fix"),
+    el("button", { class: "btn small iconled", onclick: async () => {
+      // notifications carry the loop's *name*; the run endpoint wants its id
+      try {
+        const loops = (await api("/agents/loops")).loops || [];
+        const lp = loops.find((l) => l.name === n.source);
+        if (!lp) { toast("That background agent no longer exists."); return; }
+        closeModal();
+        toast("Running " + n.source + " — the report updates when it's done.");
+        await api(`/agents/loops/${lp.id}/run`, { method: "POST" });
+        refreshNotifs();
+      } catch (e) { toast(e.message); }
+    } }, ic("refresh-cw"), " Run again")));
+
+  openModal("Report", body);
+  hydrateIcons(body);
 }
 
 /* --------------------------------------------------- background agents */
@@ -5736,7 +6172,7 @@ function openBootstrapWizard() {
         "The SSH installer runs from a PocketADM server you're already connected to. " +
         "Add one first, or install PocketADM manually with the one-line command:"),
       el("pre", { class: "install-cmd" },
-        "curl -fsSL https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh | bash"),
+        "curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash"),
       el("button", { class: "btn primary wide", style: "margin-top:10px",
         onclick: () => { closeModal(); openConnectModal(); } }, "Add a server first"));
     return;
@@ -6135,7 +6571,7 @@ async function boot() {
       localStorage.setItem("helmsman_chat", openChat);
     }
     await populateModels();   // picker ready before the first session snapshot
-    showView(openChat ? "vibe" : "dashboard");
+    showView(openChat ? "vibe" : "server");
     chatConnect();
     // preload updates so the health badge is meaningful
     api("/updates").then((r) => { state.updates = r; updateHealthBadge(); }).catch(() => {});

@@ -1,7 +1,59 @@
 # Changelog
 
-All notable changes to Helmsman. Versions are the app version reported at
-`/api/info` and shown in *More → About*.
+All notable changes to PocketADM. Versions are the app version reported at
+`/api/info` and shown in *Server → About*.
+
+## v0.15.0 — One server, five tabs, and reports you can actually read
+
+- **Home and More are gone; Server took their place.** Once the vitals moved to
+  Health and the services moved to Apps, Home had nothing of its own left and
+  two "meta" tabs sat side by side. There are now five tabs — **Server · Vibe ·
+  Term · Health · Apps** — and Server opens with a glance (vitals, what's
+  running, updates, checks) where every row is a doorway to the tab that owns
+  the detail, followed by every setting.
+- **Services and the App Store are one tab.** "What is on my server" and "what
+  can I put on my server" were two halves of one question living on different
+  tabs. Apps now has *On this server* (everything running, grouped by what it
+  does, in plain language) and *Add new* (the store).
+- **The vitals live on Health.** CPU / RAM / disk / internet sit above the
+  updates and checks that explain them. Tiles still open their history graphs.
+- **The top bar only appears on Server.** Terminal, Vibe, Apps and Health get
+  those pixels back. The notification count moves onto the Server tab so
+  nothing raised while you're elsewhere goes unseen.
+- **The tab bar hides as you scroll down** a long list and comes back the
+  moment you scroll up.
+- **Pull-to-refresh actually tracks your finger.** It had a permanent CSS
+  transition on it, so every touch move animated *toward* your finger with an
+  overshoot curve instead of following it — the wobble. Its opacity was also
+  computed as a length, which is invalid, so the browser dropped it. It is now
+  a ring that fills as you pull, on Health, Apps and Server.
+- **Background agent reports are readable.** The Sentinel loops recorded only
+  a verdict; the run itself was thrown away, so "your SSH is exposed" was a
+  claim you had to take on faith, and the only thing you could do with it was
+  chat to a *different* agent about it. Loops now record every step they take,
+  and **Read report** shows the finding, the write-up, and each command with its
+  output — plus *Run again*.
+- **A terminal with no session shows a launcher**, not a dead black rectangle:
+  the shells still running server-side (walk back into one, or end it), the
+  places worth one tap, and a way to the file browser.
+- **Three ways to apply an update**, matching how the rest of the app works: let
+  it do it (snapshot, pull, recreate, health-check), do it yourself in the
+  terminal, or hand it to the agent. The terminal option offers the real
+  `docker compose pull && up -d` for compose-managed stacks — in a *host* shell,
+  because running compose from our container would resolve the stack's relative
+  bind mounts under `/host`.
+- **OpenRouter's free model router.** `openrouter/free` costs nothing and still
+  supports tool calls, so the agent works on it. Free models were previously
+  filtered out entirely; they now get their own group in the model picker, and
+  only tool-capable ones are offered — a free model that can't call tools is a
+  dead end here.
+- Fixed: the public demo served a months-old image because
+  `docker-compose.demo.yml` paired `build: .` with a registry `image:` tag that
+  stopped being published when the repo was renamed — so `up -d` silently reused
+  a stale pull. The demo image is now a local build artifact.
+- Rebrand leftovers: the README pointed at `ghcr.io/maxaufknax/helmsman`, which
+  froze at the last pre-rename build (GHCR, unlike git, does not redirect), so
+  "prefer a prebuilt image?" handed people v0.8.
 
 ## v0.14.0 — Terminal sessions that survive, and graphs that explain themselves
 

@@ -851,18 +851,40 @@ async def list_models() -> list[dict]:
                     if r.status_code == 200:
                         allow = ("anthropic/", "openai/", "google/", "deepseek/",
                                  "mistralai/", "qwen/", "meta-llama/", "x-ai/")
+                        # Routers OpenRouter operates itself. "openrouter/free"
+                        # is the free model router: costs nothing AND supports
+                        # tool calls, so Agent/Auto actually work on it — which
+                        # is the only reason it is worth offering.
+                        routers = ("openrouter/free", "openrouter/auto")
+                        paid: list[dict] = []
+                        freebies: list[dict] = []
                         for m in r.json().get("data", []):
-                            if not m["id"].startswith(allow) or ":free" in m["id"]:
+                            mid = m["id"]
+                            if mid not in routers and not mid.startswith(allow):
+                                continue
+                            tools = "tools" in (m.get("supported_parameters") or [])
+                            is_free = ":free" in mid or mid == "openrouter/free"
+                            # a free model that can't call tools is a dead end
+                            # for this app: no run_command, no edit_file, no agent
+                            if is_free and not tools:
                                 continue
                             pr = m.get("pricing", {})
                             try:
-                                _openrouter_pricing[m["id"]] = (
-                                    float(pr.get("prompt", 0)) * 1e6,
-                                    float(pr.get("completion", 0)) * 1e6)
+                                p_in = float(pr.get("prompt", 0))
+                                p_out = float(pr.get("completion", 0))
+                                # routers price dynamically and report -1; recording
+                                # that would bill the usage log negative money
+                                if p_in >= 0 and p_out >= 0:
+                                    _openrouter_pricing[mid] = (p_in * 1e6, p_out * 1e6)
                             except (TypeError, ValueError):
                                 pass
-                            models.append({"id": m["id"], "name": m.get("name", m["id"])})
-                        models = models[:60]
+                            (freebies if is_free else paid).append({
+                                "id": mid, "name": m.get("name", mid),
+                                "free": is_free, "tools": tools,
+                            })
+                        # free router first, then the rest of the free tier
+                        freebies.sort(key=lambda e: (e["id"] != "openrouter/free", e["id"]))
+                        models = freebies[:20] + paid[:60]
             except Exception:
                 models = []
             if not models:

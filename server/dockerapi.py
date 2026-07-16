@@ -62,6 +62,11 @@ async def list_containers(all_: bool = True) -> list[dict]:
             "ports": sorted(ports, key=lambda p: p["public"]),
             "compose_project": labels.get("com.docker.compose.project", ""),
             "compose_service": labels.get("com.docker.compose.service", ""),
+            # Where this stack is defined on the *host*. The UI uses it to offer
+            # a real "do it yourself in the terminal" command for updates. Note
+            # it is a host path: compose has to run in a host shell, not in our
+            # container, or relative bind mounts would resolve under /host.
+            "compose_dir": labels.get("com.docker.compose.project.working_dir", ""),
             "created": c.get("Created", 0),
             "mounts_docker_sock": any(
                 m.get("Source") == "/var/run/docker.sock" for m in c.get("Mounts", [])),
