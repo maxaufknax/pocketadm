@@ -13,7 +13,7 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
 - **✦ Vibe Code:** chat with an AI agent that works *directly on your server* via tools:
   `run_command`, `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`,
   `fetch_url`, `integration_request` and a **persistent memory** it maintains about your server
-  (Claude-Code-style, editable under *Server → Agent*). Modes: Chat / Plan / Agent / Auto with
+  (Claude-Code-style, editable under *Settings → Agent*). Modes: Chat / Plan / Agent / Auto with
   per-action approval, extended-thinking streaming (💭), a stop button, a folder browser to pick
   the workspace, and collapsible tool/output cards. Any command the agent runs has an **“open in
   terminal”** button so you can watch it yourself. Bring your own key — **Anthropic, OpenRouter,

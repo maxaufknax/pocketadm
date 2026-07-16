@@ -41,6 +41,10 @@
 
   --radius: 14px;
   --tabbar-h: 62px;
+  /* Read through a variable, never inline: the strip iOS reserves for the notch
+     has to be claimed by whatever sits at the top of the shell, and a variable
+     is the only version of that a headless browser can simulate. */
+  --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -193,7 +197,7 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 .app { display: flex; flex-direction: column; height: 100dvh; }
 .topbar {
   display: flex; align-items: center; gap: 9px;
-  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+  padding: calc(var(--safe-top) + 10px) 16px 10px;
   background: var(--bg2); border-bottom: 1px solid var(--border);
   flex: none;
 }
@@ -258,6 +262,25 @@ main#views { flex: 1; overflow: hidden; position: relative; }
 }
 .section-head h2 { font-size: 16px; }
 
+/* Page header for the views that hide the topbar: it carries the view's main
+   switch and sticks to the top of the scroll, directly under the status-bar
+   backdrop and in the same colour, so the two read as one bar.
+
+   Its view drops the top padding (.has-head) rather than the header pulling
+   itself up by a negative margin: sticky resolves `top: 0` against the scroll
+   container's *content* box, so with padding left on it the header would pin
+   16px too low and hold a gap open under the backdrop. */
+.view.has-head { padding-top: 0; }
+.view-head {
+  position: sticky; top: 0; z-index: 6;
+  margin: 0 -16px 12px; padding: 8px 12px;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+.view-head .head-title { font-weight: 600; font-size: 15px; }
+.view-head .seg { margin-bottom: 0; }
+.settings-head { justify-content: flex-start; }
+
 /* ---------- tabbar ---------- */
 .tabbar {
   flex: none; display: flex;
@@ -290,18 +313,22 @@ main#views { flex: 1; overflow: hidden; position: relative; }
 .iconbtn .badge { top: -5px; right: -7px; }
 
 /* ---------- dashboard stats ---------- */
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Three per row on a phone: CPU/Memory/Disk are the same shape of number and
+   read as a set, which leaves Internet and Uptime a row of their own. Two
+   columns spent three rows on five values and pushed everything else below the
+   fold. */
+.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .stat {
   background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 12px 14px; text-align: left; color: var(--text); cursor: pointer;
+  padding: 9px 10px; text-align: left; color: var(--text); cursor: pointer;
   font: inherit; transition: border-color .15s, transform .1s;
   box-shadow: var(--shadow);
 }
 .stat:active { border-color: var(--accent); transform: scale(.985); }
 .stat-wide { grid-column: span 2; }
-.stat-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
-.stat-value { font-size: 22px; font-weight: 650; margin: 3px 0 7px; font-variant-numeric: tabular-nums; }
-.stat-sub { font-size: 12px; color: var(--muted); }
+.stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.stat-value { font-size: 19px; font-weight: 650; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar { height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
 .bar > div { height: 100%; width: 0%; background: var(--accent); border-radius: 3px; transition: width .6s, background .6s; }
 .bar > div.hot { background: var(--danger); }
@@ -361,6 +388,13 @@ a.chip { text-decoration: none; color: var(--accent); }
 .tint-4 { --tint-h: 4; }
 .tint-5 { --tint-h: 190; }
 .tint-6 { --tint-h: 245; }
+/* The numbered tints are decorative hues picked to tell services apart. A
+   finding's tile means something, so severity gets named tints instead: reusing
+   a number would paint "check passed" amber and "warning" purple. */
+.tint-ok { --tint-h: 158; }
+.tint-info { --tint-h: 215; }
+.tint-warn { --tint-h: 42; }
+.tint-crit { --tint-h: 4; }
 
 /* ---------- folds (collapsible sections) ---------- */
 .fold { margin-bottom: 10px; }
@@ -1124,6 +1158,18 @@ details.codefold pre { margin: 0 !important; border-top-left-radius: 0 !importan
   .tab .badge { position: static; margin-left: auto; order: 9; }
   main#views { grid-column: 2; grid-row: 2; }
   .view { padding: 30px 40px 48px; max-width: 1160px; margin: 0 auto; }
+  /* .has-head is two classes, so it out-specifies the .view rule above no matter
+     the order: the top padding it strips for the phone's flush header has to be
+     put back by hand out here. */
+  .view.has-head { padding-top: 30px; }
+  /* The page header is a phone device: it exists to replace the topbar on a
+     small screen and to keep clear of the notch. With the room out here it goes
+     back to being an ordinary row — a full-bleed sticky bar would only fight the
+     centered column. */
+  .view-head {
+    position: static; margin: 0 0 16px; padding: 0;
+    background: none; border-bottom: none;
+  }
   .stat-grid { grid-template-columns: repeat(5, 1fr); gap: 12px; }
   .stat-wide { grid-column: span 1; }
   .svc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
@@ -1495,12 +1541,16 @@ select option { color: initial; }
 }
 
 /* ---------- services filter bar ---------- */
-.svc-filter { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.svc-filter { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+/* One swipeable row rather than two stacked ones: the status filter and the
+   grouping together are wider than a phone, and wrapping them spent a third row
+   of chrome before the first service. Same pattern as .cat-chips. */
 .svc-filter-row {
-  display: flex; gap: 8px 10px; align-items: center; justify-content: space-between;
-  flex-wrap: wrap;
+  display: flex; gap: 8px 10px; align-items: center;
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
 }
-.svc-filter-row .seg { flex: 0 1 auto; }
+.svc-filter-row::-webkit-scrollbar { display: none; }
+.svc-filter-row .seg { flex: none; }
 .svc-filter-row .seg button { padding: 6px 10px; }
 .svc-filter .groupseg button { padding: 6px 10px; font-size: 11.5px; }
 .svc-filter .svc-search { width: 100%; min-width: 0; }
@@ -1879,11 +1929,25 @@ button, .tab, .seg, .tabbar, .topbar, .stat, .suggest, .msg-actions,
   }
 }
 
-/* ---- chrome-off: the topbar belongs to the Server tab only ----
-   Terminal, Vibe and Apps want every pixel of height; the server switcher,
-   bell and instruct button live on Server, and the bell's badge is mirrored
-   onto the Server tab so nothing becomes invisible. */
+/* ---- chrome-off: the topbar belongs to the Home tab only ----
+   Terminal, Vibe, Health and Apps want every pixel of height; the server
+   switcher, bell and instruct button live on Home, and the bell's badge is
+   mirrored onto the Home tab so nothing becomes invisible.
+
+   The topbar is also the only element that reserves the status-bar strip
+   (padding-top: --safe-top). Hiding it therefore hands the notch to whatever
+   the view puts first — which buried Vibe's "Chats" row under the Dynamic
+   Island on every device with one. The shell grows a backdrop in the topbar's
+   place so each view's own header starts below the hardware, and it collapses
+   to nothing on a device without an inset. */
 body.chrome-off .topbar { display: none; }
+/* Phones only, and deliberately: a desktop has no inset to reserve, and .app is
+   a grid there — a stray ::before would land in it as an unplaced grid item. */
+@media (max-width: 899px) {
+  body.chrome-off .app::before {
+    content: ""; flex: none; height: var(--safe-top); background: var(--bg2);
+  }
+}
 
 /* ---- jump-to-latest bubble over the transcript ---- */
 .scroll-fab-anchor { position: relative; height: 0; overflow: visible; z-index: 5; flex: none; }

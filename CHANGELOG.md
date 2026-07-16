@@ -1,7 +1,35 @@
 # Changelog
 
 All notable changes to PocketADM. Versions are the app version reported at
-`/api/info` and shown in *Server → About*.
+`/api/info` and shown in *Settings → About*.
+
+## v0.16.0 — Home is a home again, and the header clears the notch
+
+- **Fixed: the header hid under the Dynamic Island.** v0.15 gave the top bar to
+  the Server tab alone, but the top bar was the only thing reserving the strip
+  iOS keeps for the notch — so on Vibe, Term, Health and Apps the first row
+  climbed underneath the hardware, and Vibe's *Chats* / *New* buttons were
+  unreachable. Only the native app could show this: in a browser that inset is
+  zero. The shell now keeps a backdrop where the top bar was, so every view
+  starts below the status bar and collapses it to nothing on a device with no
+  inset.
+- **Home is back, and Settings moved behind a gear.** Merging Home into Settings
+  meant the app opened on a settings form. The first tab is **Home** again: the
+  vitals you had before, then a doorway into whatever needs you. Settings are
+  one tap away on the gear, top right — a page you visit and leave, not a tab.
+- **Latest findings on Home.** What the background agents actually found now
+  greets you instead of hiding behind a bell you had to think to press.
+  Nothing to report, nothing shown.
+- **Denser, in the places that were costing you a screen.** The vitals are three
+  across instead of two (five numbers, two rows, no scrolling). Apps lost a
+  redundant heading and a lede and now carries its counts in the filters
+  themselves. Update cards fit their actions on one row — *ignore* moved into
+  the ⋯ sheet with the other ways to apply it. Health and Apps got a compact
+  sticky page header instead of the top bar.
+- **Fixed: the demo's Terminal tab showed an error.** It asked the server for a
+  session first, which the read-only guard refused, so a visitor met *"couldn't
+  open a session"* over an empty black rectangle — and that was the App Store
+  screenshot. The demo never needed one: its shell is simulated.
 
 ## v0.15.0 — One server, five tabs, and reports you can actually read
 

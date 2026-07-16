@@ -78,9 +78,32 @@
     <span class="spacer"></span>
     <button id="instruct-btn" class="iconbtn" title="instruct the agent"><span data-icon="zap"></span></button>
     <button id="notif-btn" class="iconbtn" title="notifications"><span data-icon="bell"></span><span id="notif-badge" class="badge hidden"></span></button>
+    <button id="settings-btn" class="iconbtn" title="settings"><span data-icon="settings"></span></button>
   </header>
 
   <main id="views">
+
+    <!-- Home: how the server is doing right now, and a door into whichever tab
+         owns the detail. The vitals belong here rather than on Health: they are
+         the answer to "how is it?", which is the question you open the app with,
+         while Health answers the narrower "what needs attention?". Settings are
+         not a tab — they sit behind the gear in the topbar, because you visit
+         them rarely and they are about the app, not about the server. -->
+    <section id="view-home" class="view">
+      <div class="stat-grid">
+        <button class="stat" data-metric="cpu"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></button>
+        <button class="stat" data-metric="mem"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></button>
+        <button class="stat" data-metric="disk"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></button>
+        <!-- Internet takes the wide slot: its throughput line is the longest of
+             the five, while "9d 0h" is happy in a narrow one. -->
+        <button class="stat stat-wide" data-metric="net"><div class="stat-label">Internet</div><div class="stat-value" id="stat-net">–</div><div class="stat-sub" id="stat-net-sub"></div></button>
+        <button class="stat" data-metric="load"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></button>
+      </div>
+      <div id="home-glance" class="glance"></div>
+      <!-- What the background agents last found. Filled by renderHomeActivity()
+           and hidden entirely when there is nothing to say. -->
+      <div id="home-activity" class="hidden"></div>
+    </section>
 
     <!-- Vibe Code -->
     <section id="view-vibe" class="view hidden">
@@ -172,21 +195,15 @@
       </div>
     </section>
 
-    <!-- Health: vitals + updates + checks -->
-    <section id="view-health" class="view hidden">
-      <!-- Live vitals. These used to sit on Home, but "is my server OK?" is the
-           question Health answers — the tiles and the checks below belong together.
-           Each tile still opens its interactive history graph. -->
-      <div class="stat-grid">
-        <button class="stat" data-metric="cpu"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">–</div><div class="bar"><div id="bar-cpu"></div></div></button>
-        <button class="stat" data-metric="mem"><div class="stat-label">Memory</div><div class="stat-value" id="stat-mem">–</div><div class="bar"><div id="bar-mem"></div></div></button>
-        <button class="stat" data-metric="disk"><div class="stat-label">Disk</div><div class="stat-value" id="stat-disk">–</div><div class="bar"><div id="bar-disk"></div></div></button>
-        <button class="stat" data-metric="net"><div class="stat-label">Internet</div><div class="stat-value" id="stat-net">–</div><div class="stat-sub" id="stat-net-sub"></div></button>
-        <button class="stat stat-wide" data-metric="load"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></button>
-      </div>
-      <div class="seg wide-seg" id="health-seg">
-        <button data-hview="updates" class="active">Updates</button>
-        <button data-hview="checks">Checks</button>
+    <!-- Health: what needs attention — updates and checks. The vitals tiles moved
+         back to Home: "how is my server doing" is the question you open the app
+         with, and duplicating them here would mean two homes for one number. -->
+    <section id="view-health" class="view has-head hidden">
+      <div class="view-head">
+        <div class="seg wide-seg" id="health-seg">
+          <button data-hview="updates" class="active">Updates</button>
+          <button data-hview="checks">Checks</button>
+        </div>
       </div>
 
       <div id="health-updates">
@@ -220,22 +237,15 @@
     <!-- Apps: what's running here + what you can add. Services and the store used
          to live on separate tabs, which made no sense: "what is on my server" and
          "what can I put on my server" are two halves of one question. -->
-    <section id="view-apps" class="view hidden">
-      <div class="seg wide-seg" id="apps-seg">
-        <button data-aview="installed" class="active">On this server</button>
-        <button data-aview="store">Add new</button>
+    <section id="view-apps" class="view has-head hidden">
+      <div class="view-head">
+        <div class="seg wide-seg" id="apps-seg">
+          <button data-aview="installed" class="active">On this server</button>
+          <button data-aview="store">Add new</button>
+        </div>
       </div>
 
       <div id="apps-installed">
-        <div class="section-head">
-          <div class="row-inline">
-            <h2>On this server</h2>
-            <span id="container-count" class="muted"></span>
-          </div>
-        </div>
-        <p class="muted apps-lede">Every program running here — the ones you installed from the
-          store, and the ones that were already here. Tap any of them to see what it is, what it
-          does, and how to reach it.</p>
         <div id="service-list"></div>
       </div>
 
@@ -245,15 +255,16 @@
       </div>
     </section>
 
-    <!-- Server: this server at a glance, plus everything you can configure about it
-         and about the other tabs. Home and More were merged here — once services
-         moved to Apps and the vitals moved to Health, Home had nothing of its own
-         left, and two "meta" tabs side by side was one too many. -->
-    <section id="view-server" class="view">
-      <!-- Pinned: survives buildSettingsNav()'s rebuild, so the glance stays put
-           above the group chips no matter which settings group is selected. -->
-      <div id="server-pinned">
-        <div id="server-glance" class="glance"></div>
+    <!-- Settings: everything you can configure, about this server and about the
+         app. Not a tab — it is reached from the gear on Home, because it is a
+         place you visit on purpose and leave again, not somewhere you live. -->
+    <section id="view-settings" class="view has-head hidden">
+      <!-- A direct child of the view on purpose: it is pinned across
+           buildSettingsNav()'s rebuild, and position:sticky only holds while its
+           own parent is on screen — a wrapper would scroll it away. -->
+      <div class="view-head settings-head">
+        <button id="settings-back" class="btn small iconled" title="back to Home"><span data-icon="chevron-left"></span> Home</button>
+        <span class="head-title">Settings</span>
       </div>
       <div class="section-head"><h2>Server</h2></div>
       <div id="server-identity" class="card ident-card"><div class="muted">Loading server details…</div></div>
@@ -531,7 +542,7 @@
 
   <nav class="tabbar">
     <div class="rail-brand"><img class="rail-logo" src="/icons/logo.svg" alt=""><span class="rail-name">PocketADM</span></div>
-    <button class="tab active" data-view="server"><span class="ico" data-icon="server"></span><span id="server-badge" class="badge hidden"></span><span class="tab-label">Server</span></button>
+    <button class="tab active" data-view="home"><span class="ico" data-icon="layout-grid"></span><span id="home-badge" class="badge hidden"></span><span class="tab-label">Home</span></button>
     <button class="tab" data-view="vibe"><span class="ico" data-icon="sparkles"></span><span class="tab-label">Vibe</span></button>
     <button class="tab" data-view="terminal"><span class="ico" data-icon="terminal"></span><span class="tab-label">Term</span></button>
     <button class="tab" data-view="health"><span class="ico" data-icon="heart-pulse"></span><span id="health-badge" class="badge hidden"></span><span class="tab-label">Health</span></button>
