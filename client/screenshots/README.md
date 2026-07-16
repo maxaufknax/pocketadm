@@ -36,3 +36,20 @@ port 8091):
 `shots.js` logs in with the demo password, hides the demo banner, walks the five
 tabs and writes 414x896 @3x. Note Node resolves modules from the *script's*
 directory, hence `NODE_PATH`.
+
+The files are numbered in the order the store should show them: `01-home`,
+`02-vibe`, `03-apps`, `04-health`, `05-terminal`. **Delete the old PNGs when the
+numbering changes** — a rename leaves the previous set behind, and stale
+screenshots of an old layout sitting next to fresh ones is how the wrong one
+gets uploaded.
+
+Two tabs need help to photograph well, and `shots.js` fails loudly rather than
+shipping either:
+
+- **Terminal** opens on its launcher, not on a shell, so the script taps the
+  first target and runs `docker ps` — otherwise the shot is an empty black
+  rectangle. It then drops focus, because typing raises `body.kb-open` and
+  slides the tab bar away for the keyboard.
+- **Vibe** needs the demo's seeded chat, which only opens because boot falls
+  back to the first non-empty conversation when there's no `localStorage` to
+  resume from (a first-time visitor, which is what a capture run is).

@@ -64,7 +64,7 @@ function addRemoteServer(base, token, name, demo) {
 }
 
 const state = {
-  view: "server",
+  view: "home",
   healthView: "updates",
   aiConfigured: false,
   me: null,
@@ -526,6 +526,9 @@ function openInstruct(prefill = "", context = "") {
 }
 
 $("#instruct-btn").addEventListener("click", () => openInstruct());
+// Settings is pushed from Home's gear and pops straight back to it.
+$("#settings-btn").addEventListener("click", () => showView("settings"));
+$("#settings-back").addEventListener("click", () => showView("home"));
 
 /* ---------------------------------------------------------- auth */
 
@@ -619,12 +622,17 @@ $("#login-form").addEventListener("submit", async (e) => {
 function showView(name) {
   state.view = name;
   $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
-  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
-  // The topbar (server switcher, bell, instruct) only belongs on Server: the
-  // working tabs want every pixel of height they can get.
-  document.body.classList.toggle("chrome-off", name !== "server");
+  // Settings has no tab of its own, so it leaves Home lit: it is a page you
+  // pushed from there and will come back to, which is what the tab should say.
+  const tabFor = name === "settings" ? "home" : name;
+  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === tabFor));
+  // The topbar (server switcher, bell, instruct, gear) only belongs on Home: the
+  // working tabs want every pixel of height they can get. Views that turn it off
+  // carry their own .view-head instead — see the backdrop rule in style.css.
+  document.body.classList.toggle("chrome-off", name !== "home");
   showTabbar();                       // a tab tap must never leave the bar hidden
-  if (name === "server") { loadSettings(); refreshLive(); }
+  if (name === "home") refreshLive();
+  if (name === "settings") loadSettings();
   if (name === "terminal") initTerminal();
   if (name === "apps") { loadApps(); refreshLive(); }
   if (name === "health") { loadHealth(); refreshLive(); }
@@ -642,23 +650,26 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.v
 
 /* ---------------------------------------------------------- dashboard */
 
-/* One poll, three tabs. The vitals tiles live on Health, the service list on
-   Apps and the glance on Server — fetching per-tab would mean three timers and
-   three ways to go stale, so this fetches only what the current tab needs and
-   feeds whichever of them is on screen. */
-const LIVE_VIEWS = ["health", "apps", "server"];
+/* One poll, three tabs. The vitals tiles and the glance live on Home, the
+   service list on Apps — fetching per-tab would mean three timers and three ways
+   to go stale, so this fetches only what the current tab needs and feeds
+   whichever of them is on screen. */
+const LIVE_VIEWS = ["home", "health", "apps"];
 
 async function refreshLive() {
-  const wantVitals = state.view === "health" || state.view === "server";
-  const wantServices = state.view === "apps" || state.view === "server";
+  const wantVitals = state.view === "home";
+  // Home doesn't list services, but its glance counts them.
+  const wantServices = state.view === "apps" || state.view === "home";
   try {
     if (wantVitals) { state.system = await api("/system"); renderVitals(state.system); }
     if (wantServices) {
       state.containers = await api("/containers");
-      // keep the search box's focus/caret while the user is typing in it
-      const search = $("#service-list .svc-search");
-      if (search && document.activeElement === search) renderSvcResults();
-      else renderServices();
+      if (state.view === "apps") {
+        // keep the search box's focus/caret while the user is typing in it
+        const search = $("#service-list .svc-search");
+        if (search && document.activeElement === search) renderSvcResults();
+        else renderServices();
+      }
     }
     $("#conn-dot").className = "dot ok";
   } catch (e) {
@@ -666,8 +677,9 @@ async function refreshLive() {
   }
   // Deliberately outside the fetch try: a rendering bug in the glance must not
   // masquerade as "your server is unreachable" (it did exactly that once).
-  if (state.view === "server") {
-    try { renderGlance(); } catch (e) { console.error("glance render failed", e); }
+  if (state.view === "home") {
+    try { renderGlance(); renderHomeActivity(); }
+    catch (e) { console.error("glance render failed", e); }
   }
   clearTimeout(state.dashTimer);
   if (LIVE_VIEWS.includes(state.view)) state.dashTimer = setTimeout(refreshLive, 6000);
@@ -679,7 +691,9 @@ function renderVitals(s) {
     $("#stat-mem").textContent = s.memory.percent + "%";
     $("#stat-disk").textContent = s.disk.percent + "%";
     $("#stat-uptime").textContent = fmtUptime(s.uptime);
-    $("#stat-load").textContent = "load " + s.load.map((x) => x.toFixed(2)).join(" ");
+    // 1-minute load only: three figures no longer fit the narrow tile, and the
+    // full set is a tap away in the graph.
+    $("#stat-load").textContent = "load " + s.load[0].toFixed(2);
     for (const [id, pct] of [["cpu", s.cpu_percent], ["mem", s.memory.percent], ["disk", s.disk.percent]]) {
       const bar = $("#bar-" + id);
       bar.style.width = pct + "%";
@@ -694,17 +708,18 @@ function renderVitals(s) {
       $("#stat-net-sub").textContent = "measuring";
     }
   } catch (e) {
-    // the tiles only exist on Health; ignore when that markup isn't mounted
+    // the tiles only exist on Home; ignore when that markup isn't mounted
   }
 }
 
-/* Server tab: this server at a glance. Everything here is a doorway — the
-   numbers that used to *be* Home now live on Health and Apps, so the glance
-   summarises them and hands you off to the tab that owns the detail. */
+/* Home's glance. Everything here is a doorway: it summarises what the other
+   tabs own and hands you off to the one holding the detail. The vitals are not
+   among them — their tiles sit directly above, so a row restating them would
+   just be a second copy of the same numbers. */
 function renderGlance() {
-  const box = $("#server-glance");
+  const box = $("#home-glance");
   if (!box) return;
-  const s = state.system, cs = state.containers || [];
+  const cs = state.containers || [];
   const running = cs.filter((c) => (c.state || c.status || "").toLowerCase().includes("run")).length;
   // /updates answers { docker: [...] } — not a bare list
   const ups = ((state.updates && state.updates.docker) || []).filter((u) => u.update_available).length;
@@ -721,9 +736,6 @@ function renderGlance() {
 
   box.innerHTML = "";
   box.append(
-    row({ icon: "heart-pulse", tint: "tint-2",
-      title: s ? `CPU ${s.cpu_percent}% · RAM ${s.memory.percent}% · Disk ${s.disk.percent}%` : "Vitals",
-      sub: "Live graphs, updates and security checks", go: () => showView("health") }),
     row({ icon: "blocks", tint: "tint-1",
       title: cs.length ? `${running} of ${cs.length} running` : "Programs",
       sub: "Everything installed on this server, and the store", go: () => showView("apps") }),
@@ -741,6 +753,34 @@ function renderGlance() {
       sub: "What your background agents found",
       go: () => { showView("health"); selectHealthView("checks"); } }),
   );
+  hydrateIcons(box);
+}
+
+/* The last things the background agents found, on Home instead of only behind
+   the bell. They are the most valuable thing the app produces on its own, and a
+   badge you have to go looking for is a poor way to show them. Silence is left
+   silent: with nothing to report the section is not rendered at all. */
+const NOTIF_ICONS = { ok: "check-circle-2", info: "info", warn: "alert-triangle", crit: "siren" };
+
+function renderHomeActivity() {
+  const box = $("#home-activity");
+  if (!box) return;
+  const items = ((state.notifs && state.notifs.items) || []).slice(0, 3);
+  box.innerHTML = "";
+  box.classList.toggle("hidden", !items.length);
+  if (!items.length) return;
+
+  box.append(el("div", { class: "section-head" }, el("h2", {}, "Latest findings")));
+  for (const n of items) {
+    const tint = NOTIF_ICONS[n.status] ? "tint-" + n.status : "tint-info";
+    box.append(el("button", { class: "glance-row", onclick: () => openReportDetail(n) },
+      el("span", { class: "tile-icon sm " + tint, "data-icon": NOTIF_ICONS[n.status] || "bell" }),
+      el("div", { class: "glance-main" },
+        el("div", { class: "glance-title" }, n.title),
+        el("div", { class: "glance-sub" },
+          `${n.source} · ${timeAgo(n.last_seen || n.time)}` + ((n.count || 1) > 1 ? ` · seen ${n.count}×` : ""))),
+      el("span", { class: "glance-chev", "data-icon": "chevron-right" })));
+  }
   hydrateIcons(box);
 }
 
@@ -1262,13 +1302,6 @@ function renderServices() {
   ensureAppsData();
   const runningN = all.filter((c) => c.state === "running").length;
   const problemCount = all.filter(svcProblem).length;
-  // colored at-a-glance summary in the section head
-  const count = $("#container-count");
-  count.innerHTML = "";
-  count.append(el("span", { class: "svc-sum ok" }, `${runningN} running`));
-  if (problemCount) count.append(" · ", el("span", { class: "svc-sum bad" }, `${problemCount} issue${problemCount > 1 ? "s" : ""}`));
-  if (all.length - runningN - problemCount > 0)
-    count.append(" · ", el("span", { class: "svc-sum dim" }, `${all.length - runningN} off`));
 
   const wrap = $("#service-list");
   wrap.innerHTML = "";
@@ -1277,7 +1310,9 @@ function renderServices() {
   // filter/group change so the search box keeps focus while typing.
   const bar = el("div", { class: "svc-filter" });
   const seg = el("div", { class: "seg" });
-  const modes = [["all", "All"], ["running", "Running"],
+  // Each filter carries its own count: that is the same information the old
+  // "56 running · 2 issues" header line spelled out, without spending a row on it.
+  const modes = [["all", `All · ${all.length}`], ["running", `Running · ${runningN}`],
     ["problems", `Issues${problemCount ? " · " + problemCount : ""}`]];
   for (const [id, label] of modes) {
     seg.append(el("button", { class: svcFilter.mode === id ? "active" : "",
@@ -1975,10 +2010,10 @@ function renderWelcome() {
   wrap.append(grid);
   if (!state.aiConfigured) {
     // was "→ More" — a tab that no longer exists. Make it the way there, not
-    // just a label: the keys live under Server → AI providers.
+    // just a label: the keys live under Settings → AI providers.
     wrap.append(el("button", { class: "warn", id: "vibe-no-ai",
-      onclick: () => { showView("server"); selectSettingsGroup("ai"); } },
-      "No AI key configured yet — add one under Server → AI"));
+      onclick: () => { showView("settings"); selectSettingsGroup("ai"); } },
+      "No AI key configured yet — add one under Settings → AI"));
   }
   return wrap;
 }
@@ -2112,7 +2147,7 @@ $("#chat-workspace-btn").addEventListener("click", () => openFolderPicker({
   title: "Working folder",
   start: state.chatWorkdir || "",
   intro: "Pick where the agent should work. These are your allowed workspaces " +
-    "(configure under Server → Default workspace).",
+    "(configure under Settings → Default workspace).",
   chooseLabel: (p) => `Work here: ${p}`,
   onChoose: (path) => { state.chatWorkdir = path; updateWsLabel(); sendChatConfig(); },
 }));
@@ -3187,13 +3222,14 @@ if (matchMedia("(pointer: coarse)").matches) {
 // Every tab that shows live server data can be pulled to refresh.
 attachPullToRefresh($("#view-health"), async () => { await refreshLive(); await loadHealth(); });
 attachPullToRefresh($("#view-apps"), async () => { await refreshLive(); await loadApps(); });
-attachPullToRefresh($("#view-server"), async () => { await refreshLive(); await loadSettings(); });
+attachPullToRefresh($("#view-home"), async () => { await refreshLive(); });
 
-// Android back: close what's open before letting the OS minimize the app
+// Android back: close what's open before letting the OS minimize the app.
+// Settings was pushed from Home, so back means Home — same as the button.
 window.addEventListener("pocketadm-back", (e) => {
   if (!$("#modal").classList.contains("hidden")) { e.preventDefault(); closeModal(); return; }
-  if (!$("#app").classList.contains("hidden") && state.view !== "server") {
-    e.preventDefault(); showView("server");
+  if (!$("#app").classList.contains("hidden") && state.view !== "home") {
+    e.preventDefault(); showView("home");
   }
 });
 
@@ -3553,8 +3589,12 @@ async function connectTerminal() {
   state.term.reset();
   termStatus("connecting…", "");
 
-  // no session yet (or it was closed) → mint one server-side, then attach
-  if (!state.termSessionId) {
+  // no session yet (or it was closed) → mint one server-side, then attach.
+  // The demo has nothing to mint: it never spawns a PTY, and ws_terminal serves
+  // the simulated shell whatever session we ask for. Minting there only earned a
+  // 403 from the read-only guard, which is why the demo's Terminal tab showed
+  // "couldn't open a session" over an empty black rectangle.
+  if (!state.termSessionId && !state.me?.demo) {
     try {
       const r = await api("/terminal/sessions", { method: "POST",
         body: JSON.stringify({ context: state.termContext, title: state.termTitle }) });
@@ -3949,14 +3989,29 @@ async function openUpdateWays(u) {
         openVibeWith(`Please update ${u.label || u.image} on my server. Check what changed first, ` +
           `tell me if anything looks risky, then do it and verify it came back healthy.`);
       }),
+    // Rare, and the opposite of the three above — it lives here rather than as a
+    // fifth button that wrapped every card onto a second row of actions.
+    pick("bell-off", "tint-0", "Stop telling me about it",
+      "Hides this update until a newer version appears. Undo it under Ignored updates.",
+      () => ignoreUpdate(u)),
   );
   openModal("Update " + (u.label || u.image), body);
   hydrateIcons(body);
 }
 
+async function ignoreUpdate(u) {
+  await api("/updates/ignore", { method: "POST",
+    body: JSON.stringify({ image: u.image, ignored: true }) });
+  loadUpdates();
+}
+
 function updateCard(group) {
   const u = group[0];
   const multi = group.length > 1;
+  // Four actions is what fits one row on a phone. "ignore" was the fifth and the
+  // rarest, so it moved into the ⋯ sheet — see openUpdateWays(). A multi-version
+  // card has no ⋯ (each version updates from its own row below), so it keeps
+  // ignore inline, where two buttons leave room for it.
   const actions = el("div", { class: "card-actions" });
   if (!multi) {
     actions.append(el("button", {
@@ -3969,16 +4024,12 @@ function updateCard(group) {
   actions.append(el("button", {
     class: "btn small iconled", onclick: () => openUpdateDetail(u) }, ic("info"), " Details"));
   actions.append(el("button", {
-    class: "btn small ai", onclick: () => explainUpdate(u.image, "docker"),
-    class: "btn small ai iconled" }, ic("sparkles"), " Explain"));
-  actions.append(el("button", {
-    class: "btn small", style: "margin-left:auto",
-    onclick: async () => {
-      await api("/updates/ignore", { method: "POST",
-        body: JSON.stringify({ image: u.image, ignored: true }) });
-      loadUpdates();
-    },
-    class: "btn small iconled" }, ic("bell-off"), " ignore"));
+    class: "btn small ai iconled", onclick: () => explainUpdate(u.image, "docker") },
+    ic("sparkles"), " Explain"));
+  if (multi) {
+    actions.append(el("button", { class: "btn small iconled", style: "margin-left:auto",
+      onclick: () => ignoreUpdate(u) }, ic("bell-off"), " ignore"));
+  }
 
   const card = el("div", { class: "card" },
     el("div", { class: "card-row" },
@@ -4733,21 +4784,21 @@ function groupForHead(text) {
 
 function selectSettingsGroup(id) {
   localStorage.setItem(SETTINGS_KEY, id);
-  $$("#view-server .settings-group").forEach((g) =>
+  $$("#view-settings .settings-group").forEach((g) =>
     g.classList.toggle("hidden", g.dataset.group !== id));
   $$("#settings-nav .set-chip").forEach((c) =>
     c.classList.toggle("active", c.dataset.group === id));
-  const view = $("#view-server");
+  const view = $("#view-settings");
   if (view) view.scrollTop = 0;
 }
 
 function buildSettingsNav() {
-  const view = $("#view-server");
+  const view = $("#view-settings");
   if (!view || view.dataset.nav === "1") return;
 
-  // The glance is pinned: it must stay above the group chips whichever group is
+  // The header is pinned: it must stay above the group chips whichever group is
   // selected, and survive the innerHTML rebuild below.
-  const pinned = view.querySelector("#server-pinned");
+  const pinned = view.querySelector(".view-head");
 
   // slice the flat children into sections that each start at a .section-head
   const sections = [];
@@ -5611,10 +5662,11 @@ async function refreshNotifs() {
   try {
     const r = await api("/notifications");
     state.notifs = r;
-    // The bell only exists on the Server tab now (chrome-off elsewhere), so the
-    // count is mirrored onto the Server tab itself — otherwise a finding raised
-    // while you're in the terminal would be invisible until you wandered back.
-    for (const id of ["#notif-badge", "#server-badge"]) {
+    renderHomeActivity();
+    // The bell only exists on Home (chrome-off elsewhere), so the count is
+    // mirrored onto the Home tab itself — otherwise a finding raised while
+    // you're in the terminal would be invisible until you wandered back.
+    for (const id of ["#notif-badge", "#home-badge"]) {
       const badge = $(id);
       if (!badge) continue;
       badge.textContent = r.unseen > 9 ? "9+" : r.unseen;
@@ -5632,15 +5684,17 @@ async function openNotifications() {
   const r = await refreshNotifs();
   api("/notifications/seen", { method: "POST" })
     .then(() => { $("#notif-badge")?.classList.add("hidden");
-                  $("#server-badge")?.classList.add("hidden"); }).catch(() => {});
+                  $("#home-badge")?.classList.add("hidden"); }).catch(() => {});
   body.append(el("div", { class: "card-actions", style: "margin-bottom:10px" },
-    el("button", { class: "btn small", onclick: () => {
-      closeModal(); showView("server");
+    el("button", { class: "btn small iconled", onclick: () => {
+      // The loops live in the Automation group — without selecting it first the
+      // scroll would target a section that is still hidden.
+      closeModal(); showView("settings"); selectSettingsGroup("automation");
       setTimeout(() => $("#loops-list")?.scrollIntoView({ behavior: "smooth" }), 150);
-    }, class: "btn small iconled" }, ic("settings"), " Configure background agents")));
+    } }, ic("settings"), " Configure background agents")));
   if (!r.items.length) {
     body.append(el("p", { class: "muted" },
-      "Nothing yet. Enable a Sentinel loop under Server → Background agents — " +
+      "Nothing yet. Enable a Sentinel loop under Settings → Background agents — " +
       "it will watch your server and report here (and via ntfy push, if configured)."));
     return;
   }
@@ -6584,7 +6638,7 @@ async function boot() {
       } catch {}
     }
     await populateModels();   // picker ready before the first session snapshot
-    showView(openChat ? "vibe" : "server");
+    showView(openChat ? "vibe" : "home");
     chatConnect();
     // preload updates so the health badge is meaningful
     api("/updates").then((r) => { state.updates = r; updateHealthBadge(); }).catch(() => {});
