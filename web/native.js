@@ -13,9 +13,31 @@
   const C = window.Capacitor;
   const isNative = !!(C && typeof C.isNativePlatform === "function" && C.isNativePlatform());
   const platform = isNative ? C.getPlatform() : "web";
-  const P = (isNative && C.Plugins) || {};
   const coarse = matchMedia("(pointer: coarse)").matches;
   const root = document.documentElement;
+
+  /* Resolving a plugin is not just `Capacitor.Plugins.X`.
+     That map is filled in by each plugin's *JS package* calling registerPlugin
+     when it is imported — and this app has no bundler and imports nothing, so
+     it can be empty even though the plugin is compiled into the binary.
+     `Capacitor.registerPlugin(name)` builds the same proxy directly against the
+     native bridge, which is the supported route for a vanilla web app.
+
+     This is not theoretical: iOS has no navigator.vibrate, so if Plugins.Haptics
+     is missing, every haptic call silently does nothing — the app just feels
+     dead, which is exactly the symptom that sent us looking here. */
+  const plugin = (name) => {
+    try {
+      const direct = C && C.Plugins && C.Plugins[name];
+      if (direct) return direct;
+      if (C && typeof C.registerPlugin === "function") return C.registerPlugin(name);
+    } catch (e) {}
+    return null;
+  };
+  const P = isNative
+    ? { Haptics: plugin("Haptics"), Keyboard: plugin("Keyboard"), StatusBar: plugin("StatusBar"),
+        App: plugin("App"), CapacitorBarcodeScanner: plugin("CapacitorBarcodeScanner") }
+    : {};
 
   const N = {
     isNative,
@@ -23,6 +45,17 @@
     kbOpen: false,
     haptic,
     themeChanged,
+    // What the bridge actually resolved, for the About card. The native shell
+    // can't be driven from a dev machine, so this is how the person holding the
+    // phone can tell whether haptics are wired or silently doing nothing.
+    diag: () => ({
+      isNative, platform, coarse,
+      haptics: !!P.Haptics, keyboard: !!P.Keyboard, statusBar: !!P.StatusBar,
+      scanner: !!P.CapacitorBarcodeScanner,
+      vibrate: typeof navigator.vibrate === "function",
+      via: (C && C.Plugins && C.Plugins.Haptics) ? "Capacitor.Plugins"
+        : (C && typeof C.registerPlugin === "function") ? "registerPlugin" : "none",
+    }),
   };
   window.PocketNative = N;
 
@@ -117,6 +150,10 @@
   function fireKb(open, height) {
     window.dispatchEvent(new CustomEvent("pocketadm-kb", { detail: { open, height } }));
   }
+
+  // blur() alone usually closes it, but WKWebView keeps it up often enough that
+  // the app must be able to say so explicitly (app.js: tap-outside-to-dismiss).
+  N.hideKeyboard = () => { if (P.Keyboard) quiet(() => P.Keyboard.hide()); };
 
   if (isNative && P.Keyboard) {
     const K = P.Keyboard;

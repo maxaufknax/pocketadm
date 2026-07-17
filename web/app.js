@@ -228,6 +228,39 @@ applyTheme(storedTheme());
       if (ht.checked) setTimeout(() => hap("success"), 60);  // hello again
     });
   }
+  renderBridge();
+}
+
+/* Say, on the device, whether the switch above can do anything.
+
+   A haptic that does nothing fails silently — there is no error, the phone just
+   sits there, and you cannot tell a broken bridge from a subtle tap. It is also
+   the one thing no test here can answer: the plugin bridge only exists in the
+   native shell, so a browser (headless or on the reviewer's desk) will always
+   report it missing. Hence the device reports on itself.
+
+   `via` is the interesting field. Capacitor.Plugins is populated by each
+   plugin's JS package calling registerPlugin on import — this app has no bundler
+   and imports nothing, so that map can be empty while the plugin sits compiled
+   into the binary. native.js falls back to Capacitor.registerPlugin(), and this
+   line is how we confirm which route actually answered. */
+function renderBridge() {
+  const p = document.querySelector("#bridge-diag");
+  const N = window.PocketNative;
+  if (!p || !N || !N.diag) return;
+  const d = N.diag();
+  let msg;
+  if (!d.isNative) {
+    msg = d.vibrate
+      ? "In the browser: haptics use the vibration API. The installed app uses the Taptic engine."
+      : "In the browser: this device has no vibration API, so haptics stay silent here. They work in the installed app.";
+  } else if (d.haptics) {
+    msg = `Taptic engine connected on ${d.platform} (via ${d.via}).`;
+  } else {
+    msg = `No haptics on this ${d.platform} build — the bridge did not resolve, so taps stay silent.`;
+  }
+  p.textContent = msg;
+  p.classList.remove("hidden");
 }
 
 function renderThemeGrid() {
@@ -527,8 +560,57 @@ function openInstruct(prefill = "", context = "") {
 
 $("#instruct-btn").addEventListener("click", () => openInstruct());
 // Settings is pushed from Home's gear and pops straight back to it.
-$("#settings-btn").addEventListener("click", () => showView("settings"));
-$("#settings-back").addEventListener("click", () => showView("home"));
+$("#settings-btn").addEventListener("click", () => pushSettings());
+$("#settings-back").addEventListener("click", () => popSettings());
+
+/* Swipe from the left edge to go back — the gesture an iOS user tries without
+   being told, and whose absence is felt as "this is a web page". Only from the
+   edge (a swipe further in belongs to the content), and only sideways: a
+   diagonal that is mostly vertical is a scroll, so we bow out and let it be. */
+(function attachEdgeBack() {
+  const v = $("#view-settings");
+  if (!v) return;
+  const EDGE = 26, DECIDE = 10;
+  let x0 = 0, y0 = 0, tracking = false, decided = false, dragging = false;
+
+  v.addEventListener("touchstart", (e) => {
+    if (state.view !== "settings" || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    if (t.clientX > EDGE) return;
+    x0 = t.clientX; y0 = t.clientY;
+    tracking = true; decided = false; dragging = false;
+  }, { passive: true });
+
+  v.addEventListener("touchmove", (e) => {
+    if (!tracking) return;
+    const t = e.touches[0];
+    const dx = t.clientX - x0, dy = t.clientY - y0;
+    if (!decided) {
+      if (Math.abs(dx) < DECIDE && Math.abs(dy) < DECIDE) return;
+      decided = true;
+      dragging = Math.abs(dx) > Math.abs(dy);   // sideways wins, else it's a scroll
+      if (!dragging) { tracking = false; return; }
+      v.classList.add("dragging");
+      v.classList.remove("push-in");
+      $("#view-home").classList.remove("hidden");
+    }
+    v.style.transform = `translateX(${Math.max(0, dx)}px)`;
+  }, { passive: true });
+
+  const end = () => {
+    if (!tracking) return;
+    tracking = false;
+    if (!dragging) return;
+    const dx = parseFloat((v.style.transform.match(/translateX\(([-\d.]+)px\)/) || [0, 0])[1]);
+    v.classList.remove("dragging");
+    v.style.transform = "";
+    // past a third of the screen (or any real pull) it goes; otherwise snap back
+    if (dx > window.innerWidth / 3) { hap("light"); popSettings(true); }
+    else { v.classList.add("push-in"); $("#view-home").classList.add("hidden"); }
+  };
+  v.addEventListener("touchend", end, { passive: true });
+  v.addEventListener("touchcancel", end, { passive: true });
+})();
 
 /* ---------------------------------------------------------- auth */
 
@@ -619,6 +701,41 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 /* ---------------------------------------------------------- router */
 
+/* Settings is the one view with a hierarchy: you push it from Home's gear and
+   pop back. Everything else is a peer you tab between.
+
+   Pushing is easy — the view appears and CSS slides it in. Popping is not: the
+   page has to stay on screen *over* Home while it leaves, which is the one thing
+   showView() cannot express, since it hides every view but the target. So the
+   pop reveals Home underneath first, lets Settings animate out above it, and
+   only then hands over to the router. */
+function pushSettings() {
+  const v = $("#view-settings");
+  v.classList.remove("pop-out", "dragging");
+  v.style.transform = "";
+  showView("settings");
+  v.classList.add("push-in");
+  hap("light");
+}
+
+function popSettings(fromDrag) {
+  const v = $("#view-settings");
+  if (v.classList.contains("pop-out")) return;      // already leaving
+  v.classList.remove("push-in", "dragging");
+  $("#view-home").classList.remove("hidden");       // reveal what it covers
+  v.style.transform = "";
+  v.classList.add("pop-out");
+  if (!fromDrag) hap("light");
+  const done = () => {
+    v.classList.remove("pop-out");
+    showView("home");
+  };
+  v.addEventListener("animationend", done, { once: true });
+  // animationend never fires if the animation is off (reduced motion, or the
+  // element got hidden mid-flight) — don't strand the app on a dead page.
+  setTimeout(() => { if (v.classList.contains("pop-out")) done(); }, 400);
+}
+
 function showView(name) {
   state.view = name;
   $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
@@ -626,11 +743,13 @@ function showView(name) {
   // pushed from there and will come back to, which is what the tab should say.
   const tabFor = name === "settings" ? "home" : name;
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === tabFor));
-  // The topbar (server switcher, bell, instruct, gear) only belongs on Home: the
-  // working tabs want every pixel of height they can get. Views that turn it off
-  // carry their own .view-head instead — see the backdrop rule in style.css.
-  document.body.classList.toggle("chrome-off", name !== "home");
-  showTabbar();                       // a tab tap must never leave the bar hidden
+  // The topbar belongs to Home and Settings — the two views the push/pop moves
+  // between, which must share chrome or the page jumps by the bar's height as it
+  // slides. The working tabs drop it and get those pixels back; they carry their
+  // own .view-head instead — see the backdrop rule in style.css.
+  const chrome = name === "home" || name === "settings";
+  document.body.classList.toggle("chrome-off", !chrome);
+  document.body.classList.toggle("at-settings", name === "settings");
   if (name === "home") refreshLive();
   if (name === "settings") loadSettings();
   if (name === "terminal") initTerminal();
@@ -3094,6 +3213,29 @@ window.addEventListener("pocketadm-kb", (e) => {
   if (e.detail.open && state.view === "vibe") setTimeout(() => scrollChat(), 140);
 });
 
+/* Tap a dead area to put the keyboard away.
+
+   Without this a form is a trap: the accessory bar (the grey "< > Done" strip)
+   is deliberately off — it looks like a web form, which is the whole thing we're
+   avoiding — and an iOS text field has no Return that dismisses. The transcript
+   drag below only ever covered #chat-input, so every field in Settings had no
+   way out but tapping some other control.
+
+   Controls are exempt on purpose: tapping one either moves focus itself, or (in
+   #chat-send's case) deliberately holds the keyboard open to keep the composer
+   in place while you fire off messages. */
+const EDITABLE_SEL = "input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, [contenteditable=true]";
+function isEditable(el) { return !!(el && el.matches && el.matches(EDITABLE_SEL)); }
+
+document.addEventListener("pointerdown", (e) => {
+  const ae = document.activeElement;
+  if (!isEditable(ae) || e.target === ae) return;
+  if (e.target.closest && e.target.closest(
+    EDITABLE_SEL + ", button, .btn, .tab, select, label, a, summary, [role=button]")) return;
+  ae.blur();
+  window.PocketNative?.hideKeyboard?.();
+}, { capture: true, passive: true });
+
 {
   const log = $("#chat-log");
   // dragging the transcript dismisses the keyboard (chat-app standard)
@@ -3193,30 +3335,6 @@ function attachPullToRefresh(view, onRefresh) {
   };
   view.addEventListener("touchend", release);
   view.addEventListener("touchcancel", release);
-}
-
-/* Tab bar autohide. Scrolling down a long list of services or settings hands
-   those ~62px back to the content; any deliberate scroll up brings the bar
-   straight back, as does switching tabs. Direction is accumulated so a jittery
-   finger doesn't flap the bar. */
-function showTabbar() { document.body.classList.remove("tabs-hidden"); }
-
-if (matchMedia("(pointer: coarse)").matches) {
-  const onScroll = (e) => {
-    const v = e.target;
-    if (!v.classList || !v.classList.contains("view")) return;
-    const y = v.scrollTop;
-    const dy = y - (v._lastY || 0);
-    v._lastY = y;
-    if (document.body.classList.contains("kb-open")) return;
-    if (y <= 8) { showTabbar(); v._acc = 0; return; }
-    // reset the accumulator whenever the scroll direction flips
-    if (Math.sign(dy) !== Math.sign(v._acc || 0)) v._acc = 0;
-    v._acc = (v._acc || 0) + dy;
-    if (v._acc > 52) { document.body.classList.add("tabs-hidden"); v._acc = 0; }
-    else if (v._acc < -36) { showTabbar(); v._acc = 0; }
-  };
-  $$(".view").forEach((v) => v.addEventListener("scroll", onScroll, { passive: true }));
 }
 
 // Every tab that shows live server data can be pulled to refresh.
@@ -4796,15 +4914,14 @@ function buildSettingsNav() {
   const view = $("#view-settings");
   if (!view || view.dataset.nav === "1") return;
 
-  // The header is pinned: it must stay above the group chips whichever group is
-  // selected, and survive the innerHTML rebuild below.
-  const pinned = view.querySelector(".view-head");
+  // Nothing to pin any more: this page's header is the topbar, which lives
+  // outside the view and so is untouched by the rebuild below.
 
   // slice the flat children into sections that each start at a .section-head
   const sections = [];
   let cur = null;
   for (const child of [...view.children]) {
-    if (child === pinned || child.classList.contains("ptr")) continue;
+    if (child.classList.contains("ptr")) continue;
     if (child.classList.contains("section-head")) {
       cur = { head: child.querySelector("h2")?.textContent || "", nodes: [child] };
       sections.push(cur);
@@ -4833,7 +4950,6 @@ function buildSettingsNav() {
   const ptr = view.querySelector(".ptr");
   view.innerHTML = "";
   if (ptr) view.append(ptr);          // pull-to-refresh indicator stays mounted
-  if (pinned) view.append(pinned);
   view.append(nav);
   for (const g of SETTINGS_GROUPS) view.append(groups.get(g.id));
   view.dataset.nav = "1";

@@ -72,13 +72,24 @@
 
 <!-- ============ App shell ============ -->
 <div id="app" class="app hidden">
+  <!-- One navigation bar whose contents follow the page, the way an iOS nav bar
+       does. Home and Settings must share identical chrome: the bar lives outside
+       #views, so showing it on one and hiding it on the other would resize the
+       view area mid-slide and make the page jump by the bar's height. -->
   <header class="topbar">
-    <img class="logo" src="/icons/logo.svg" alt="PocketADM">
-    <button id="host-name" class="hostname" title="switch server"><span id="conn-dot" class="dot ok" title="connected"></span><span id="host-name-text">server</span><span class="host-caret" data-icon="chevron-down"></span></button>
-    <span class="spacer"></span>
-    <button id="instruct-btn" class="iconbtn" title="instruct the agent"><span data-icon="zap"></span></button>
-    <button id="notif-btn" class="iconbtn" title="notifications"><span data-icon="bell"></span><span id="notif-badge" class="badge hidden"></span></button>
-    <button id="settings-btn" class="iconbtn" title="settings"><span data-icon="settings"></span></button>
+    <div class="tb-side tb-home">
+      <img class="logo" src="/icons/logo.svg" alt="PocketADM">
+      <button id="host-name" class="hostname" title="switch server"><span id="conn-dot" class="dot ok" title="connected"></span><span id="host-name-text">server</span><span class="host-caret" data-icon="chevron-down"></span></button>
+      <span class="spacer"></span>
+      <button id="instruct-btn" class="iconbtn" title="instruct the agent"><span data-icon="zap"></span></button>
+      <button id="notif-btn" class="iconbtn" title="notifications"><span data-icon="bell"></span><span id="notif-badge" class="badge hidden"></span></button>
+      <button id="settings-btn" class="iconbtn" title="settings"><span data-icon="settings"></span></button>
+    </div>
+    <div class="tb-side tb-settings">
+      <button id="settings-back" class="tb-back" title="back to Home"><span data-icon="chevron-left"></span> Home</button>
+      <span class="tb-title">Settings</span>
+      <span class="spacer"></span>
+    </div>
   </header>
 
   <main id="views">
@@ -99,6 +110,12 @@
         <button class="stat stat-wide" data-metric="net"><div class="stat-label">Internet</div><div class="stat-value" id="stat-net">–</div><div class="stat-sub" id="stat-net-sub"></div></button>
         <button class="stat" data-metric="load"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">–</div><div class="stat-sub" id="stat-load"></div></button>
       </div>
+      <!-- Static, unlike the "Latest findings" head below: these three rows are
+           always worth showing (there is always a program count, an update state
+           and a check state), so the heading never needs to hide. It is also
+           what holds the rows off the tiles — they used to touch, since neither
+           the grid nor .glance carried a margin. -->
+      <div class="section-head"><h2>At a glance</h2></div>
       <div id="home-glance" class="glance"></div>
       <!-- What the background agents last found. Filled by renderHomeActivity()
            and hidden entirely when there is nothing to say. -->
@@ -258,14 +275,10 @@
     <!-- Settings: everything you can configure, about this server and about the
          app. Not a tab — it is reached from the gear on Home, because it is a
          place you visit on purpose and leave again, not somewhere you live. -->
-    <section id="view-settings" class="view has-head hidden">
-      <!-- A direct child of the view on purpose: it is pinned across
-           buildSettingsNav()'s rebuild, and position:sticky only holds while its
-           own parent is on screen — a wrapper would scroll it away. -->
-      <div class="view-head settings-head">
-        <button id="settings-back" class="btn small iconled" title="back to Home"><span data-icon="chevron-left"></span> Home</button>
-        <span class="head-title">Settings</span>
-      </div>
+    <!-- No .view-head here: the topbar is this page's header (back + title), so a
+         second bar would only repeat it — and Settings must keep the same chrome
+         as Home for the push/pop to slide without jumping. -->
+    <section id="view-settings" class="view hidden">
       <div class="section-head"><h2>Server</h2></div>
       <div id="server-identity" class="card ident-card"><div class="muted">Loading server details…</div></div>
       <div class="card form-card">
@@ -307,6 +320,9 @@
           <hr class="sep">
           <label class="switch-row"><input type="checkbox" id="haptics-toggle">
             <span>Haptic feedback — a gentle tap on touches and key moments</span></label>
+          <!-- Whether the Taptic engine is actually wired can only be seen from
+               the device itself, so the device says so. Filled by renderBridge(). -->
+          <p id="bridge-diag" class="muted hidden" style="margin-top:8px"></p>
         </div>
       </div>
 

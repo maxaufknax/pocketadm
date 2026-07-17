@@ -279,7 +279,22 @@ main#views { flex: 1; overflow: hidden; position: relative; }
 }
 .view-head .head-title { font-weight: 600; font-size: 15px; }
 .view-head .seg { margin-bottom: 0; }
-.settings-head { justify-content: flex-start; }
+
+/* The topbar's two faces. Only one is mounted at a time; both sit in the same
+   bar so its height never changes and the push/pop has nothing to jump over. */
+.tb-side { display: none; align-items: center; gap: 9px; width: 100%; }
+.tb-side.tb-home { display: flex; }
+body.at-settings .tb-home { display: none; }
+body.at-settings .tb-settings { display: flex; }
+.tb-back {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 4px 8px 4px 0; margin-left: -2px; border-radius: 8px;
+}
+.tb-back svg.i { width: 19px; height: 19px; }
+.tb-back:active { opacity: .55; }
+.tb-title { font-weight: 600; font-size: 16px; }
 
 /* ---------- tabbar ---------- */
 .tabbar {
@@ -1710,9 +1725,29 @@ body > * { position: relative; z-index: 1; }
 .badge { animation: badge-pop .3s cubic-bezier(.34, 1.56, .5, 1); box-shadow: 0 2px 8px color-mix(in srgb, var(--danger) 55%, transparent); }
 @keyframes badge-pop { 0% { transform: scale(.4); } 100% { transform: scale(1); } }
 
-/* ---- view switching: gentle cross-fade (opacity only — keeps xterm happy) ---- */
-.view:not(.hidden) { animation: view-in .22s ease-out; }
-@keyframes view-in { from { opacity: 0; } to { opacity: 1; } }
+/* ---- view switching ----
+   Tabs switch instantly. They used to cross-fade for 220ms, which is a web
+   habit: iOS tab bars cut straight to the next tab, and the fade was one of the
+   loudest "this is a website" tells in the app. Motion is reserved for
+   hierarchy — see the push/pop below, where it actually means something.
+
+   Settings is a pushed page: it slides in over Home from the right and back out
+   the same way, so the gesture and the animation agree about where it went.
+   (Transforms are safe here: the xterm fit only ever objected on Terminal, and
+   these two views hold no terminal.) */
+#view-settings.push-in { animation: push-in .3s cubic-bezier(.32, .72, 0, 1); }
+#view-settings.pop-out {
+  animation: pop-out .26s cubic-bezier(.32, .72, 0, 1) forwards;
+  z-index: 10;                       /* ride above Home while leaving */
+}
+/* While a finger is dragging it, JS owns the transform — no animation. */
+#view-settings.dragging { transition: none; z-index: 10; }
+@keyframes push-in { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes pop-out { from { transform: none; } to { transform: translateX(100%); } }
+/* The page casts a shadow onto what it covers, which is what sells the depth. */
+#view-settings.push-in, #view-settings.pop-out, #view-settings.dragging {
+  box-shadow: -8px 0 24px rgba(0, 0, 0, .18);
+}
 
 /* ---- stat tiles: top sheen + gradient bars + hover lift ---- */
 .stat { position: relative; overflow: hidden; }
@@ -1827,8 +1862,12 @@ input:focus, textarea:focus, .select:focus {
 
 /* ---- reduced motion: calm everything down ---- */
 @media (prefers-reduced-motion: reduce) {
-  .view:not(.hidden), .msg, .tool-card, .think-block, .diff-card, .svc-detected,
+  .msg, .tool-card, .think-block, .diff-card, .svc-detected,
   .modal:not(.hidden) .modal-box, .tab.active .ico, .badge { animation: none; }
+  /* The page still has to leave when the animation is off, so pop-out keeps its
+     end state — it just gets there immediately. */
+  #view-settings.push-in { animation: none; }
+  #view-settings.pop-out { animation-duration: .01s; }
   .btn, .tab .ico, .seg button, .ticon, .key-bar button { transition: none; }
 }
 
@@ -1911,18 +1950,18 @@ button, .tab, .seg, .tabbar, .topbar, .stat, .suggest, .msg-actions,
 .modal { padding-bottom: var(--kb, 0px); }   /* bottom sheets ride the keyboard too */
 @media (max-width: 899px) {
   .app { overflow: hidden; }
-  .tabbar {
-    transition: transform .24s cubic-bezier(.4, 0, .2, 1),
-                margin-bottom .24s cubic-bezier(.4, 0, .2, 1);
-  }
+  /* Only the transform animates. The margin below is a layout property, and it
+     used to animate alongside it — which meant every slide relaid out the whole
+     shell for the length of the animation instead of once. It now snaps in a
+     single step, hidden inside the keyboard's own motion. */
+  .tabbar { transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
+  /* The keyboard is the only thing that takes the bar away — it earns the room
+     for the composer. (Scrolling used to as well; iOS tab bars don't, so it
+     doesn't any more.) The transform alone would leave the bar's 62px sitting
+     empty between the composer and the keyboard: the bar is a flex child of
+     .app, so it keeps its space no matter where it is painted. The negative
+     margin is what actually hands those pixels back to #views. */
   body.kb-open .tabbar {
-    transform: translateY(102%);
-    margin-bottom: calc(-1 * var(--tabbar-real, calc(var(--tabbar-h) + var(--safe-bottom))));
-    pointer-events: none;
-  }
-  /* Autohide: scrolling down a long list hands those pixels to the content.
-     Same slide-away mechanics as the keyboard case above. */
-  body.tabs-hidden .tabbar {
     transform: translateY(102%);
     margin-bottom: calc(-1 * var(--tabbar-real, calc(var(--tabbar-h) + var(--safe-bottom))));
     pointer-events: none;
