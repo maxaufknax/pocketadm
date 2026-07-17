@@ -3,6 +3,44 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.17.0 — It stops feeling like a web page
+
+Five things gave the app away as a website wearing an app's icon. They are the
+kind of detail nobody names — you just come away thinking it's *a bit off*.
+
+- **Fixed: haptics did nothing on iPhone.** Every tap was meant to answer with a
+  small tick. None of them did. The plugin was in the binary the whole time; the
+  app was looking for it in the wrong place. `Capacitor.Plugins` is filled in by
+  each plugin's JavaScript package as it gets imported — and this app has no
+  bundler and imports nothing, so that shelf was simply bare. It now asks the
+  bridge for the plugin directly. iOS has no vibration API to fall back on, so
+  there was nothing to notice failing: the phone just sat there. *Settings →
+  Appearance* now states, on the device, whether the Taptic engine is connected —
+  the one question no test on a desktop can answer.
+- **Tabs switch instantly.** They used to cross-fade for 220ms. iOS tab bars cut
+  straight to the next tab; the fade was the loudest tell in the app. Motion is
+  now reserved for hierarchy, where it means something.
+- **Settings is a page you push, not a tab you land on.** It slides in from the
+  right off the gear, the bar turns into *‹ Home · Settings*, and it slides back
+  out the way it came. **Swipe from the left edge** to go back — the gesture you
+  try without being told, and whose absence reads as "this is a web page". A
+  swipe that starts away from the edge still belongs to the content.
+- **The tab bar stays where you left it.** It used to hide as you scrolled down
+  and come back as you scrolled up. That is *browser* behaviour — Safari does it,
+  iOS apps do not, and a tab bar that runs from your thumb is not a feature. It
+  also animated a layout property on every direction flip, relaying out the whole
+  shell mid-scroll. The keyboard is now the only thing that takes it away, since
+  there it earns the room for the composer.
+- **A tap outside a text field puts the keyboard away.** There was no way out of
+  one: the grey *‹ › Done* accessory bar is deliberately off (it looks like a web
+  form, which is the thing we're avoiding) and an iOS field has no Return that
+  dismisses. Every field in Settings was a trap. Controls stay exempt — tapping
+  one either moves focus itself or, like *send*, means to keep the keyboard up.
+- **Home: the summary rows have a name and some air.** *56 of 58 running* and its
+  two neighbours sat flush against the metric tiles, unlabelled — neither the
+  grid nor the rows carried a margin between them. They are now **At a glance**,
+  set off the tiles the way **Latest findings** is set off them.
+
 ## v0.16.0 — Home is a home again, and the header clears the notch
 
 - **Fixed: the header hid under the Dynamic Island.** v0.15 gave the top bar to
