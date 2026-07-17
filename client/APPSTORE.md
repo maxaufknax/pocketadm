@@ -294,6 +294,16 @@ Thin website-wrappers get rejected. PocketADM is already well-positioned:
    `ios-release` — or leave it `false` and press *Submit for Review* manually on
    the processed build in App Store Connect. Until then it stays `false` on
    purpose: every CI run only ships to TestFlight.
+
+   ⚠️ **Never start a build with that flag `true` while a version is "Waiting for
+   Review".** A build and an App Store version are separate records: the pending
+   version has its build pinned, so a plain TestFlight upload cannot disturb it —
+   keep shipping betas mid-review all you like. The flag is the one thing that
+   can, because it opens a *second* submission for the same `MARKETING_VERSION`,
+   which either fails the publish step or pulls the pending build out of review
+   and costs you the queue position. Bump `MARKETING_VERSION` (1.0.0 → 1.0.1)
+   before the next real release; build numbers are `date +%Y%m%d%H%M` and never
+   collide on their own.
 5. After approval: switch the release toggle in ASC to *manual release* if you
    want to control launch day.
 
