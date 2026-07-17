@@ -150,8 +150,16 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
-        # Public release: each green build is submitted to App Review, not just
-        # TestFlight. The App Store listing itself (price = Free, screenshots,
-        # description) is managed in App Store Connect -- see client/APPSTORE.md.
-        # Apple reviews the build; nothing goes live without release approval.
-        submit_to_app_store: true
+        # TestFlight only. Flip to true ONLY on the build you actually mean to
+        # release, and bump MARKETING_VERSION with it.
+        #
+        # Why it is false while a version sits in App Review: a build and an App
+        # Store version are separate records. The submitted version has its build
+        # pinned, and a fresh upload does not attach itself to it -- so uploading
+        # to TestFlight mid-review is safe and leaves the queue position alone.
+        # `submit_to_app_store: true` is what breaks that: it creates a *second*
+        # submission for the same MARKETING_VERSION, which either errors out or
+        # pulls the pending build back out of review. Build numbers come from
+        # `date +%Y%m%d%H%M`, so parallel TestFlight builds never collide with
+        # the one under review -- only this flag does.
+        submit_to_app_store: false
