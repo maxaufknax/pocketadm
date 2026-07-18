@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.17.0"
+VERSION = "0.18.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -201,6 +201,26 @@ def get_custom_instructions() -> str:
 
 def set_custom_instructions(text: str) -> None:
     settings["custom_instructions"] = (text or "").strip()[:CUSTOM_INSTRUCTIONS_MAX]
+    save_settings(settings)
+
+
+def get_autoread() -> bool:
+    """Whether read-only shell commands run without a per-action approval."""
+    return bool(settings.get("agent_autoread", True))
+
+
+def set_autoread(enabled: bool) -> None:
+    settings["agent_autoread"] = bool(enabled)
+    save_settings(settings)
+
+
+def get_servermap_enabled() -> bool:
+    """Whether the live server map is injected into the agent's system prompt."""
+    return bool(settings.get("context_servermap", True))
+
+
+def set_servermap_enabled(enabled: bool) -> None:
+    settings["context_servermap"] = bool(enabled)
     save_settings(settings)
 
 

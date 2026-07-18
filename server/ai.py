@@ -39,7 +39,7 @@ from pathlib import Path
 
 import httpx
 
-from . import audit, chats, config, integrations, localai
+from . import audit, chats, cmdpolicy, config, hostrun, integrations, localai, skills
 
 MAX_TOOL_OUTPUT = 12000
 MAX_TURNS = 25
@@ -56,21 +56,31 @@ MEMORY_MAX_CHARS = 6000
 SYSTEM_PROMPT = """You are Vibe Code, the built-in AI engineer of Helmsman, a self-hosted \
 server management app. You work directly on the user's server through tools.
 
-Environment: you run {where}. Your working directory is {workdir}. \
-The docker CLI is available and controls the host's Docker engine{host_note}.
+Environment: {exec_note} Working directory: {workdir}. \
+The docker CLI controls the host's Docker engine.
 
 Guidelines:
 - Be concise; the user is often on a phone. Prefer short answers and small steps.
+- START from the server map, skills and memory below — they are live facts about THIS \
+server. Don't spend commands rediscovering what they already answer.
+- Read-only commands (docker ps/logs/inspect, ls, cat, grep, df …) run without asking; \
+mutating ones need the user's approval. Prefer one well-chosen command over many tiny \
+probes, and never smuggle a mutating step into a read-only-looking pipeline.
 - Inspect before you change: read files / list dirs / check state first.
+- Services managed by docker compose are changed via their stack directory (see server \
+map): edit there, then `docker compose build/up -d` in that directory. Never replace a \
+compose-managed container with a raw `docker run` — it breaks future updates.
+- Don't dump big or minified files into context: use grep, head, or targeted reads.
 - For any task with more than ~2 steps, call update_plan first to show the user a short \
 plan, and keep it updated (one step in_progress at a time) so they can follow along.
 - For destructive actions (rm, docker rm, overwriting configs), state what you are about to do first.
 - When you finish a task, summarize in 1-3 sentences what you changed.
 - Answer in the language the user writes in.
-- When you learn something durable about this server (layout, conventions, the user's \
-preferences, recurring problems and their fixes), save it with update_memory so future \
-sessions know it. Keep memory short and factual; update or remove stale entries.
-{memory_section}{mode_note}"""
+- When you learn something durable about this server (layout, conventions, preferences), \
+save it with update_memory. When you work out a non-obvious PROCEDURE (a deploy path, a \
+tricky fix), save it as a skill with save_skill so next time it is one read_skill away. \
+Keep both short and current; the live server map wins over memory if they disagree.
+{server_map_section}{skills_section}{memory_section}{mode_note}"""
 
 MODE_NOTES = {
     "chat": "\nMode: CHAT — you have no tools in this mode. Answer from knowledge; "
@@ -86,12 +96,18 @@ MODE_NOTES = {
 TOOLS = [
     {
         "name": "run_command",
-        "description": "Run a shell command on the server (bash). Returns stdout+stderr (truncated).",
+        "description": "Run a shell command on the server (bash). When host access is "
+                       "available it executes ON THE HOST as root with real host paths; "
+                       "set where:'app' to run inside the PocketADM app container instead. "
+                       "Read-only commands run without user approval. "
+                       "Returns stdout+stderr (truncated).",
         "parameters": {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "The shell command to run"},
                 "timeout": {"type": "integer", "description": "Seconds, default 60, max 300"},
+                "where": {"type": "string", "enum": ["host", "app"],
+                          "description": "host (default when available) or app container"},
             },
             "required": ["command"],
         },
@@ -205,6 +221,34 @@ TOOLS = [
         },
     },
     {
+        "name": "read_skill",
+        "description": "Read the full text of one of the skills (how-to recipes for this "
+                       "server) listed in your system prompt. Do this before starting a "
+                       "task a skill covers.",
+        "parameters": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "skill name from the list"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "save_skill",
+        "description": "Create or update a skill: a short reusable recipe for a task on "
+                       "this server. Save one after you worked out a non-obvious procedure "
+                       "(deploy path, tricky fix), or refresh one that turned out wrong. "
+                       "Format: `# Title`, a `> one-line when-to-use`, then numbered steps "
+                       "with the exact commands/paths that worked.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "lowercase-dashed name, e.g. deploy-hub-landing"},
+                "content": {"type": "string", "description": "full markdown content"},
+            },
+            "required": ["name", "content"],
+        },
+    },
+    {
         "name": "update_memory",
         "description": "Update your persistent memory about this server (shown to you in "
                        "every future session). mode 'append' adds a line/section, "
@@ -221,10 +265,11 @@ TOOLS = [
 ]
 
 SAFE_TOOLS = {"read_file", "list_dir", "search_files", "fetch_url",
-              "update_memory", "update_plan"}
+              "update_memory", "update_plan", "read_skill", "save_skill"}
 MODE_TOOLS = {
     "chat": [],
-    "plan": ["run_command", "read_file", "list_dir", "search_files", "fetch_url", "update_plan"],
+    "plan": ["run_command", "read_file", "list_dir", "search_files", "fetch_url",
+             "update_plan", "read_skill"],
     "agent": [t["name"] for t in TOOLS],
     "auto": [t["name"] for t in TOOLS],
 }
@@ -272,7 +317,8 @@ STATIC_PRICING = {
 _openrouter_pricing: dict[str, tuple[float, float]] = {}
 
 
-def estimate_cost(provider: str, model: str, input_tok: int, output_tok: int) -> float | None:
+def estimate_cost(provider: str, model: str, input_tok: int, output_tok: int,
+                  cache_read: int = 0, cache_write: int = 0) -> float | None:
     pricing = None
     if provider == "openrouter" and model in _openrouter_pricing:
         pricing = _openrouter_pricing[model]
@@ -284,10 +330,12 @@ def estimate_cost(provider: str, model: str, input_tok: int, output_tok: int) ->
                 break
     if not pricing:
         return None
-    return (input_tok * pricing[0] + output_tok * pricing[1]) / 1_000_000
+    # Anthropic cache pricing: reads 10%, writes 125% of the input price
+    return (input_tok * pricing[0] + cache_read * pricing[0] * 0.1
+            + cache_write * pricing[0] * 1.25 + output_tok * pricing[1]) / 1_000_000
 
 
-def system_prompt(workdir: str, mode: str) -> str:
+def system_prompt(workdir: str, mode: str, server_map: str = "") -> str:
     in_container = os.path.exists("/.dockerenv")
     instructions = config.get_custom_instructions().strip()
     instr_section = ""
@@ -300,11 +348,33 @@ def system_prompt(workdir: str, mode: str) -> str:
     if memory:
         memory_section = ("\nYour memory about this server (from previous sessions):\n"
                           "<memory>\n" + memory[:MEMORY_MAX_CHARS] + "\n</memory>\n")
+    map_section = ""
+    if server_map:
+        map_section = ("\nServer map (live, auto-generated — trust it over older notes):\n"
+                       "<server_map>\n" + server_map + "\n</server_map>\n")
+    skills_index = skills.prompt_index()
+    skills_section = ""
+    if skills_index:
+        skills_section = ("\nSkills — saved how-to recipes for this server. Call "
+                          "read_skill(name) BEFORE doing a task one of them covers:\n"
+                          "<skills>\n" + skills_index + "\n</skills>\n")
+    if hostrun.available():
+        exec_note = ("your commands run ON THE HOST as root (via a helper container), "
+                     "with real host paths like /srv/… — no /host prefix needed. File "
+                     "tools read and write host paths directly too. Use where:\"app\" on "
+                     "run_command for the PocketADM app container itself (app data: /data).")
+        display_wd = hostrun.host_cwd_for(workdir) or workdir
+    else:
+        exec_note = (("you run inside the Helmsman container; the host filesystem is "
+                      "mounted read-only at /host." if os.path.isdir("/host")
+                      else "you run inside the Helmsman container."
+                      ) if in_container else "you run directly on the host.")
+        display_wd = workdir
     return SYSTEM_PROMPT.format(
-        where="inside the Helmsman container" if in_container else "directly on the host",
-        workdir=workdir,
-        host_note=(". The host filesystem is mounted read-only at /host"
-                   if os.path.isdir("/host") else ""),
+        exec_note=exec_note,
+        workdir=display_wd,
+        server_map_section=map_section,
+        skills_section=skills_section,
         memory_section=instr_section + memory_section + integrations.prompt_section(),
         mode_note=MODE_NOTES.get(mode, ""),
     )
@@ -325,6 +395,14 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
                     "Ask the user to run this manually instead.]"
                 )
             timeout = min(int(args.get("timeout") or 60), 300)
+            host_cwd = hostrun.host_cwd_for(workdir)
+            on_host = (args.get("where") != "app" and hostrun.available()
+                       and host_cwd is not None)
+            if on_host:
+                rc, text = await hostrun.run(cmd, timeout, cwd=host_cwd)
+                if rc != 0 and not text.endswith("]"):
+                    text += f"\n[exit code: {rc}]"
+                return _truncate(text) or "[no output]"
             proc = await asyncio.create_subprocess_shell(
                 args["command"], stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT, cwd=workdir,
@@ -339,14 +417,18 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
                 text += f"\n[exit code: {proc.returncode}]"
             return _truncate(text) or "[no output]"
         if name == "read_file":
-            return _truncate(_resolve(args["path"], workdir).read_text(errors="replace"))
+            return _truncate(_read_path(args["path"], workdir).read_text(errors="replace"))
         if name == "write_file":
+            host_path = _map_host_path(args["path"], workdir)
+            if host_path:
+                await hostrun.write_file(host_path, args["content"])
+                return f"Wrote {len(args['content'])} bytes to {host_path} (host)"
             p = _resolve(args["path"], workdir)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(args["content"])
             return f"Wrote {len(args['content'])} bytes to {p}"
         if name == "edit_file":
-            p = _resolve(args["path"], workdir)
+            p = _read_path(args["path"], workdir)
             text = p.read_text(errors="replace")
             old, new = args["old_text"], args["new_text"]
             n = text.count(old)
@@ -354,13 +436,22 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
                 return "Error: old_text not found in file (must match exactly, incl. whitespace)"
             if n > 1 and not args.get("replace_all"):
                 return f"Error: old_text occurs {n} times — provide more context or set replace_all"
-            p.write_text(text.replace(old, new) if args.get("replace_all")
-                         else text.replace(old, new, 1))
+            new_text = (text.replace(old, new) if args.get("replace_all")
+                        else text.replace(old, new, 1))
+            host_path = _map_host_path(args["path"], workdir)
+            if host_path:
+                await hostrun.write_file(host_path, new_text)
+                return f"Replaced {n if args.get('replace_all') else 1} occurrence(s) in {host_path} (host)"
+            p.write_text(new_text)
             return f"Replaced {n if args.get('replace_all') else 1} occurrence(s) in {p}"
+        if name == "read_skill":
+            return _truncate(skills.read(args.get("name", "")))
+        if name == "save_skill":
+            slug = skills.save(args.get("name", ""), args.get("content", ""))
+            audit.record("agent_tool", target="save_skill", source="agent", detail=slug)
+            return f"Skill '{slug}' saved. It will be listed in future sessions."
         if name == "list_dir":
-            p = Path(args.get("path") or workdir)
-            if not p.is_absolute():
-                p = Path(workdir) / p
+            p = _read_path(args.get("path") or workdir, workdir)
             lines = []
             for e in sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name)):
                 try:
@@ -370,7 +461,7 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
                 lines.append((e.name + "/" if e.is_dir() else e.name) + size)
             return _truncate("\n".join(lines) or "[empty]")
         if name == "search_files":
-            path = args.get("path") or workdir
+            path = str(_read_path(args.get("path") or workdir, workdir))
             cmd = ["grep", "-rn", "-I", "--max-count=200", "-e", args["pattern"]]
             if args.get("glob"):
                 cmd.append("--include=" + args["glob"])
@@ -523,6 +614,40 @@ def _resolve(path: str, workdir: str) -> Path:
     return p if p.is_absolute() else Path(workdir) / p
 
 
+# Paths the file tools must keep inside the app container even when host
+# access exists — the app's own data and volatile in-container trees.
+_APP_ROOTS = ("/data", "/opt/helmsman", "/tmp", "/proc", "/sys", "/dev", "/run")
+
+
+def _map_host_path(path: str, workdir: str) -> str | None:
+    """The real host path a file tool should write, or None for the app fs.
+
+    The host filesystem is mounted read-only at /host, so host writes go
+    through the hostrun helper. Accepts both real host paths (/srv/…) and
+    /host-prefixed ones; prefers the host view whenever the path exists there,
+    since that is what "a file on the server" means to the user.
+    """
+    p = os.path.normpath(str(_resolve(path, workdir)))
+    if p == hostrun.HOST or p.startswith(hostrun.HOST + "/"):
+        return hostrun.to_host_path(p) if hostrun.available() else None
+    if not hostrun.available():
+        return None
+    if any(p == r or p.startswith(r + "/") for r in _APP_ROOTS):
+        return None
+    if os.path.exists(hostrun.HOST + p) or os.path.isdir(hostrun.HOST + os.path.dirname(p)):
+        return p
+    return None
+
+
+def _read_path(path: str, workdir: str) -> Path:
+    """Where to read a file/dir from inside the app container: host paths are
+    served through the read-only /host mount, everything else as-is."""
+    host = _map_host_path(path, workdir)
+    if host is not None:
+        return Path(hostrun.HOST + host)
+    return _resolve(path, workdir)
+
+
 # ------------------------------------------------- file-edit diffs (for the UI)
 # So the user can *see* what the agent changed — how many lines added/removed and
 # a colored patch — not just "wrote N bytes". Computed around the actual write.
@@ -537,7 +662,7 @@ def capture_before(name: str, args: dict, workdir: str) -> str | None:
     if name not in FILE_WRITE_TOOLS:
         return None
     try:
-        return _resolve(args.get("path", ""), workdir).read_text(errors="replace")
+        return _read_path(args.get("path", ""), workdir).read_text(errors="replace")
     except (OSError, KeyError):
         return ""
 
@@ -548,7 +673,7 @@ def build_file_diff(name: str, args: dict, workdir: str, before: str | None) -> 
     if before is None or name not in FILE_WRITE_TOOLS:
         return None
     try:
-        after = _resolve(args.get("path", ""), workdir).read_text(errors="replace")
+        after = _read_path(args.get("path", ""), workdir).read_text(errors="replace")
     except OSError:
         return None
     if after == before:
@@ -644,14 +769,21 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
                  "content": m["content"]}]})
     thinking = normalize_thinking(thinking)
     budget = _ANTHROPIC_BUDGETS.get(thinking, 0)
+    merged = _merge_consecutive(api_messages)
+    # Prompt caching: static prefix (tools+system) plus a moving breakpoint on
+    # the last message. Each agent iteration then re-reads the whole history
+    # from cache (~10% of the token price) instead of at full price.
+    _mark_cache(merged)
     body = {
         "model": cfg["model"], "max_tokens": budget + 8192 if budget else 4096,
-        "system": sysprompt,
-        "messages": _merge_consecutive(api_messages), "stream": True,
+        "system": [{"type": "text", "text": sysprompt,
+                    "cache_control": {"type": "ephemeral"}}],
+        "messages": merged, "stream": True,
     }
     if budget:
         body["thinking"] = {"type": "enabled", "budget_tokens": budget}
     if tools:
+        tools[-1]["cache_control"] = {"type": "ephemeral"}
         body["tools"] = tools
     headers = {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"}
     url = (cfg["base_url"] or "https://api.anthropic.com") + "/v1/messages"
@@ -669,7 +801,10 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
                 ev = json.loads(line[6:])
                 t = ev.get("type")
                 if t == "message_start":
-                    usage["input"] = ev["message"].get("usage", {}).get("input_tokens", 0)
+                    u = ev["message"].get("usage", {})
+                    usage["input"] = u.get("input_tokens", 0)
+                    usage["cache_read"] = u.get("cache_read_input_tokens", 0)
+                    usage["cache_write"] = u.get("cache_creation_input_tokens", 0)
                 elif t == "content_block_start":
                     btype = ev["content_block"]["type"]
                     if btype == "tool_use":
@@ -702,6 +837,26 @@ async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
                     usage["output"] = ev.get("usage", {}).get("output_tokens", usage["output"])
             yield ("usage", usage)
             yield ("stop", stop)
+
+
+def _mark_cache(msgs: list) -> None:
+    """Set the moving cache breakpoint on the last content block of the last
+    message (list is already in Anthropic block format)."""
+    for m in reversed(msgs):
+        content = m.get("content")
+        if isinstance(content, str):
+            if not content.strip():
+                continue
+            m["content"] = [{"type": "text", "text": content,
+                             "cache_control": {"type": "ephemeral"}}]
+            return
+        if isinstance(content, list) and content:
+            blk = dict(content[-1])
+            if blk.get("type") == "text" and not (blk.get("text") or "").strip():
+                continue
+            blk["cache_control"] = {"type": "ephemeral"}
+            content[-1] = blk
+            return
 
 
 def _merge_consecutive(msgs: list) -> list:
@@ -753,6 +908,17 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
                                  "content": m["content"]})
         else:
             api_messages.append({"role": "user", "content": m["content"]})
+    # Anthropic models routed through OpenRouter honour explicit cache_control
+    # breakpoints (other providers there cache automatically).
+    if cfg["provider"] == "openrouter" and "claude" in cfg["model"].lower():
+        api_messages[0] = {"role": "system", "content": [
+            {"type": "text", "text": sysprompt, "cache_control": {"type": "ephemeral"}}]}
+        for m in reversed(api_messages[1:]):
+            c = m.get("content")
+            if isinstance(c, str) and c.strip():
+                m["content"] = [{"type": "text", "text": c,
+                                 "cache_control": {"type": "ephemeral"}}]
+                break
     body = {"model": cfg["model"], "messages": api_messages, "stream": True,
             "stream_options": {"include_usage": True}}
     thinking = normalize_thinking(thinking)
@@ -782,6 +948,9 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
                 if ev.get("usage"):
                     usage["input"] = ev["usage"].get("prompt_tokens", 0)
                     usage["output"] = ev["usage"].get("completion_tokens", 0)
+                    cached = (ev["usage"].get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+                    if cached:
+                        usage["cache_read"] = cached
                 if not ev.get("choices"):
                     continue
                 choice = ev["choices"][0]

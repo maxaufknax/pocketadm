@@ -1172,7 +1172,7 @@ details.codefold pre { margin: 0 !important; border-top-left-radius: 0 !importan
   .tab.active .ico { background: none; }
   .tab .badge { position: static; margin-left: auto; order: 9; }
   main#views { grid-column: 2; grid-row: 2; }
-  .view { padding: 30px 40px 48px; max-width: 1160px; margin: 0 auto; }
+  .view { padding: 30px 40px 48px; max-width: 1440px; margin: 0 auto; }
   /* .has-head is two classes, so it out-specifies the .view rule above no matter
      the order: the top padding it strips for the phone's flush header has to be
      put back by hand out here. */
@@ -1193,12 +1193,16 @@ details.codefold pre { margin: 0 !important; border-top-left-radius: 0 !importan
   .modal { align-items: center; }
   .modal-box { border-radius: 18px; }
   .msg { max-width: 75%; }
+  /* The chat column scales with the window instead of stopping at a fixed
+     860px: proportional side padding (~16% of the pane) with a 1400px cap,
+     so at 100% zoom the conversation fills the screen the way it used to
+     only when zoomed to 140%. */
+  #view-vibe { max-width: none; --chat-pad: max(20px, calc(16% - 80px), calc(50% - 700px)); }
   .chat-log, .vibe-controls, .chat-input-row, .usage-row {
-    padding-left: max(14px, calc(50% - 430px)); padding-right: max(14px, calc(50% - 430px));
+    padding-left: var(--chat-pad); padding-right: var(--chat-pad);
   }
-  .run-status, .slash-hints {
-    width: calc(100% - 48px); max-width: 836px;
-    margin-left: auto; margin-right: auto;
+  .run-status, .slash-hints, .plan-panel {
+    margin-left: var(--chat-pad); margin-right: var(--chat-pad);
   }
   .theme-grid { grid-template-columns: repeat(6, 1fr); }
 }
@@ -2003,8 +2007,8 @@ body.chrome-off .topbar { display: none; }
 .scroll-fab.show { opacity: 1; transform: none; pointer-events: auto; }
 .scroll-fab svg.i { width: 17px; height: 17px; }
 @media (min-width: 900px) {
-  /* keep the bubble attached to the centered transcript column */
-  .scroll-fab-anchor { width: calc(100% - 48px); max-width: 836px; margin: 0 auto; }
+  /* keep the bubble attached to the transcript column (same fluid padding) */
+  .scroll-fab-anchor { width: auto; max-width: none; margin: 0 var(--chat-pad, 24px); }
 }
 
 /* ---- honest touch targets on phones ---- */
@@ -2292,3 +2296,34 @@ html, body { overscroll-behavior: none; }
   text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px;
 }
 #vibe-no-ai:active { opacity: .6; }
+
+/* ============================================================ v0.18 additions */
+
+/* server knowledge (Settings → Agent): the live map preview + skill list */
+.knowledge-pre {
+  margin: 10px 0 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  color: var(--muted);
+}
+.skill-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 4px;
+  border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.skill-row:last-child { border-bottom: none; }
+.skill-row:active { opacity: .7; }
+.skill-row .sk-main { flex: 1; min-width: 0; }
+.skill-row .sk-desc { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-row .chev { flex: none; opacity: .5; }
+.skill-edit { display: flex; flex-direction: column; gap: 10px; }
+.skill-edit textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.skill-edit-actions { display: flex; gap: 8px; }
+.skill-edit-actions .btn { flex: 1; }
+
+/* "auto" chip on tool cards — a read-only command that ran without approval */
+.tool-auto {
+  flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .4px;
+  text-transform: uppercase; padding: 2px 6px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent2, #4ade80) 14%, transparent);
+  color: var(--accent2, #3fbf72);
+}

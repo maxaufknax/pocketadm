@@ -11,8 +11,9 @@ from pydantic import BaseModel
 
 from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                clis, config, demodata, dockerapi, hostuser, integrations, jobs,
-               localai, metrics, pairing, permissions, reports, sessions,
-               snapshots, sysinfo, terminal, termsessions, updates)
+               localai, metrics, pairing, permissions, reports, servermap,
+               sessions, skills, snapshots, sysinfo, terminal, termsessions,
+               updates)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -45,6 +46,7 @@ async def _startup():
     if config.DEMO:
         demodata.seed()
     else:
+        skills.seed_defaults()
         reports.start_scheduler()
         agents.start_scheduler()
         asyncio.ensure_future(appstore.remote_refresher())
@@ -1079,7 +1081,8 @@ async def agent_tools():
 
 @app.get("/api/agent/autonomy", dependencies=[authed])
 async def get_autonomy():
-    return {**config.get_autonomy(), "ntfy_url": config.get_ntfy_url()}
+    return {**config.get_autonomy(), "ntfy_url": config.get_ntfy_url(),
+            "autoread": config.get_autoread()}
 
 
 class AutonomyBody(BaseModel):
@@ -1088,15 +1091,74 @@ class AutonomyBody(BaseModel):
     minutes: int | None = None
     push: bool | None = None
     ntfy_url: str | None = None
+    autoread: bool | None = None
 
 
 @app.post("/api/agent/autonomy", dependencies=[authed])
 async def set_autonomy(body: AutonomyBody):
     if body.ntfy_url is not None:
         config.set_ntfy_url(body.ntfy_url)
+    if body.autoread is not None:
+        config.set_autoread(body.autoread)
+        audit.record("agent_autoread", detail="on" if body.autoread else "off")
     au = config.set_autonomy(pause_mode=body.pause_mode or "", steps=body.steps,
                              minutes=body.minutes, push=body.push)
-    return {**au, "ntfy_url": config.get_ntfy_url()}
+    return {**au, "ntfy_url": config.get_ntfy_url(), "autoread": config.get_autoread()}
+
+
+# ---- server knowledge: live map + skills ----
+
+@app.get("/api/agent/servermap", dependencies=[authed])
+async def get_servermap(refresh: bool = False):
+    text = await servermap.get(force=refresh)
+    return {"text": text, "enabled": config.get_servermap_enabled()}
+
+
+class ServermapBody(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/agent/servermap", dependencies=[authed])
+async def set_servermap(body: ServermapBody):
+    config.set_servermap_enabled(body.enabled)
+    return {"enabled": config.get_servermap_enabled()}
+
+
+@app.get("/api/skills", dependencies=[authed])
+async def list_skills():
+    return {"skills": skills.list_skills()}
+
+
+@app.get("/api/skills/{name}", dependencies=[authed])
+async def read_skill(name: str):
+    try:
+        return {"name": name, "content": skills.read(name)}
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(404, str(e))
+
+
+class SkillBody(BaseModel):
+    content: str
+
+
+@app.put("/api/skills/{name}", dependencies=[authed])
+async def save_skill(name: str, body: SkillBody):
+    try:
+        slug = skills.save(name, body.content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record("skill_save", target=slug)
+    return {"ok": True, "name": slug}
+
+
+@app.delete("/api/skills/{name}", dependencies=[authed])
+async def delete_skill(name: str):
+    try:
+        skills.delete(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record("skill_delete", target=name)
+    return {"ok": True}
 
 
 @app.get("/api/permissions", dependencies=[authed])

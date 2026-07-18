@@ -3,6 +3,45 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.18.0 — The agent knows your server
+
+Real chat transcripts showed where the time went: the agent spent 25 commands
+(and half a million tokens) rediscovering facts the app already knew — which
+compose stack a container belongs to, where its sources live — then asked for a
+tap before every single `docker ps`. This release closes that gap.
+
+- **Server map.** A live, auto-generated snapshot of the server — host facts,
+  every compose stack with its host directory and services, standalone
+  containers — is injected into the agent's system prompt. It stops exploring
+  and starts acting. Fully visible (and switchable) under *Settings → Agent →
+  Server knowledge*: what the agent knows is exactly what you can read there.
+- **Skills.** Reusable how-to recipes (`/data/skills/*.md`), hermes-agent
+  style: the agent reads the matching skill before a task and saves new ones
+  after working out something non-obvious — so the next session starts smart.
+  Three starter skills ship (compose deploys, web-service debugging, disk
+  cleanup); view, edit, add or delete them in Settings. New tools:
+  `read_skill`, `save_skill`.
+- **Commands run on the host now.** `run_command` executes on the host as root
+  (throwaway chroot helper — the same trusted door the terminal's host shells
+  use), with real paths like `/srv/…`, a writable filesystem, and `docker
+  compose` that resolves relative mounts correctly. File tools read and write
+  host paths directly; new files inherit the folder's owner instead of
+  becoming root's. `where:"app"` still targets the app container.
+- **Read-only commands skip the approval tap.** A conservative classifier
+  (`cmdpolicy.py`) recognises inspection commands — `docker ps/logs/inspect`,
+  `ls`, `df`, `du`, `grep`, plus `docker exec` when the inner command is
+  read-only — and runs them immediately in Agent and Plan mode, marked with an
+  **auto** chip in chat and still written to the audit log. Anything mutating
+  asks first, exactly as before. Toggle under *Settings → Agent → Autonomy*.
+- **Prompt caching.** Anthropic (and Claude-via-OpenRouter) requests now set
+  cache breakpoints, so each agent iteration re-reads the conversation at ~10%
+  of the token price instead of full price. Cache reads/writes are folded into
+  the usage numbers and priced correctly.
+- **Desktop layout is fluid.** Views were capped at 1160px and the chat column
+  at 860px — on a 1920px screen the app sat in a box unless you zoomed to
+  140%. The Vibe chat now scales with the window (~77–85% of the pane, capped
+  at 1400px) and the other views widen to 1440px.
+
 ## v0.17.0 — It stops feeling like a web page
 
 Five things gave the app away as a website wearing an app's icon. They are the

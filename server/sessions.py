@@ -30,7 +30,7 @@ import json
 import os
 import time
 
-from . import agents, ai, audit, chats, config, discovery, permissions
+from . import agents, ai, audit, chats, cmdpolicy, config, discovery, permissions, servermap
 
 # events that make up the replayable in-flight turn (see Session.live_events)
 _LIVE_KINDS = {"text", "thinking", "thinking_block", "tool_request",
@@ -260,9 +260,10 @@ class Session:
         Mirrors the old ChatSession.run_turn but streams via broadcast and can
         pick up steering messages between tool iterations."""
         cfg = ai._cfg_for(self.provider, self.model)
-        sysprompt = ai.system_prompt(self.workdir, self.mode)
+        smap = await servermap.get() if config.get_servermap_enabled() else ""
+        sysprompt = ai.system_prompt(self.workdir, self.mode, server_map=smap)
         tool_names = ai.allowed_tools(self.mode)
-        turn_usage = {"input": 0, "output": 0}
+        turn_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
         self._mutated = False
         self._total_steps = 0
         self._reset_checkpoint()
@@ -290,6 +291,8 @@ class Session:
                     elif kind == "usage":
                         turn_usage["input"] += payload["input"]
                         turn_usage["output"] += payload["output"]
+                        turn_usage["cache_read"] += payload.get("cache_read", 0)
+                        turn_usage["cache_write"] += payload.get("cache_write", 0)
                 msg: dict = {"role": "assistant", "content": "".join(text_parts),
                              "tool_calls": tool_calls}
                 if thinking_blocks:
@@ -327,7 +330,13 @@ class Session:
     async def _run_tool_with_approval(self, tc: dict) -> str:
         if tc["name"] == "update_plan":
             return await self._apply_plan(tc)
-        auto = (self.mode == "auto"
+        # read-only shell commands skip the approval tap (Settings → AI toggle):
+        # inspection must be cheap or the agent grinds through taps to diagnose
+        auto_read = (tc["name"] == "run_command"
+                     and self.mode in ("agent", "plan")
+                     and config.get_autoread()
+                     and cmdpolicy.is_read_only(tc["args"].get("command") or ""))
+        auto = (self.mode == "auto" or auto_read
                 or (self.mode in ("agent", "plan") and tc["name"] in ai.SAFE_TOOLS)) \
             and not ai._sensitive_call(tc)
         if not auto:
@@ -343,7 +352,8 @@ class Session:
             if not approved:
                 await self.broadcast(type="tool_result", id=tc["id"], output="[denied by user]")
                 return "The user declined this action. Ask how they want to proceed."
-        await self.broadcast(type="tool_start", id=tc["id"], name=tc["name"], args=tc["args"])
+        await self.broadcast(type="tool_start", id=tc["id"], name=tc["name"], args=tc["args"],
+                             auto="read-only" if auto_read and self.mode != "auto" else "")
         before = ai.capture_before(tc["name"], tc["args"], self.workdir)
         output = await ai.execute_tool(tc["name"], tc["args"], self.workdir)
         diff = ai.build_file_diff(tc["name"], tc["args"], self.workdir, before)
@@ -477,20 +487,27 @@ class Session:
             await self.broadcast(type="services", items=items, live=False)
 
     async def _account(self, cfg: dict, turn_usage: dict) -> None:
+        cache_read = turn_usage.get("cache_read", 0)
+        cache_write = turn_usage.get("cache_write", 0)
         cost = ai.estimate_cost(cfg["provider"], cfg["model"],
-                                turn_usage["input"], turn_usage["output"])
-        self.session_usage["input"] += turn_usage["input"]
+                                turn_usage["input"], turn_usage["output"],
+                                cache_read, cache_write)
+        # cached reads/writes are still input tokens — fold them into the
+        # totals so the token numbers stay truthful (the cost already isn't
+        # double-counted: estimate_cost prices each bucket separately)
+        total_in = turn_usage["input"] + cache_read + cache_write
+        self.session_usage["input"] += total_in
         self.session_usage["output"] += turn_usage["output"]
         self.session_usage["turns"] += 1
         if cost is not None:
             self.session_usage["cost"] += cost
-        ai._persist_usage(cfg, turn_usage, cost)
+        ai._persist_usage(cfg, {**turn_usage, "input": total_in}, cost)
         self._persist()
         await self._safe_broadcast(type="chat_meta", id=self.chat_id,
                                    title=self.chat["title"], live=False)
         await self._safe_broadcast(
             type="usage", live=False,
-            turn={**turn_usage, "cost": cost, "model": cfg["model"]},
+            turn={**turn_usage, "input": total_in, "cost": cost, "model": cfg["model"]},
             session=self.session_usage)
 
     def _persist(self) -> None:

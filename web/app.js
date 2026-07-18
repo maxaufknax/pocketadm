@@ -2534,6 +2534,7 @@ function toolCardEl(ev) {
   const head = el("div", { class: "tool-head", onclick: () => card.classList.toggle("open") },
     el("span", { class: "tool-status" }, ic("hourglass")),
     el("span", { class: "tool-name" }, ev.name),
+    ev.auto ? el("span", { class: "tool-auto", title: "ran without approval — read-only" }, "auto") : null,
     el("span", { class: "tool-summary" }, toolSummary(ev.name, ev.args)),
     ev.name === "run_command"
       ? el("button", { class: "tool-term", title: "open this command in the terminal",
@@ -2924,6 +2925,7 @@ async function loadAutonomy() {
     $("#autonomy-minutes").value = a.minutes;
     $("#autonomy-push").checked = !!a.push;
     $("#autonomy-ntfy").value = a.ntfy_url || "";
+    $("#autonomy-autoread").checked = a.autoread !== false;
     updateAutonomyHint();
   } catch {}
 }
@@ -2942,11 +2944,83 @@ async function saveAutonomy() {
     minutes: parseInt($("#autonomy-minutes").value, 10) || 0,
     push: $("#autonomy-push").checked,
     ntfy_url: $("#autonomy-ntfy").value.trim(),
+    autoread: $("#autonomy-autoread").checked,
   };
   try {
     await api("/agent/autonomy", { method: "POST", body: JSON.stringify(body) });
     toast("Autonomy saved");
   } catch (e) { toast(e.message); }
+}
+
+/* ----- server knowledge: live map + skills ------------------------------- */
+/* Everything the agent "knows" stays inspectable: the live server map is
+   previewed verbatim, and skills are plain files the user can edit. */
+
+async function loadServerKnowledge() {
+  try {
+    const m = await api("/agent/servermap");
+    const sw = $("#servermap-on");
+    if (sw) sw.checked = !!m.enabled;
+    $("#servermap-preview").textContent = m.text || "(empty)";
+  } catch {}
+  renderSkillList();
+}
+
+async function renderSkillList() {
+  const box = $("#skills-list");
+  if (!box) return;
+  try {
+    const { skills } = await api("/skills");
+    box.innerHTML = "";
+    if (!skills.length) {
+      box.append(el("div", { class: "muted" },
+        "No skills yet — the agent saves them as it learns, or add one yourself."));
+      return;
+    }
+    for (const s of skills) {
+      box.append(el("div", { class: "skill-row", onclick: () => openSkillEditor(s.name) },
+        el("div", { class: "sk-main" },
+          el("b", {}, s.name),
+          el("div", { class: "muted sk-desc" }, s.description || "")),
+        svgIcon("chevron-right", "chev")));
+    }
+  } catch (e) { box.innerHTML = ""; box.append(el("div", { class: "error" }, e.message)); }
+}
+
+async function openSkillEditor(name) {
+  let content = "";
+  if (name) {
+    try { ({ content } = await api("/skills/" + encodeURIComponent(name))); }
+    catch (e) { toast(e.message); return; }
+  }
+  const nameInput = el("input", { type: "text", placeholder: "skill-name-like-this",
+    spellcheck: "false" });
+  nameInput.value = name || "";
+  if (name) nameInput.disabled = true;
+  const ta = el("textarea", { rows: 14, spellcheck: "false",
+    placeholder: "# Title\n> When to use this skill\n\n1. Step with the exact command…" });
+  ta.value = content;
+  const status = el("p", { class: "muted" }, "");
+  const save = el("button", { class: "btn primary", onclick: async () => {
+    const slug = (nameInput.value || "").trim();
+    if (!slug) { status.textContent = "Give the skill a name."; return; }
+    try {
+      await api("/skills/" + encodeURIComponent(slug), { method: "PUT",
+        body: JSON.stringify({ content: ta.value }) });
+      closeModal(); toast("Skill saved"); renderSkillList();
+    } catch (e) { status.textContent = "✕ " + e.message; }
+  } }, "Save skill");
+  const del = name ? el("button", { class: "btn danger-ghost", onclick: async () => {
+    if (!confirm(`Delete skill "${name}"?`)) return;
+    try {
+      await api("/skills/" + encodeURIComponent(name), { method: "DELETE" });
+      closeModal(); toast("Skill deleted"); renderSkillList();
+    } catch (e) { status.textContent = "✕ " + e.message; }
+  } }, "Delete") : null;
+  openModal(name ? "Skill · " + name : "New skill",
+    el("div", { class: "skill-edit" }, nameInput, ta,
+      el("div", { class: "skill-edit-actions" }, save, del), status));
+  $("#modal").classList.add("modal-tall");
 }
 
 /* ----- chat context attachments ("App/Service/File as context") ---------- */
@@ -4886,8 +4960,8 @@ const SETTINGS_GROUPS = [
   { id: "ai", label: "AI", icon: "sparkles",
     heads: ["AI providers", "Local AI", "AI usage"] },
   { id: "agent", label: "Agent", icon: "bot",
-    heads: ["Agent instructions & memory", "Agent tools", "Autonomy & alerts",
-            "Tasks & permissions", "Default workspace"] },
+    heads: ["Agent instructions & memory", "Server knowledge", "Agent tools",
+            "Autonomy & alerts", "Tasks & permissions", "Default workspace"] },
   { id: "automation", label: "Automation", icon: "refresh-cw",
     heads: ["Background agents", "Integrations", "App catalog", "Scheduled checks"] },
   { id: "look", label: "Look", icon: "palette", heads: ["Appearance"] },
@@ -5004,6 +5078,7 @@ async function loadSettings() {
     loadIntegrations();
     loadAutonomy();
     loadPermissions();
+    loadServerKnowledge();
   } catch {}
 }
 
@@ -5261,6 +5336,25 @@ $("#agent-memory-save").addEventListener("click", async function () {
     setTimeout(() => (this.textContent = "Save memory"), 1200);
   } catch (e) { alert(e.message); }
 });
+
+$("#servermap-on").addEventListener("change", async function () {
+  try {
+    await api("/agent/servermap", { method: "POST",
+      body: JSON.stringify({ enabled: this.checked }) });
+    toast(this.checked ? "Server map on" : "Server map off");
+  } catch (e) { this.checked = !this.checked; toast(e.message); }
+});
+
+$("#servermap-refresh").addEventListener("click", async function () {
+  this.disabled = true; this.textContent = "Refreshing…";
+  try {
+    const m = await api("/agent/servermap?refresh=1");
+    $("#servermap-preview").textContent = m.text || "(empty)";
+  } catch (e) { toast(e.message); }
+  this.disabled = false; this.textContent = "Refresh map";
+});
+
+$("#skill-new").addEventListener("click", () => openSkillEditor(null));
 
 /* ----- agent tools (on/off) ----- */
 
