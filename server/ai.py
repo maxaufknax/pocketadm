@@ -312,7 +312,10 @@ STATIC_PRICING = {
     "claude-opus": (15, 75), "claude-haiku-4.5": (1, 5), "claude-haiku": (0.8, 4),
     "gpt-5.2": (1.75, 14), "gpt-5-mini": (0.25, 2), "gpt-5": (1.25, 10),
     "gemini-3.1-pro": (2, 12), "gemini-3-flash": (0.3, 2.5),
-    "deepseek": (0.5, 1.5), "mistral-large": (2, 6),
+    "deepseek": (0.5, 1.5),
+    "mistral-large": (2, 6), "mistral-medium": (0.4, 2), "mistral-small": (0.1, 0.3),
+    "magistral-medium": (2, 5), "magistral-small": (0.5, 1.5),
+    "codestral": (0.3, 0.9), "ministral-8b": (0.1, 0.1), "ministral-3b": (0.04, 0.04),
 }
 _openrouter_pricing: dict[str, tuple[float, float]] = {}
 
@@ -875,12 +878,16 @@ def _merge_consecutive(msgs: list) -> list:
     return out
 
 
+_OPENAI_COMPAT_BASES = {
+    "openrouter": "https://openrouter.ai/api/v1",
+    "mistral": "https://api.mistral.ai/v1",
+}
+
+
 def _openai_base(cfg: dict) -> str:
     if cfg["provider"] == "ollama":
         return cfg["base_url"]     # already the …:11434/v1 endpoint
-    return cfg["base_url"] or (
-        "https://openrouter.ai/api/v1" if cfg["provider"] == "openrouter"
-        else "https://api.openai.com/v1")
+    return cfg["base_url"] or _OPENAI_COMPAT_BASES.get(cfg["provider"], "https://api.openai.com/v1")
 
 
 def _openai_reasoning_model(model: str) -> bool:
@@ -994,6 +1001,8 @@ CURATED = {
                    "openai/gpt-5.2", "google/gemini-3.1-pro-preview",
                    "google/gemini-3-flash", "deepseek/deepseek-chat-v3.1",
                    "mistralai/mistral-large-2512", "qwen/qwen3-coder"],
+    "mistral": ["mistral-large-latest", "mistral-medium-latest",
+                "magistral-medium-latest", "codestral-latest", "ministral-8b-latest"],
 }
 _model_cache: dict = {"time": 0, "result": None}
 
@@ -1013,8 +1022,32 @@ async def list_models() -> list[dict]:
                         (config.get_base_url(provider) or "https://api.anthropic.com") + "/v1/models",
                         headers={"x-api-key": key, "anthropic-version": "2023-06-01"})
                     if r.status_code == 200:
-                        models = [{"id": m["id"], "name": m.get("display_name", m["id"])}
-                                  for m in r.json().get("data", [])][:20]
+                        live = [{"id": m["id"], "name": m.get("display_name", m["id"])}
+                                for m in r.json().get("data", [])]
+                        # The account can have 20+ models (every dated snapshot plus
+                        # legacy claude-2/3 lines); Anthropic returns newest-first, so
+                        # a hard cutoff was silently dropping curated picks like Haiku
+                        # off the end. Pin the curated set to the front (in live-data
+                        # order if present there, so display names stay accurate).
+                        by_id = {m["id"]: m for m in live}
+                        curated = [by_id.pop(mid) for mid in CURATED["anthropic"] if mid in by_id]
+                        models = (curated + list(by_id.values()))[:40]
+                elif provider == "mistral":
+                    r = await client.get("https://api.mistral.ai/v1/models",
+                                         headers={"Authorization": f"Bearer {key}"})
+                    if r.status_code == 200:
+                        # the endpoint lists embedding/moderation/ocr models too;
+                        # keep chat-capable ones (the coding/instruct/reasoning
+                        # families), tool-calling is a given across that set
+                        chat = ("mistral-large", "mistral-medium", "mistral-small",
+                                "magistral", "codestral", "ministral", "pixtral",
+                                "devstral", "open-mistral", "open-mixtral")
+                        live = [{"id": m["id"], "name": m["id"]}
+                                for m in r.json().get("data", [])
+                                if m["id"].lower().startswith(chat)]
+                        by_id = {m["id"]: m for m in live}
+                        curated = [by_id.pop(mid) for mid in CURATED["mistral"] if mid in by_id]
+                        models = (curated + sorted(by_id.values(), key=lambda m: m["id"]))[:30]
                 elif provider == "openrouter":
                     r = await client.get("https://openrouter.ai/api/v1/models")
                     if r.status_code == 200:

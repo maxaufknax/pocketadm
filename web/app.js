@@ -5038,7 +5038,7 @@ async function loadSettings() {
     const me = await api("/me");
     state.me = me;
     $("#server-name").value = me.server_name || "";
-    for (const p of ["anthropic", "openrouter", "openai"]) {
+    for (const p of ["anthropic", "openrouter", "openai", "mistral"]) {
       $("#key-" + p).placeholder = me.ai_providers.includes(p)
         ? "•••••• configured" : $("#key-" + p).placeholder;
     }
@@ -5398,12 +5398,13 @@ $("#ai-save").addEventListener("click", async () => {
           anthropic: $("#key-anthropic").value.trim(),
           openrouter: $("#key-openrouter").value.trim(),
           openai: $("#key-openai").value.trim(),
+          mistral: $("#key-mistral").value.trim(),
         },
         default_provider: prov,
         default_model: rest.join("|"),
       }),
     });
-    for (const p of ["anthropic", "openrouter", "openai"]) $("#key-" + p).value = "";
+    for (const p of ["anthropic", "openrouter", "openai", "mistral"]) $("#key-" + p).value = "";
     vibeControlsReady = false;
     await loadSettings();
     state.aiConfigured = state.me.ai_configured;

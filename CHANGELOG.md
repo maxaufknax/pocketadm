@@ -3,6 +3,19 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.18.1 — Mistral, and a hidden Haiku
+
+- **Mistral as a fourth AI provider.** Add a key under *Settings → AI providers*
+  and its models (mistral-large, magistral, codestral, ministral, …) show up
+  in the Vibe model picker alongside Anthropic/OpenRouter/OpenAI — same
+  tool-calling agent loop, since Mistral's API is OpenAI-compatible.
+- **Fixed: Claude Haiku missing from the model picker.** The live Anthropic
+  model list was truncated to the first 20 entries in API order (newest
+  snapshot first), and with enough dated/legacy models on the account, Haiku
+  fell past the cutoff and simply never appeared. Curated picks (Sonnet,
+  Opus, Haiku) are now pinned to the front of the list regardless of raw API
+  order, and the cutoff was raised to 40.
+
 ## v0.18.0 — The agent knows your server
 
 Real chat transcripts showed where the time went: the agent spent 25 commands

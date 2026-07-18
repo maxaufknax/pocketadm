@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.18.0"
+VERSION = "0.18.1"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -60,7 +60,7 @@ def get_secret() -> bytes:
     return key
 
 
-PROVIDERS = ("anthropic", "openrouter", "openai")
+PROVIDERS = ("anthropic", "openrouter", "openai", "mistral")
 
 
 def get_key(provider: str) -> str:
@@ -334,4 +334,5 @@ DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
     "openrouter": "anthropic/claude-sonnet-4.5",
     "openai": "gpt-5.2",
+    "mistral": "mistral-large-latest",
 }
