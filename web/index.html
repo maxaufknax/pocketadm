@@ -415,6 +415,20 @@
         <p id="agent-status" class="muted"></p>
       </div>
 
+      <div class="section-head"><h2>Server knowledge</h2></div>
+      <div class="card form-card">
+        <div class="sec-title iconled"><span data-icon="map"></span> Server map <span class="muted" style="font-weight:400">· live, auto-generated</span></div>
+        <p class="muted" style="margin:2px 0 8px">A live snapshot of this server — host facts, compose stacks and their folders, what's running — handed to the agent at the start of every chat, so it doesn't burn steps rediscovering your setup. This is exactly what it sees:</p>
+        <label class="switch-row"><input type="checkbox" id="servermap-on"> <span>Give the agent the server map</span></label>
+        <pre id="servermap-preview" class="knowledge-pre">Loading…</pre>
+        <button id="servermap-refresh" class="btn small" style="margin-top:8px">Refresh map</button>
+        <hr class="sep">
+        <div class="sec-title iconled"><span data-icon="book-open"></span> Skills <span class="muted" style="font-weight:400">· how-to recipes</span></div>
+        <p class="muted" style="margin:2px 0 8px">Step-by-step recipes for recurring tasks on <em>this</em> server. The agent reads the matching skill before such a task — and saves new ones itself after working something out. Tap to view or edit.</p>
+        <div id="skills-list"><div class="muted">Loading…</div></div>
+        <button id="skill-new" class="btn small iconled" style="margin-top:8px"><span data-icon="plus"></span> New skill</button>
+      </div>
+
       <div class="section-head"><h2>Agent tools</h2></div>
       <div class="card form-card">
         <p class="muted" style="margin-bottom:10px">What the agent is allowed to do. Turn a tool off and the agent can’t use it at all.
@@ -439,6 +453,10 @@
           <span>…or every</span>
           <input id="autonomy-minutes" type="number" min="0" max="1440" style="width:74px"> <span class="muted">min (0 = off)</span>
         </div>
+        <hr class="sep">
+        <div class="sec-title iconled"><span data-icon="check"></span> Approvals</div>
+        <label class="switch-row"><input type="checkbox" id="autonomy-autoread"> <span>Run read-only commands without asking</span></label>
+        <p class="muted" style="margin:2px 0 10px">Inspection commands that can't change anything (docker ps, logs, ls, df …) run instantly and are marked <b>auto</b> in chat; anything that writes, deletes or restarts still asks first. Every command stays in the audit log.</p>
         <hr class="sep">
         <div class="sec-title iconled"><span data-icon="bell"></span> Push notifications</div>
         <p class="muted" style="margin:2px 0 8px">Get a push when the agent pauses to ask, or stops on an error. Uses <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> — paste your topic URL.</p>
