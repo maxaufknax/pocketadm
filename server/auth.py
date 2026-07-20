@@ -28,7 +28,45 @@ except Exception:          # pragma: no cover - QR just degrades to manual entry
 _PW_FILE = config.DATA_DIR / "admin.pw"
 TOKEN_TTL = 30 * 24 * 3600  # 30 days; mobile apps shouldn't log you out constantly
 
-_failed: dict[str, list[float]] = {}  # ip -> timestamps, simple rate limit
+# ------------------------------------------------------------- rate limiting
+#
+# This app is a root-on-host gateway (see hostrun.py): between the whole
+# internet and a root shell stands only the admin password. So the login
+# limiter is deliberately stricter than a normal web app's, and it *persists*
+# across restarts — an in-memory counter resets every `docker restart`, which
+# is exactly the free retry window a brute-forcer wants. Failures are kept in a
+# small JSON file so a container bounce doesn't wipe the lockout.
+#
+#   SOFT: N failures inside a short window -> short cool-off (per IP)
+#   HARD: many failures inside an hour     -> long ban       (per IP)
+#
+# Demo mode keeps a looser limit: the password is literally "demo", there's
+# nothing to brute-force, and a shared public playground shouldn't lock out.
+_RL_FILE = config.DATA_DIR / "login_attempts.json"
+SOFT_MAX, SOFT_WINDOW = 5, 300        # 5 tries / 5 min  -> 429
+HARD_MAX, HARD_WINDOW = 15, 3600      # 15 tries / 1 h   -> 429 (long ban)
+DEMO_MAX, DEMO_WINDOW = 30, 300       # lenient for the public demo
+
+_failed: dict[str, list[float]] = {}  # ip -> recent failure timestamps
+
+
+def _rl_load() -> None:
+    global _failed
+    if _failed:
+        return
+    try:
+        _failed = {ip: [float(t) for t in ts]
+                   for ip, ts in json.loads(_RL_FILE.read_text()).items()}
+    except Exception:
+        _failed = {}
+
+
+def _rl_save() -> None:
+    try:
+        _RL_FILE.write_text(json.dumps(_failed))
+        os.chmod(_RL_FILE, 0o600)
+    except Exception:
+        pass  # a persistence hiccup must never block a legitimate login
 
 
 def _hash_pw(password: str, salt: bytes) -> bytes:
@@ -176,15 +214,31 @@ def check_token(token: str) -> bool:
 
 
 def rate_limit(ip: str) -> None:
+    """Raise 429 if this IP has failed too often. Persistent across restarts."""
+    _rl_load()
     now = time.time()
-    attempts = [t for t in _failed.get(ip, []) if now - t < 300]
-    _failed[ip] = attempts
-    if len(attempts) >= 8:
+    attempts = [t for t in _failed.get(ip, []) if now - t < HARD_WINDOW]
+    if attempts:
+        _failed[ip] = attempts
+    else:
+        _failed.pop(ip, None)
+    if config.DEMO:
+        recent = [t for t in attempts if now - t < DEMO_WINDOW]
+        if len(recent) >= DEMO_MAX:
+            raise HTTPException(429, "Too many attempts, try again later")
+        return
+    soft = [t for t in attempts if now - t < SOFT_WINDOW]
+    if len(soft) >= SOFT_MAX or len(attempts) >= HARD_MAX:
         raise HTTPException(429, "Too many attempts, try again later")
 
 
 def record_failure(ip: str) -> None:
-    _failed.setdefault(ip, []).append(time.time())
+    _rl_load()
+    now = time.time()
+    kept = [t for t in _failed.get(ip, []) if now - t < HARD_WINDOW]
+    kept.append(now)
+    _failed[ip] = kept
+    _rl_save()
 
 
 def require_auth(request: Request) -> None:

@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.18.1"
+VERSION = "0.19.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -147,6 +147,20 @@ def set_totp_secret(secret: str) -> None:
         settings["totp_secret"] = secret
     else:
         settings.pop("totp_secret", None)
+    save_settings(settings)
+
+
+def get_exposure_ack() -> bool:
+    """Whether the admin has explicitly accepted running publicly exposed
+    without 2FA. Enabling 2FA clears this (the risk is gone)."""
+    return bool(settings.get("exposure_ack"))
+
+
+def set_exposure_ack(ack: bool) -> None:
+    if ack:
+        settings["exposure_ack"] = True
+    else:
+        settings.pop("exposure_ack", None)
     save_settings(settings)
 
 

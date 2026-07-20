@@ -664,6 +664,57 @@ function applyServerChrome(me) {
   } else if (!me.demo && banner) {
     banner.remove();
   }
+  renderExposureBanner(me);
+}
+
+// This app is a root-on-host gateway. If it's reachable over a public host and
+// the admin has no second factor, the admin password is the *only* thing
+// between the internet and a root shell — so we say so, loudly and persistently.
+function exposedNoTOTP(me) {
+  return me && !me.demo && me.public_exposure && !me.totp_enabled && !me.exposure_ack;
+}
+
+function renderExposureBanner(me) {
+  let banner = $("#exposure-banner");
+  if (exposedNoTOTP(me)) {
+    if (!banner) {
+      banner = el("div", { id: "exposure-banner", class: "expose-banner",
+        onclick: openExposureGate },
+        ic("shield-alert"),
+        el("span", {}, el("strong", {}, "This server is exposed to the internet without 2FA."),
+          " Anyone who guesses the password gets root. Tap to secure it."));
+      $("#app").prepend(banner);
+    }
+  } else if (banner) {
+    banner.remove();
+  }
+}
+
+// Force a conscious decision: turn on 2FA, or knowingly accept the exposure.
+function openExposureGate() {
+  const me = state.me || {};
+  const body = el("div", {},
+    el("div", { class: "expose-hero iconled" }, ic("shield-alert"),
+      el("h4", {}, "Your server is open to the internet")),
+    el("p", { class: "muted", style: "margin:10px 0" },
+      "PocketADM runs with full control of this host. It looks reachable over a " +
+      "public address (", el("code", {}, location.host), "), and right now the only " +
+      "thing protecting it is your password. A second factor closes that gap — it " +
+      "takes about 20 seconds with any authenticator app."),
+    el("button", { class: "btn primary wide iconled", onclick: () => enable2FA(() => {
+      // 2FA turned on -> the gate's job is done
+    }) }, ic("lock"), " Set up 2FA now (recommended)"),
+    el("button", { class: "btn wide", style: "margin-top:8px", onclick: async () => {
+      try {
+        await api("/settings/exposure/ack", { method: "POST" });
+        state.me.exposure_ack = true;
+        renderExposureBanner(state.me);
+      } catch {}
+      closeModal();
+    } }, "I understand the risk — keep it public"),
+    el("p", { class: "muted center", style: "margin-top:10px;font-size:12px" },
+      "Tip: put it behind a VPN or your LAN instead, and only 2FA travels with it."));
+  openModal("Secure your server", body);
 }
 
 $("#login-form").addEventListener("submit", async (e) => {
@@ -5737,7 +5788,7 @@ $("#twofa-btn").addEventListener("click", () => {
   if (state.me?.totp_enabled) disable2FA(); else enable2FA();
 });
 
-async function enable2FA() {
+async function enable2FA(onDone) {
   const body = el("div", { class: "thinking" }, "preparing");
   openModal("Enable two-factor", body);
   let setup;
@@ -5765,9 +5816,12 @@ async function enable2FA() {
         await api("/settings/2fa/enable", { method: "POST",
           body: JSON.stringify({ secret: setup.secret, code: codeInput.value.trim() }) });
         state.me.totp_enabled = true;
+        state.me.exposure_ack = false;
         renderSecurity();
+        renderExposureBanner(state.me);
         closeModal();
         $("#sec-status").textContent = "✓ Two-factor is on. You'll need a code next sign-in.";
+        if (onDone) onDone();
       } catch (e) { status.textContent = "✕ " + e.message; this.disabled = false; }
     } }, "Turn on 2FA"),
     status);
@@ -6308,8 +6362,12 @@ function openOnboarding() {
         $("#vibe-no-ai")?.classList.add("hidden");
       }
       await api("/settings/onboarded", { method: "POST" });
+      state.me.onboarded = true;
     } catch {}
     closeModal();
+    // first thing after setup: if this is a root gateway hanging open on the
+    // public internet, make the admin decide about 2FA before they move on.
+    if (exposedNoTOTP(state.me)) setTimeout(openExposureGate, 350);
   }
 
   function render() {
@@ -6855,7 +6913,12 @@ async function boot() {
     api("/updates").then((r) => { state.updates = r; updateHealthBadge(); }).catch(() => {});
     refreshNotifs();
     setInterval(refreshNotifs, 120000);
-    if (!state.me.onboarded && !state.me.demo) setTimeout(openOnboarding, 400);
+    if (!state.me.onboarded && !state.me.demo) {
+      setTimeout(openOnboarding, 400);
+    } else if (exposedNoTOTP(state.me)) {
+      // already onboarded but running exposed without 2FA — force the decision
+      setTimeout(openExposureGate, 600);
+    }
   }
 }
 

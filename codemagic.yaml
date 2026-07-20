@@ -13,7 +13,10 @@
 #      key) to the ios-release group — the distribution cert's private key, which
 #      Apple's API can't hand out. See APPSTORE.md §Signing for how to generate it.
 #   4. Start the "ios-release" workflow. First build → TestFlight.
-# This workflow submits to App Review on every green build (submit_to_app_store).
+# This workflow ships to TestFlight only (submit_to_testflight: true,
+# submit_to_app_store: false) — a green build can NEVER disturb a pending App
+# Review. Flip submit_to_app_store to true by hand only for the build you
+# actually mean to release. See the publishing block at the bottom.
 # ---------------------------------------------------------------------------
 
 workflows:

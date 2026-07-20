@@ -14,7 +14,10 @@ services:
     container_name: helmsman-demo
     restart: unless-stopped
     ports:
-      - "${HELMSMAN_PORT:-8091}:8080"
+      # Loopback by default (the reverse proxy reaches it by container name over
+      # the demoedge network). Override with HELMSMAN_DEMO_BIND=0.0.0.0 if you
+      # publish the demo without a proxy.
+      - "${HELMSMAN_DEMO_BIND:-127.0.0.1}:${HELMSMAN_PORT:-8091}:8080"
     environment:
       - HELMSMAN_DEMO=1        # public read-only playground; password is "demo"
     # NOTE: no docker.sock / host mount — demo mode serves canned sample data,
