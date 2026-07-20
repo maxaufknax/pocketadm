@@ -218,6 +218,20 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
   border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
+/* root-gateway-exposed-without-2FA warning — deliberately alarming, tappable */
+.expose-banner {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  color: var(--text); font-size: 12.5px; line-height: 1.35;
+  padding: 8px 12px; flex: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
+}
+.expose-banner:hover { background: color-mix(in srgb, var(--danger) 28%, transparent); }
+.expose-banner svg.i { width: 18px; height: 18px; flex: none; color: var(--danger); }
+.expose-hero { gap: 10px; align-items: center; }
+.expose-hero svg.i { width: 26px; height: 26px; color: var(--danger); flex: none; }
+.expose-hero h4 { margin: 0; }
+
 /* server switcher rows */
 .srv-row {
   display: flex; align-items: center; gap: 10px;

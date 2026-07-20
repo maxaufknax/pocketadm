@@ -55,6 +55,45 @@ async def _startup():
 
 # ------------------------------------------------------------------ auth
 
+import ipaddress
+
+
+def _is_private_host(host: str) -> bool:
+    """True if `host` is a loopback / LAN / mDNS name — i.e. NOT internet-facing.
+
+    Used to decide whether this instance looks publicly exposed. Conservative:
+    anything we can't positively classify as local is treated as public, so the
+    security nudge errs toward warning rather than staying silent."""
+    host = (host or "").strip().lower()
+    if host.startswith("["):              # bracketed IPv6, maybe with :port
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:            # host:port (IPv4 or hostname)
+        host = host.rsplit(":", 1)[0]
+    host = host.strip()
+    if not host or host == "localhost":
+        return True
+    if host.endswith((".local", ".lan", ".internal", ".home.arpa", ".localhost")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback or ip.is_private or ip.is_link_local
+    except ValueError:
+        return False  # a real DNS name (e.g. dev.example.com) -> public
+
+
+def is_public_exposure(request: Request) -> bool:
+    """Whether the client reached this instance over an internet-facing host.
+
+    Heuristic, not a guarantee (a public FQDN can still sit behind a VPN), so
+    the UI treats it as an advisory the user can acknowledge — but for the many
+    self-hosters who put this on a domain without a second factor, it's the
+    signal that turns 'root gateway wide open' into a visible warning."""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+    # x-forwarded-host may carry a comma-separated chain; the first is the client's
+    host = host.split(",")[0].strip()
+    return not _is_private_host(host)
+
+
 class LoginBody(BaseModel):
     password: str
     totp: str = ""
@@ -145,8 +184,10 @@ async def pair_claim(body: PairClaimBody, request: Request):
 
 
 @app.get("/api/me", dependencies=[authed])
-async def me():
+async def me(request: Request):
     default = config.get_ai_default()
+    # Root gateway on a public host without 2FA -> flag it so the UI can warn.
+    exposed = not config.DEMO and is_public_exposure(request)
     return {
         "ok": True,
         "version": config.VERSION,
@@ -162,6 +203,9 @@ async def me():
         "report_config": config.get_report_config(),
         "totp_enabled": auth.totp_enabled(),
         "can_pair": not config.DEMO,
+        "public_exposure": exposed,
+        # once the user has explicitly chosen to run exposed without 2FA, stop nagging
+        "exposure_ack": config.get_exposure_ack(),
     }
 
 
@@ -777,7 +821,18 @@ async def totp_enable(body: TotpEnableBody):
         raise HTTPException(400, "2FA is already enabled")
     if not auth.enable_totp(body.secret.strip(), body.code):
         raise HTTPException(400, "That code didn't match — check your authenticator and try again")
+    config.set_exposure_ack(False)  # risk resolved: stop the exposure warning
     audit.record("2fa_enable")
+    return {"ok": True}
+
+
+@app.post("/api/settings/exposure/ack", dependencies=[authed])
+async def exposure_ack():
+    """Record that the admin has knowingly chosen to run this root gateway on a
+    public host without 2FA. Dismisses the warning; enabling 2FA re-arms it."""
+    config.set_exposure_ack(True)
+    audit.record("exposure_ack", status="warn",
+                 detail="running publicly exposed without 2FA, acknowledged")
     return {"ok": True}
 
 

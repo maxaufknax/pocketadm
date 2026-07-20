@@ -3,6 +3,31 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.19.0 — Don't get owned
+
+PocketADM is a root-on-host gateway by design (Docker socket, the whole
+filesystem, a real host shell). That trust model is honest and documented — but
+it means the app has to be loud about the one deployment mistake that turns it
+into a liability: hanging open on the public internet with only a password in
+front of it. This release makes that mistake visible and hard to make by
+accident, and hardens the last line of defense.
+
+- **Public-exposure warning.** When the app is reached over an internet-facing
+  host and no second factor is set, a persistent red banner now says so
+  plainly — *anyone who guesses the password gets root* — and right after
+  onboarding a gate forces a conscious choice: turn on 2FA (≈20 seconds with
+  any authenticator) or explicitly accept the risk. Enabling 2FA clears it;
+  the acknowledgement is remembered so it never nags twice. 2FA was always
+  implemented — now the app actually pushes you to use it when it matters.
+- **Login rate-limit is now persistent and stricter.** The brute-force
+  limiter used to live only in memory, so every `docker restart` handed an
+  attacker a fresh set of attempts. Failures are now stored on disk and
+  survive restarts, and for a root gateway the threshold is tighter: 5 tries
+  in 5 minutes trips a cool-off, 15 in an hour a longer ban. The public demo
+  stays deliberately lenient.
+- **Docs/CI:** clarified that the release pipeline ships to TestFlight only and
+  never auto-submits to App Review.
+
 ## v0.18.1 — Mistral, and a hidden Haiku
 
 - **Mistral as a fourth AI provider.** Add a key under *Settings → AI providers*

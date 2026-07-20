@@ -11,7 +11,14 @@ services:
     container_name: helmsman
     restart: unless-stopped
     ports:
-      - "${HELMSMAN_PORT:-8090}:8080"
+      # Bind to loopback by DEFAULT. This container is root-on-host (Docker
+      # socket + `/:/host` + host shell), so its raw port must never answer the
+      # open internet — put a reverse proxy in front of it. A proxy on the same
+      # host reaches it by container name over a shared Docker network (that's
+      # how the bundled setup works), so loopback costs you nothing there.
+      # Need to publish it directly (no proxy, LAN access)? Set HELMSMAN_BIND=0.0.0.0
+      # — and then turn on 2FA, because you've just put a root shell on the wire.
+      - "${HELMSMAN_BIND:-127.0.0.1}:${HELMSMAN_PORT:-8090}:8080"
     environment:
       # - ADMIN_PASSWORD=change-me          # otherwise auto-generated on first run (see logs)
       # - AI_PROVIDER=anthropic             # anthropic | openrouter | openai (or set via UI)
