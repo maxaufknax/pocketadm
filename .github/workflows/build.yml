@@ -15,7 +15,26 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  # Test gate: the server test-suite must pass before we build or publish an
+  # image. This is the safety net for cmdpolicy (what the agent auto-runs
+  # without a tap), the auth/token flow and the demo guard.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest
+
   build:
+    needs: test          # never publish an image whose tests are red
     runs-on: ubuntu-latest
     permissions:
       contents: read
