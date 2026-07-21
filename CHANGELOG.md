@@ -3,6 +3,39 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.20.0 — A test suite, and the name is straight
+
+Two pieces of pre-launch hygiene: the codebase gets its first automated tests,
+and the last user-visible traces of the old "Helmsman" name become "PocketADM".
+
+- **First test suite + a CI gate that must pass before any image ships.**
+  The highest-risk logic in a tool that auto-runs root commands is
+  `cmdpolicy.py` — the classifier that decides which shell commands run
+  *without* an approval tap. A single false "read-only" would execute a
+  mutating command silently. It now has ~180 table + property cases:
+  destructive verbs hidden in `xargs`, `$()`, backticks, `bash -c`,
+  `docker exec` inner commands and redirects are all pinned as mutating.
+  Alongside it: the auth token flow (signing, expiry, generation-revocation),
+  TOTP against the RFC 6238 vectors, the login rate-limiter, the demo-guard
+  middleware, and integration credential-injection (secrets are asserted never
+  to leak into the public listing, the agent prompt, or an outbound URL).
+  `.github/workflows/build.yml` now runs `pytest` as a gate: the multi-arch
+  image build `needs: test`, so a red suite can never publish an image.
+- **Branding: the name a user actually sees is now PocketADM.** The TOTP issuer
+  shown in authenticator apps (Google Authenticator / 1Password) and the
+  first-run "admin password" log banner said "Helmsman"; both now say
+  "PocketADM". Existing 2FA keeps working — the issuer label only affects new
+  enrolments, not verification.
+- **Install/catalog URLs moved off the rename redirect.** `DEFAULT_CATALOG_URL`
+  and the SSH-bootstrap installer URL pointed at `github.com/maxaufknax/helmsman`,
+  which only still resolves because of GitHub's permanent rename redirect —
+  one new repo named `helmsman` and every fresh install would break. They now
+  point directly at `maxaufknax/pocketadm`.
+- **Documented the internal/external name split** in `docs/BRANDING.md`: what
+  stays `helmsman` on purpose (Docker names, volumes, `HELMSMAN_*` env vars,
+  FastAPI title — renaming them risks data loss for no user-visible gain) and
+  what must read `PocketADM`.
+
 ## v0.19.0 — Don't get owned
 
 PocketADM is a root-on-host gateway by design (Docker socket, the whole

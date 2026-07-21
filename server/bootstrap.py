@@ -23,10 +23,12 @@ try:
 except Exception:  # noqa: BLE001
     HAVE_PARAMIKO = False
 
-# where the installer lives; overridable so private forks work too
+# where the installer lives; overridable so private forks work too.
+# Canonical product repo (pocketadm) — not the old `helmsman` repo, which only
+# resolves via GitHub's rename redirect and breaks if that name is reused.
 INSTALLER_URL = os.environ.get(
     "POCKETADM_INSTALLER_URL",
-    "https://raw.githubusercontent.com/maxaufknax/helmsman/main/install.sh")
+    "https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh")
 
 _PW_RE = re.compile(r"admin password:\s*(\S+)", re.I)
 _URL_RE = re.compile(r"https?://[^\s\"']+")

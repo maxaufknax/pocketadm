@@ -1,0 +1,4 @@
+# Test/CI dependencies (the app itself needs only requirements.txt).
+# Install both:  pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+pytest>=8.0

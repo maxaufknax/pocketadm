@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.19.0"
+VERSION = "0.20.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -251,7 +251,10 @@ def set_tool_enabled(name: str, enabled: bool) -> None:
 
 # ---- app catalog ----
 
-DEFAULT_CATALOG_URL = ("https://raw.githubusercontent.com/maxaufknax/helmsman/"
+# Points at the canonical product repo (pocketadm). Do NOT revert this to the
+# old `helmsman` repo: that only still resolves via GitHub's rename redirect,
+# which breaks the day a new repo named `helmsman` is created. See docs/BRANDING.md.
+DEFAULT_CATALOG_URL = ("https://raw.githubusercontent.com/maxaufknax/pocketadm/"
                        "main/server/catalog.json")
 
 

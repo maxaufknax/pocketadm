@@ -87,7 +87,7 @@ def bootstrap_password() -> None:
     salt = secrets.token_bytes(16)
     _PW_FILE.write_bytes(salt + _hash_pw(pw, salt))
     os.chmod(_PW_FILE, 0o600)
-    print(f"\n{'='*56}\n  Helmsman first run — admin password: {pw}\n"
+    print(f"\n{'='*56}\n  PocketADM first run — admin password: {pw}\n"
           f"  (set ADMIN_PASSWORD env to choose your own)\n{'='*56}\n", flush=True)
 
 
@@ -144,7 +144,12 @@ def verify_totp(code: str) -> bool:
 
 
 def provisioning_uri(secret: str, label: str = "") -> str:
-    issuer = "Helmsman"
+    # This issuer string is what an end user sees in their authenticator app
+    # (Google Authenticator / 1Password / …), so it must be the *product* name.
+    # Changing it only affects new enrolments; already-enrolled authenticators
+    # keep working because TOTP verification uses the shared secret, not the
+    # issuer label. See docs/BRANDING.md for the internal/external name split.
+    issuer = "PocketADM"
     acct = label or (config.get_server_name() or "admin")
     from urllib.parse import quote
     return (f"otpauth://totp/{quote(issuer)}:{quote(acct)}"
