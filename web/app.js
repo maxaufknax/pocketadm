@@ -6771,17 +6771,26 @@ async function openPairModal() {
     // native shell: WKWebView has no BarcodeDetector — use the native scanner
     if (window.PocketNative?.scanQR) {
       video.classList.add("hidden");
-      const raw = await window.PocketNative.scanQR();
+      // Immediate, visible feedback on every (re)tap so the action is never a
+      // no-op — the camera can take a moment to appear, and on iPad the scanner
+      // may decline to reopen; either way the user must see that something ran.
+      status.textContent = "Opening camera…";
+      let raw = null;
+      try { raw = await window.PocketNative.scanQR(); }
+      catch { raw = null; }
       if (raw) {
         const parsed = parsePairPayload(raw);
         if (parsed) return claim(parsed.u, parsed.c, parsed.chat);
         status.textContent = "That code isn't a PocketADM pairing QR.";
       } else {
-        status.textContent = "Scan cancelled.";
+        status.textContent = "Camera closed — scan again, or use the manual code below.";
       }
-      status.after(el("button", { class: "btn wide iconled", style: "margin-top:8px",
-        onclick: (e) => { e.target.closest("button").remove(); startScan(); } },
-        ic("camera"), " Scan again"));
+      // Stable reference (not e.target) so a tap on the inner SVG icon can't
+      // break the "remove old button + rescan" handler.
+      const again = el("button", { class: "btn wide iconled", style: "margin-top:8px" },
+        ic("camera"), " Scan again");
+      again.addEventListener("click", () => { again.remove(); startScan(); });
+      status.after(again);
       return;
     }
     if (!("BarcodeDetector" in window)) {
