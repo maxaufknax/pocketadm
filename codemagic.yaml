@@ -85,7 +85,19 @@ workflows:
 
       - name: Install CocoaPods dependencies
         script: |
+          set -eo pipefail
           cd ios/App && pod install
+          # The QR scanner is a native plugin: if its pod is missing from the
+          # binary, `Capacitor.registerPlugin` still hands the web layer a proxy
+          # that simply rejects every call — so pairing-by-QR would silently be
+          # dead in the shipped app and only App Review would find out. Assert
+          # it linked, here, where the build can still fail loudly.
+          grep -q "CapacitorBarcodeScanner" Podfile || {
+            echo "!! CapacitorBarcodeScanner is not in the generated Podfile"
+            echo "!! (npm dependency missing, or cap sync did not pick it up)"; exit 1; }
+          grep -q "CapacitorBarcodeScanner" Podfile.lock || {
+            echo "!! CapacitorBarcodeScanner did not install — see pod install output"; exit 1; }
+          echo "✓ native barcode scanner pod linked"
 
       - name: Set the version and a monotonic build number
         script: |

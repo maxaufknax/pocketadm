@@ -187,16 +187,37 @@
      checks for PocketNative.scanQR and falls back to the web path.       */
 
   if (isNative && P.CapacitorBarcodeScanner) {
+    // EVERY key below is mandatory on iOS. The plugin's Swift side decodes the
+    // call into OSBarcodeScanArgumentsModel with plain `container.decode(...)`
+    // — no decodeIfPresent — for scanInstructions, scanButton, cameraDirection
+    // AND scanOrientation. The plugin's npm wrapper class fills those defaults
+    // in before it reaches the bridge; we call the bridge proxy directly (this
+    // app has no bundler), so leaving any of them out makes JSONDecoder throw
+    // and the call reject with "Error decoding scan arguments" — instantly,
+    // before the camera or its permission prompt ever appear. That is exactly
+    // what App Review hit: a "Scan again" button that did nothing and no
+    // camera purpose-string modal.
     N.scanQR = async () => {
       try {
         const res = await P.CapacitorBarcodeScanner.scanBarcode({
           hint: 0,                  // 0 = QR_CODE (Html5QrcodeSupportedFormats)
           scanInstructions: "Point the camera at the pairing QR",
+          scanButton: false,        // scan automatically, no confirm button
+          scanText: " ",            // only used when scanButton is true — still required
           cameraDirection: 1,       // back camera
+          scanOrientation: 1,       // portrait; the app itself is portrait-only
         });
-        return (res && (res.ScanResult || res.scanResult)) || null;
+        const text = (res && (res.ScanResult || res.scanResult)) || "";
+        return text ? { text } : { error: "empty" };
       } catch (e) {
-        return null;                // cancelled or permission denied
+        // Never swallow the reason: the UI has to tell the user whether the
+        // camera was denied, cancelled or simply broken. Plugin messages are
+        // "Camera access denied" / "Scanning cancelled" / everything else.
+        const msg = (e && (e.message || e.errorMessage)) || "";
+        const error = /denied|permission/i.test(msg) ? "denied"
+          : /cancel/i.test(msg) ? "cancelled"
+          : "unavailable";
+        return { error, message: msg };
       }
     };
   }

@@ -6767,32 +6767,58 @@ async function openPairModal() {
   let stream = null, scanning = false;
   const stopScan = () => { scanning = false; if (stream) stream.getTracks().forEach((t) => t.stop()); };
 
+  // The retry button is created once and kept in the DOM, enabled/disabled
+  // around each attempt. Rebuilding it per attempt (and hanging the handler off
+  // the throwaway node) is what made a second tap look like a dead button.
+  let again = null;
+  const setAgain = (label, busy) => {
+    if (!again) {
+      again = el("button", { class: "btn wide iconled", style: "margin-top:8px" });
+      again.addEventListener("click", () => nativeScan());
+      status.after(again);
+    }
+    again.disabled = !!busy;
+    again.textContent = "";
+    again.append(ic("camera"), " " + label);
+  };
+
+  let opening = false;
+  const nativeScan = async () => {
+    if (opening) return;
+    opening = true;
+    video.classList.add("hidden");
+    // Immediate, visible feedback on every (re)tap so the action is never a
+    // no-op — opening the native camera UI can take a moment.
+    status.textContent = "Opening camera…";
+    setAgain("Opening camera…", true);
+    let res;
+    try { res = await window.PocketNative.scanQR(); }
+    catch (e) { res = { error: "unavailable", message: e && e.message }; }
+    opening = false;
+    if (res && res.text) {
+      const parsed = parsePairPayload(res.text);
+      if (parsed) return claim(parsed.u, parsed.c, parsed.chat);
+      status.textContent = "That code isn't a PocketADM pairing QR.";
+    } else if (res && res.error === "denied") {
+      // Permission is sticky once denied — reopening the camera would silently
+      // do nothing, so say where to turn it back on instead.
+      status.textContent = window.PocketNative?.platform === "android"
+        ? "Camera access is off for PocketADM. Turn it on in Settings → Apps → " +
+          "PocketADM → Permissions, or use the manual code below."
+        : "Camera access is off for PocketADM. Turn it on in Settings → Privacy & " +
+          "Security → Camera → PocketADM, or use the manual code below.";
+    } else if (res && (res.error === "cancelled" || res.error === "empty")) {
+      status.textContent = "Camera closed — scan again, or use the manual code below.";
+    } else {
+      status.textContent = "Camera unavailable" +
+        (res && res.message ? " (" + res.message + ")" : "") + " — use the manual code below.";
+    }
+    setAgain("Scan again", false);
+  };
+
   const startScan = async () => {
     // native shell: WKWebView has no BarcodeDetector — use the native scanner
-    if (window.PocketNative?.scanQR) {
-      video.classList.add("hidden");
-      // Immediate, visible feedback on every (re)tap so the action is never a
-      // no-op — the camera can take a moment to appear, and on iPad the scanner
-      // may decline to reopen; either way the user must see that something ran.
-      status.textContent = "Opening camera…";
-      let raw = null;
-      try { raw = await window.PocketNative.scanQR(); }
-      catch { raw = null; }
-      if (raw) {
-        const parsed = parsePairPayload(raw);
-        if (parsed) return claim(parsed.u, parsed.c, parsed.chat);
-        status.textContent = "That code isn't a PocketADM pairing QR.";
-      } else {
-        status.textContent = "Camera closed — scan again, or use the manual code below.";
-      }
-      // Stable reference (not e.target) so a tap on the inner SVG icon can't
-      // break the "remove old button + rescan" handler.
-      const again = el("button", { class: "btn wide iconled", style: "margin-top:8px" },
-        ic("camera"), " Scan again");
-      again.addEventListener("click", () => { again.remove(); startScan(); });
-      status.after(again);
-      return;
-    }
+    if (window.PocketNative?.scanQR) return nativeScan();
     if (!("BarcodeDetector" in window)) {
       status.textContent = "This device can’t scan QR codes in-browser — use the manual code below.";
       video.classList.add("hidden");
