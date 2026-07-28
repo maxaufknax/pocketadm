@@ -36,8 +36,17 @@ def test_malformed_token_rejected(bad, clean_settings):
 def test_tampered_payload_rejected(clean_settings):
     token = auth.issue_token()
     p64, s64 = token.split(".")
-    # flip a character in the signature -> signature check must fail
-    flipped = s64[:-1] + ("A" if s64[-1] != "A" else "B")
+    # Flip a *byte* of the signature, not a character of its base64. The HMAC is
+    # 32 bytes = 256 bits, which base64 spreads over 43 characters = 258 bits,
+    # so the final character carries 4 significant bits and 2 that decoding
+    # throws away: rewriting it to "A" decodes to the very same signature
+    # whenever it was "B", "C" or "D". The payload nonce is random, so that hit
+    # roughly 1 run in 20 and failed the suite on a signature check that was
+    # working exactly as intended.
+    raw = bytearray(base64.urlsafe_b64decode(s64 + "=" * (-len(s64) % 4)))
+    raw[0] ^= 0xFF
+    flipped = base64.urlsafe_b64encode(bytes(raw)).decode().rstrip("=")
+    assert flipped != s64
     assert auth.check_token(f"{p64}.{flipped}") is False
 
 
