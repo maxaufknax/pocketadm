@@ -1598,12 +1598,20 @@ function unitCard(u) {
   sub.push(healthWord(u));
   const chips = [];
   if (u.problems) chips.push(el("span", { class: "pill crit" }, "issue"));
-  // one clean "open" affordance instead of a row of raw port chips
+  // one clean "open" affordance instead of a row of raw port chips.
+  // Only ports bound to all interfaces can be opened as http://<server>:<port>;
+  // a 127.0.0.1-bound service is reachable through the reverse proxy only, so
+  // it gets a non-clickable chip instead of a link that would just time out.
   if (u.ports.length) {
-    chips.push(el("a", { class: "chip portchip", href: `http://${serverHost()}:${u.ports[0]}`,
-      target: "_blank", title: `open :${u.ports[0]}`,
-      onclick: (e) => e.stopPropagation() },
-      `:${u.ports[0]}${u.ports.length > 1 ? " +" + (u.ports.length - 1) : ""}`));
+    const open = (u.reachable_ports || u.ports)[0];
+    const extra = u.ports.length > 1 ? " +" + (u.ports.length - 1) : "";
+    chips.push(open
+      ? el("a", { class: "chip portchip", href: `http://${serverHost()}:${open}`,
+          target: "_blank", title: `open :${open}`,
+          onclick: (e) => e.stopPropagation() }, `:${open}${extra}`)
+      : el("span", { class: "chip portchip local", title:
+          `:${u.ports[0]} is bound to 127.0.0.1 — reachable via your reverse proxy, not directly` },
+          `:${u.ports[0]}${extra} local`));
   }
   // status lives on the tile (like app badges) — the title stays clean
   const tile = el("span", { class: "tile-wrap" },

@@ -2090,6 +2090,8 @@ html, body { overscroll-behavior: none; }
 .svc-chev { color: var(--muted); opacity: .55; }
 .svc-chev svg, svg.i.svc-chev { width: 15px; height: 15px; }
 .chip.portchip { color: var(--accent); font-variant-numeric: tabular-nums; }
+/* loopback-bound: informational, not a link — mute it and drop the pointer */
+.chip.portchip.local { color: var(--muted); cursor: default; }
 .tile-wrap { position: relative; flex: none; display: inline-flex; }
 .tile-dot {
   position: absolute; right: -2.5px; bottom: -2.5px;

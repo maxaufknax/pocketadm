@@ -45,6 +45,12 @@ async def new_services(before_ids: set[str]) -> list[dict]:
         # the container exposing ports (or just the first) represents the group
         main = max(members, key=lambda c: (len(c["ports"]), c["state"] == "running"))
         ports = sorted({p["public"] for m in members for p in m["ports"]})
+        # Ports actually reachable from another machine. A service bound to
+        # 127.0.0.1 is only reachable through the reverse proxy, so the UI must
+        # not offer an "open http://<server>:<port>" link that cannot work.
+        # Same predicate as updates.py / reports.check_network.
+        reachable = sorted({p["public"] for m in members for p in m["ports"]
+                            if p.get("ip") in ("", "0.0.0.0", "::")})
         ref = main["name"] if appstore._is_image_id(main["image"]) else main["image"]
         meta = updates.service_meta(ref)
         out.append({
@@ -54,6 +60,7 @@ async def new_services(before_ids: set[str]) -> list[dict]:
             "project": main["compose_project"],
             "image": main["image"],
             "ports": ports,
+            "reachable_ports": reachable,
             "primary_port": ports[0] if ports else None,
             "count": len(members),
             "icon": meta["icon"],
