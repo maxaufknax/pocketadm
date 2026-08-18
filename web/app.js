@@ -392,7 +392,13 @@ function setModalBody(node) {
   $("#modal-body").innerHTML = "";
   $("#modal-body").append(node);
 }
-function closeModal() { $("#modal").classList.add("hidden"); $("#modal").classList.remove("modal-tall"); }
+function closeModal() {
+  $("#modal").classList.add("hidden");
+  $("#modal").classList.remove("modal-tall");
+  // Anything holding a device open while it is on screen (the pairing
+  // scanner's camera) has to hear about *every* way out, not just the ✕.
+  window.dispatchEvent(new Event("pocketadm-modal-closed"));
+}
 $("#modal-close").addEventListener("click", closeModal);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
@@ -6754,12 +6760,58 @@ async function openHandoff() {
   }
 }
 
+/* The pairing scanner walks down three ways of reading a QR until one of them
+   actually puts a camera on screen:
+
+     1. the native scanner — the Capacitor plugin's fullscreen camera UI
+     2. the in-page camera + BarcodeDetector — Chrome and the Android WebView
+     3. the in-page camera + the bundled jsQR decoder — WKWebView and Safari
+
+   Step 3 exists because step 1 is a third-party native plugin, and when it
+   rejects (bad argument shape, pod not linked, no view controller yet) it does
+   so in well under a millisecond — before the camera or its purpose-string
+   prompt ever appear. That is precisely what App Review saw twice: a button
+   that did nothing and no permission modal. getUserMedia is a second, entirely
+   independent route to the same camera: Capacitor's WebViewDelegationHandler
+   answers requestMediaCapturePermissionFor with .grant, WebKit then asks the
+   OS, and the OS shows the NSCameraUsageDescription prompt. So a broken plugin
+   can no longer mean "no camera at all" — at worst it means a slightly
+   different camera UI. */
+
+let jsqrLoading = null;
+function loadJsQR() {
+  if (window.jsQR) return Promise.resolve(window.jsQR);
+  if (!jsqrLoading) {
+    jsqrLoading = new Promise((resolve, reject) => {
+      const s = el("script", { src: "/vendor/jsqr.js" });
+      const fail = (msg) => { jsqrLoading = null; reject(new Error(msg)); };
+      s.onload = () => (window.jsQR ? resolve(window.jsQR) : fail("jsQR did not register"));
+      s.onerror = () => fail("jsQR failed to load");
+      document.head.append(s);
+    });
+  }
+  return jsqrLoading;
+}
+
 async function openPairModal() {
   const status = el("p", { class: "muted" });
-  const video = el("video", { class: "qr-video", playsinline: "", muted: "" });
+  const video = el("video", { class: "qr-video hidden", playsinline: "", muted: "", autoplay: "" });
+  video.muted = true;   // the attribute alone doesn't always satisfy WebKit's inline-autoplay rule
   const manual = el("input", { type: "text", placeholder: "…or paste the manual code" });
   const manualUrl = el("input", { type: "url", placeholder: "server address (for manual code)",
     inputmode: "url", autocapitalize: "off" });
+
+  let stream = null, scanning = false, busy = false;
+  // Once the native plugin has failed at the plugin level there is no point
+  // asking it again on every retry — it will fail the same way, instantly.
+  let nativeDead = false, nativeMsg = "";
+
+  const stopScan = () => {
+    scanning = false;
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    video.srcObject = null;
+    video.classList.add("hidden");
+  };
 
   const claim = async (base, code, chat) => {
     status.textContent = "pairing…";
@@ -6775,97 +6827,163 @@ async function openPairModal() {
       stopScan();
       closeModal();
       location.reload();
-    } catch (e) { status.textContent = "✕ " + e.message; }
+    } catch (e) { status.textContent = "✕ " + e.message; setAgain("Scan again", false); }
   };
 
-  let stream = null, scanning = false;
-  const stopScan = () => { scanning = false; if (stream) stream.getTracks().forEach((t) => t.stop()); };
-
-  // The retry button is created once and kept in the DOM, enabled/disabled
-  // around each attempt. Rebuilding it per attempt (and hanging the handler off
-  // the throwaway node) is what made a second tap look like a dead button.
-  let again = null;
-  const setAgain = (label, busy) => {
-    if (!again) {
-      again = el("button", { class: "btn wide iconled", style: "margin-top:8px" });
-      again.addEventListener("click", () => nativeScan());
-      status.after(again);
-    }
-    again.disabled = !!busy;
+  // One button, created once and kept in the DOM, relabelled around each
+  // attempt. Rebuilding it per attempt (and hanging the handler off the
+  // throwaway node) is what made a second tap look like a dead button.
+  const again = el("button", { class: "btn wide iconled", style: "margin-top:8px" });
+  again.addEventListener("click", () => startScan());
+  const setAgain = (label, isBusy) => {
+    again.disabled = !!isBusy;
     again.textContent = "";
     again.append(ic("camera"), " " + label);
   };
 
-  let opening = false;
-  const nativeScan = async () => {
-    if (opening) return;
-    opening = true;
-    video.classList.add("hidden");
-    // Immediate, visible feedback on every (re)tap so the action is never a
-    // no-op — opening the native camera UI can take a moment.
-    status.textContent = "Opening camera…";
-    setAgain("Opening camera…", true);
-    let res;
-    try { res = await window.PocketNative.scanQR(); }
-    catch (e) { res = { error: "unavailable", message: e && e.message }; }
-    opening = false;
-    if (res && res.text) {
-      const parsed = parsePairPayload(res.text);
-      if (parsed) return claim(parsed.u, parsed.c, parsed.chat);
-      status.textContent = "That code isn't a PocketADM pairing QR.";
-    } else if (res && res.error === "denied") {
-      // Permission is sticky once denied — reopening the camera would silently
-      // do nothing, so say where to turn it back on instead.
-      status.textContent = window.PocketNative?.platform === "android"
-        ? "Camera access is off for PocketADM. Turn it on in Settings → Apps → " +
-          "PocketADM → Permissions, or use the manual code below."
-        : "Camera access is off for PocketADM. Turn it on in Settings → Privacy & " +
-          "Security → Camera → PocketADM, or use the manual code below.";
-    } else if (res && (res.error === "cancelled" || res.error === "empty")) {
-      status.textContent = "Camera closed — scan again, or use the manual code below.";
-    } else {
-      status.textContent = "Camera unavailable" +
-        (res && res.message ? " (" + res.message + ")" : "") + " — use the manual code below.";
-    }
+  // A tap has to *look* like it did something. A failing native plugin answers
+  // in microseconds, so without this the "Opening camera…" state is never
+  // painted and the screen ends up byte-identical to before the tap.
+  const settle = (since) => new Promise((r) => setTimeout(r, Math.max(0, 450 - (Date.now() - since))));
+
+  const deniedMsg = () => {
+    status.textContent = window.PocketNative?.platform === "android"
+      ? "Camera access is off for PocketADM. Turn it on in Settings → Apps → " +
+        "PocketADM → Permissions, or use the manual code below."
+      : "Camera access is off for PocketADM. Turn it on in Settings → Privacy & " +
+        "Security → Camera → PocketADM, or use the manual code below.";
     setAgain("Scan again", false);
   };
 
-  const startScan = async () => {
-    // native shell: WKWebView has no BarcodeDetector — use the native scanner
-    if (window.PocketNative?.scanQR) return nativeScan();
-    if (!("BarcodeDetector" in window)) {
-      status.textContent = "This device can’t scan QR codes in-browser — use the manual code below.";
-      video.classList.add("hidden");
+  const gotCode = (raw) => {
+    const parsed = parsePairPayload(raw);
+    if (parsed) { stopScan(); claim(parsed.u, parsed.c, parsed.chat); return true; }
+    return false;
+  };
+
+  /* Returns a function that pulls the next decoded string out of the <video>,
+     or "" when this frame holds no QR. */
+  const makeDecoder = async () => {
+    if ("BarcodeDetector" in window) {
+      try {
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        if (supported.includes("qr_code")) {
+          const d = new window.BarcodeDetector({ formats: ["qr_code"] });
+          return async (v) => { const c = await d.detect(v); return c.length ? c[0].rawValue : ""; };
+        }
+      } catch (e) {}
+    }
+    await loadJsQR();
+    const canvas = el("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    return (v) => {
+      const w = v.videoWidth, h = v.videoHeight;
+      if (!w || !h) return "";
+      // Decode at ~640px on the long edge. Full sensor resolution buys no
+      // accuracy for a QR filling a third of the frame and jsQR runs on the
+      // main thread, so it would only cost frames.
+      const k = Math.min(1, 640 / Math.max(w, h));
+      canvas.width = Math.round(w * k);
+      canvas.height = Math.round(h * k);
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const found = window.jsQR(img.data, img.width, img.height);
+      return found ? found.data : "";
+    };
+  };
+
+  const webScan = async (since) => {
+    let decode;
+    try { decode = await makeDecoder(); }
+    catch (e) {
+      await settle(since);
+      status.textContent = "This device can’t scan QR codes" +
+        (nativeMsg ? " (" + nativeMsg + ")" : "") + " — use the manual code below.";
+      setAgain("Try the camera again", false);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      await settle(since);
+      status.textContent = location.protocol === "https:" || window.PocketNative?.isNative
+        ? "This device has no camera API — use the manual code below."
+        : "Browsers only allow camera access over HTTPS. Open PocketADM over " +
+          "https (or use the app), or pair with the manual code below.";
+      setAgain("Try the camera again", false);
       return;
     }
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      video.srcObject = stream;
-      await video.play();
-      scanning = true;
-      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-      const tick = async () => {
-        if (!scanning) return;
-        try {
-          const codes = await detector.detect(video);
-          if (codes.length) {
-            const parsed = parsePairPayload(codes[0].rawValue);
-            if (parsed) { stopScan(); return claim(parsed.u, parsed.c, parsed.chat); }
-          }
-        } catch {}
-        requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } }, audio: false });
     } catch (e) {
-      status.textContent = "✕ camera unavailable — use the manual code below";
-      video.classList.add("hidden");
+      await settle(since);
+      const name = (e && e.name) || "";
+      if (/NotAllowed|Security/i.test(name)) return deniedMsg();
+      status.textContent = "Camera unavailable" + (name ? " (" + name + ")" : "") +
+        " — use the manual code below.";
+      setAgain("Try the camera again", false);
+      return;
     }
+    video.srcObject = stream;
+    video.classList.remove("hidden");
+    try { await video.play(); } catch (e) {}
+    scanning = true;
+    status.textContent = "Point the camera at the pairing QR.";
+    setAgain("Restart the camera", false);
+
+    // ~8 decodes a second: jsQR is synchronous, and running it every animation
+    // frame would fight the compositor for the preview it is decoding.
+    const tick = async () => {
+      if (!scanning || !video.isConnected) return stopScan();
+      let raw = "";
+      try { raw = await decode(video); } catch (e) {}
+      if (!scanning) return;
+      if (raw && gotCode(raw)) return;
+      if (raw) status.textContent = "That code isn’t a PocketADM pairing QR — keep looking.";
+      setTimeout(tick, 120);
+    };
+    setTimeout(tick, 120);
+  };
+
+  const startScan = async () => {
+    if (busy) return;
+    busy = true;
+    stopScan();
+    let since = Date.now();
+    status.textContent = "Opening camera…";
+    setAgain("Opening camera…", true);
+    try {
+      if (!nativeDead && window.PocketNative?.scanQR) {
+        let res;
+        try { res = await window.PocketNative.scanQR(); }
+        catch (e) { res = { error: "unavailable", message: (e && e.message) || "" }; }
+        await settle(since);
+        if (res && res.text) {
+          if (gotCode(res.text)) return;
+          status.textContent = "That code isn’t a PocketADM pairing QR.";
+          setAgain("Scan again", false);
+          return;
+        }
+        if (res && res.error === "denied") return deniedMsg();
+        if (res && (res.error === "cancelled" || res.error === "empty")) {
+          status.textContent = "Camera closed — scan again, or use the manual code below.";
+          setAgain("Scan again", false);
+          return;
+        }
+        // Plugin-level failure. Stop asking it and fall through to the webview
+        // camera, which reaches the same hardware by a different road.
+        nativeDead = true;
+        nativeMsg = (res && res.message) || "scanner unavailable";
+        status.textContent = "Switching to the in-app camera…";
+        since = Date.now();
+      }
+      await webScan(since);
+    } finally { busy = false; }
   };
 
   const body = el("div", {},
     el("p", { class: "muted", style: "margin-bottom:10px" },
       "Point your camera at the pairing QR shown on the other device (Servers → Pair a device)."),
-    video, status,
+    video, status, again,
     el("hr", { class: "sep" }),
     el("label", {}, "Manual pairing", manualUrl), manual,
     el("button", { class: "btn wide", style: "margin-top:8px", onclick: () => {
@@ -6875,7 +6993,11 @@ async function openPairModal() {
     } }, "Pair with code"));
 
   openModal("Scan pairing QR", body);
-  $("#modal-close").addEventListener("click", stopScan, { once: true });
+  // Every way out of the modal has to release the camera, not just the ✕:
+  // closeModal() also fires on a backdrop tap, and openModal() can replace the
+  // body underneath us (which the isConnected check in tick() catches).
+  const onClosed = () => { stopScan(); window.removeEventListener("pocketadm-modal-closed", onClosed); };
+  window.addEventListener("pocketadm-modal-closed", onClosed);
   startScan();
 }
 

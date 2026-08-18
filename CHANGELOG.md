@@ -3,6 +3,58 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.21.0 — The scan button responds, whatever breaks
+
+App Review rejected 1.0.0 twice under Guideline 2.1(a), both times on an iPad
+Air, with the same sentence: *"There was no response when we tapped on scan
+again. No purpose string permission modal was prompted."*
+
+- **Root cause: the scanner plugin's iOS argument contract.**
+  `@capacitor/barcode-scanner` decodes the call into `OSBarcodeScanArgumentsModel`
+  with plain `container.decode(...)` — not `decodeIfPresent` — for
+  `scanInstructions`, `scanButton`, `cameraDirection` *and* `scanOrientation`.
+  Its npm wrapper class fills those defaults in before they reach the bridge;
+  this app has no bundler and calls the bridge proxy directly, so it has to send
+  them itself. One missing key makes `JSONDecoder` throw, the call rejects with
+  "Error decoding scan arguments" in microseconds, and neither the camera nor
+  its permission prompt ever exist. The old UI then re-rendered an identical
+  button — a tap that changed nothing on screen. Every decoded key is now sent,
+  and `tests/test_pairing_scanner.py` pins the contract per key.
+- **A second, independent route to the camera.** The native plugin is
+  third-party code that no CI machine can exercise, so a plugin-level failure
+  now falls through to `getUserMedia` plus a bundled `web/vendor/jsqr.js`
+  decoder, in-page. Capacitor's `WebViewDelegationHandler` grants
+  `requestMediaCapturePermissionFor`, so this route asks WebKit, WebKit asks the
+  OS, and the OS shows the same `NSCameraUsageDescription` prompt. A broken
+  plugin is now a slightly different camera UI instead of a rejected binary.
+  (The browser/PWA path gains from it too: WKWebView and Firefox have no
+  `BarcodeDetector`, so in-browser QR pairing worked in Chrome only.)
+- **Every tap visibly responds, including the ones that fail.** The retry button
+  is one stable node that is relabelled and disabled around each attempt, and a
+  result never replaces the "Opening camera…" state faster than the eye can
+  follow. Cancelled, denied, plugin-broken and no-camera-at-all each get their
+  own honest sentence pointing at the manual pairing code — verified in a real
+  browser at iPad viewport across all five outcomes.
+- **The build now proves it wrote the purpose strings.** `ios-configure.sh` has
+  to swallow PlistBuddy errors (`Add` fails when a key exists, `Set` when it
+  does not), which meant a failed write was indistinguishable from a good one —
+  and a missing `NSCameraUsageDescription` is a camera that never opens. String
+  values now go through `plutil` (the value is its own argv element, so nothing
+  re-parses it), and every key is read back afterwards; a mismatch fails the
+  build with the plist dumped.
+- **Fixed: an invalid local token reload-looped the app forever.** `onAuthLost()`
+  cleared the token for a *remote* server but not for the local one, so boot
+  re-authed, got 401, and reloaded — never reaching the login screen. Observed
+  live right after enabling 2FA.
+- **Security: one-click catalog apps no longer publish on every interface.** All
+  43 templates bound `0.0.0.0`, which Docker's DNAT puts beyond a host firewall's
+  reach — a one-click Vaultwarden or Portainer was on the LAN, and on the public
+  internet wherever the host has a routable address. Admin UIs now bind
+  `127.0.0.1`; ports that exist to be spoken to by another machine (DNS,
+  WireGuard, Syncthing, BitTorrent, Git-over-SSH) stay public. `discovery.py`
+  reports `reachable_ports` so the UI shows a muted chip instead of a link that
+  could only time out.
+
 ## v0.20.0 — A test suite, and the name is straight
 
 Two pieces of pre-launch hygiene: the codebase gets its first automated tests,

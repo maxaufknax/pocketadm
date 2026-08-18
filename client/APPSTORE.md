@@ -274,10 +274,21 @@ Thin website-wrappers get rejected. PocketADM is already well-positioned:
 - ✅ The UI is **bundled locally** (Capacitor serves `www/` from the app, it does
   not load a remote website), and there is a native **cold-start Connect screen**,
   multi-server switching and QR pairing — real client behavior, not a webview.
-- ✅ Native camera QR scanning via `@capacitor/barcode-scanner` (the web
-  `BarcodeDetector` doesn't exist in WKWebView — `PocketNative.scanQR` bridges to
-  the native scanner, the browser/PWA path keeps the web fallback). Plus native
-  status bar, splash, keyboard and haptics.
+- ✅ Camera QR scanning with **two independent routes to the camera**: the
+  native `@capacitor/barcode-scanner` plugin first, and — if that plugin fails
+  at the plugin level — `getUserMedia` plus the bundled `web/vendor/jsqr.js`
+  decoder inside the webview. Capacitor grants `requestMediaCapturePermissionFor`,
+  so the second route triggers the same `NSCameraUsageDescription` prompt as the
+  first. Plus native status bar, splash, keyboard and haptics.
+
+  > **Why two.** 1.0.0 was rejected twice under Guideline 2.1(a) with "There was
+  > no response when we tapped on scan again. No purpose string permission modal
+  > was prompted." The cause was the plugin's iOS argument decoder
+  > (`OSBarcodeScanArgumentsModel` uses `container.decode`, not
+  > `decodeIfPresent`): a missing key makes the call reject in microseconds,
+  > before the camera or its prompt exist. That contract is now pinned by
+  > `tests/test_pairing_scanner.py`, *and* a plugin failure no longer ends the
+  > story.
 - 🔜 Nice-to-have hardening for a smoother review / better app: native push
   (APNs) for Sentinel alerts and a native share sheet. Not blockers for a
   first submission, but on the roadmap.
@@ -289,10 +300,26 @@ Thin website-wrappers get rejected. PocketADM is already well-positioned:
    answer with `"demo": true`.
 2. **TestFlight build verified on a real iPhone** — especially: pairing QR scan
    (native scanner), keyboard behavior in Vibe, terminal sessions.
+
+   Test the scanner the way App Review does, **on an iPad** (they have used an
+   iPad Air both times): Connect screen → *Scan pairing QR* → the camera
+   permission prompt must appear, then a live camera. Tap *Scan again* twice
+   more; every tap must visibly change the screen. If the native plugin is
+   broken the app says "Switching to the in-app camera…" and shows an in-page
+   preview instead — that is the fallback doing its job, not a bug, but it is
+   worth reporting.
 3. Store listing + screenshots + App Privacy answered in App Store Connect.
 4. Flip **`submit_to_app_store: true`** in `codemagic.yaml` (root) and start
    `ios-release` — or leave it `false` and press *Submit for Review* manually on
-   the processed build in App Store Connect. Until then it stays `false` on
+   the processed build in App Store Connect.
+
+   **Resubmitting after a rejection** (the usual case): leave the flag `false`.
+   A rejected version stays editable in App Store Connect, so run `ios-release`
+   as-is, wait for the new build number to finish processing, then open the
+   1.0.0 version page → *Build* → pick the new build → *Add for Review* /
+   *Submit for Review*. `MARKETING_VERSION` stays `1.0.0`; only the build number
+   (`date +%Y%m%d%H%M`) moves. Say what changed in the reply to the reviewer's
+   message — they read it. Until then it stays `false` on
    purpose: every CI run only ships to TestFlight.
 
    ⚠️ **Never start a build with that flag `true` while a version is "Waiting for

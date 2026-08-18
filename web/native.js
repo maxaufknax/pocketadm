@@ -182,9 +182,12 @@
   }
 
   /* -------------------------------------------------------- QR scanning
-     WKWebView has no Web BarcodeDetector, so the native shell scans with
-     the official Capacitor plugin (fullscreen native camera UI). app.js
-     checks for PocketNative.scanQR and falls back to the web path.       */
+     WKWebView has no Web BarcodeDetector, so the native shell prefers the
+     official Capacitor plugin (fullscreen native camera UI). This is the
+     *preferred* path, not the only one: app.js treats an `unavailable` result
+     as "this plugin is broken" and reaches the same camera through
+     getUserMedia + the bundled jsQR decoder instead. Report errors honestly
+     and it can make that call; swallow them and it cannot.                */
 
   if (isNative && P.CapacitorBarcodeScanner) {
     // EVERY key below is mandatory on iOS. The plugin's Swift side decodes the
