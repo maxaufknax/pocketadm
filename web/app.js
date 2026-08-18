@@ -635,8 +635,14 @@ function onAuthLost() {
     servers.all = servers.all.filter((x) => x.id !== s.id);
     const local = servers.all.find((x) => x.id === "local" && x.token);
     servers.activeId = (local || {}).id || "";
-    persistServers();
+  } else if (s) {
+    // The local server's token is dead, and it MUST be cleared before the
+    // reload. Boot calls tryAuth() whenever a token exists, so leaving the dead
+    // one in localStorage means the reload 401s and lands here again — an
+    // infinite reload loop that never reaches the login screen.
+    s.token = "";
   }
+  persistServers();
   location.reload();
 }
 
