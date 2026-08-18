@@ -6521,6 +6521,7 @@ function openBootstrapWizard() {
         "curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash"),
       el("button", { class: "btn primary wide", style: "margin-top:10px",
         onclick: () => { closeModal(); openConnectModal(); } }, "Add a server first"));
+    wireCopyableCommands(body);
     return;
   }
 
@@ -6631,6 +6632,81 @@ async function followJobAt(base, token, jobId, logBox) {
   return markers;
 }
 
+/* ---- the demo server, and the one-line installer ---------------------
+
+   Between "I have a server" and "I have nothing" sits everyone evaluating
+   PocketADM: they need to see the app work before they will go and install
+   anything. DEMO_SERVER is a real, running, read-only instance, so that is one
+   tap and no typing. (It is also the only route into the app for an App Store
+   reviewer, who has no server at all — see client/APPSTORE.md § Review notes.) */
+
+const DEMO_SERVER = "https://demo.pocketadm.com";
+
+async function connectDemo(btn, status) {
+  const label = (icon, text) => { btn.textContent = ""; btn.append(ic(icon), " " + text); };
+  btn.disabled = true;
+  label("loader", "Connecting to the demo…");
+  if (status) { status.textContent = ""; status.classList.add("hidden"); }
+  try {
+    const res = await fetch(DEMO_SERVER + "/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "demo" }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "the demo declined the sign-in");
+    let name = "PocketADM Demo";
+    try { name = (await (await fetch(DEMO_SERVER + "/api/info")).json()).server_name || name; } catch {}
+    // demo !== false: if the flag is ever missing, err towards showing the
+    // demo banner rather than letting a demo masquerade as someone's server.
+    addRemoteServer(DEMO_SERVER, data.token, name, data.demo !== false);
+    location.reload();
+  } catch (e) {
+    btn.disabled = false;
+    label("play", "Try the live demo");
+    if (status) {
+      status.textContent = "✕ Couldn't reach the demo (" + e.message +
+        "). Check this device's connection — or add your own server above.";
+      status.classList.remove("hidden");
+    }
+  }
+}
+
+/* Every one-line installer block gets a copy button. Selecting a wrapped
+   command by hand on a phone is precisely the friction that stops someone
+   getting their first server up. */
+function wireCopyableCommands(root = document) {
+  for (const pre of root.querySelectorAll(".install-hint pre, pre.install-cmd")) {
+    if (pre.dataset.copyable) continue;
+    pre.dataset.copyable = "1";
+    const idle = () => { btn.textContent = ""; btn.append(ic("copy"), " Copy command"); };
+    const btn = el("button", { class: "btn small iconled copy-cmd" });
+    idle();
+    btn.addEventListener("click", async () => {
+      const text = pre.textContent.trim();
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("no clipboard API");
+        await navigator.clipboard.writeText(text);
+        btn.textContent = ""; btn.append(ic("check"), " Copied");
+        hap("success");
+        setTimeout(idle, 1800);
+      } catch {
+        // A webview can refuse the async clipboard API. Select the command so
+        // long-press → Copy still gets the user there.
+        const r = document.createRange();
+        r.selectNodeContents(pre);
+        const sel = getSelection();
+        sel.removeAllRanges(); sel.addRange(r);
+        toast("Long-press the highlighted command to copy");
+      }
+    });
+    pre.after(btn);
+  }
+}
+
+$("#connect-demo")?.addEventListener("click", (e) =>
+  connectDemo(e.currentTarget, $("#connect-demo-status")));
+wireCopyableCommands();
+
 $("#connect-add")?.addEventListener("click", () => openConnectModal());
 $("#connect-scan")?.addEventListener("click", openPairModal);
 $("#connect-ssh")?.addEventListener("click", openBootstrapWizard);
@@ -6644,6 +6720,12 @@ function openConnectModal(existing) {
     inputmode: "numeric", maxlength: "6" });
   const status = el("p", { class: "muted" });
   const nameHint = el("p", { class: "muted", style: "margin-top:-4px" });
+  // Someone who opened this dialog without a server to type in still needs a
+  // way forward, or the only exit is the ✕.
+  const demoStatus = el("p", { class: "error hidden" });
+  const demoBtn = el("button", { class: "btn wide iconled", style: "margin-top:8px" },
+    ic("play"), " Try the live demo instead");
+  demoBtn.addEventListener("click", () => connectDemo(demoBtn, demoStatus));
 
   urlIn.addEventListener("change", async () => {
     const base = normalizeBase(urlIn.value);
@@ -6689,7 +6771,8 @@ function openConnectModal(existing) {
     el("button", { class: "btn primary wide", style: "margin-top:10px", onclick: connect }, "Connect"),
     status,
     el("hr", { class: "sep" }),
-    el("button", { class: "btn wide iconled", onclick: openPairModal }, ic("camera"), " Or scan a pairing QR code")));
+    el("button", { class: "btn wide iconled", onclick: openPairModal }, ic("camera"), " Or scan a pairing QR code"),
+    demoBtn, demoStatus));
   setTimeout(() => urlIn.focus(), 60);
 }
 

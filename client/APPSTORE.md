@@ -246,24 +246,37 @@ moderation tooling you have no need for.
 
 ```
 PocketADM is a client for self-hosted server software the user runs themselves;
-it has no backend of ours. To review it end to end, add the demo server:
+it has no backend of ours, and no account of its own.
 
+FASTEST ROUTE — no typing, no server needed:
+On the first screen, tap "Try the live demo". That signs the app in to a real,
+running, read-only PocketADM server and opens the full interface.
+
+Equivalent manual route: "Add a server" ->
   Server address:  https://demo.pocketadm.com
-  Username / password:  demo / demo
+  Password:        demo
 
-(In the app: Add a server → enter the address and password.)
+The camera is used for one thing: scanning a pairing QR shown by another
+PocketADM server, to add it to this device. Tapping "Scan pairing QR" asks for
+camera permission and opens a scanner. Producing a pairing QR needs a second
+PocketADM server, which the read-only demo cannot mint — so if you have nothing
+to point the camera at, the scanner simply stays open; "Pair with code" below it
+accepts the same pairing code typed by hand.
 
 App Transport Security allows arbitrary loads because PocketADM connects only to
 servers the user explicitly adds — these are often local IPs (192.168.x.x), .local
 hosts, or self-hosted domains that may use self-signed certificates. No traffic
 goes to any server other than the one the user configures.
 
-Camera is used solely to scan pairing QR codes. The app collects no personal data.
+The app collects no personal data.
 ```
 
 Also set **App Review Information → Sign-In required: Yes**, and provide the same
 demo/demo (the app itself has no account, but the reviewer needs a server to sign
-into — the demo server provides one).
+into — the demo server provides one). The *Try the live demo* button on the
+Connect screen does the same thing in one tap; `tests/test_connect_screen.py`
+asserts the address it dials is the address written above, so this block cannot
+quietly go stale.
 
 ---
 

@@ -1663,6 +1663,17 @@ select option { color: initial; }
 
 /* ---------- connect screen (cold start) ---------- */
 .connect-servers { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-bottom: 6px; }
+/* "or" rule between "connect a server you have" and "try one you don't" */
+.connect-or {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  margin: 14px 0 10px; color: var(--muted); font-size: 12px;
+}
+.connect-or::before, .connect-or::after {
+  content: ""; flex: 1; border-top: 1px solid var(--border);
+}
+.connect-demo-sub { font-size: 12px; margin: 7px 0 0; }
+/* copy button under a one-line installer block */
+.copy-cmd { margin: -2px 0 8px; }
 .connect-srv {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;

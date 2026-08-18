@@ -42,6 +42,22 @@ again. No purpose string permission modal was prompted."*
   values now go through `plutil` (the value is its own argv element, so nothing
   re-parses it), and every key is read back afterwards; a mismatch fails the
   build with the plist dumped.
+- **One tap into a running server, for people who don't have one yet.** The
+  cold-start Connect screen offered three buttons that all presuppose a server:
+  add one, scan its QR, or SSH into it from one you already have. Anyone
+  evaluating PocketADM — and every App Store reviewer — arrives with none, so
+  there is now a *Try the live demo* entry below an "or" rule. It signs in to
+  the real read-only demo instance and opens the full app in about a third of a
+  second, with nothing to type. A dead demo says so and leaves the button
+  tappable rather than stranding you on a spinner, and the same offer appears
+  inside *Add a server* so that dialog is never a one-way street.
+  `tests/test_connect_screen.py` asserts the address the button dials is the
+  address written in the App Review notes, so a renamed demo host can't quietly
+  strand a future review.
+- **The one-line installer is now one tap to copy.** Selecting a wrapped
+  `curl … | bash` by hand on a phone is exactly the friction that stops someone
+  standing up their first server. Every installer block gets a Copy button, with
+  a select-the-text fallback for webviews that refuse the clipboard API.
 - **Fixed: an invalid local token reload-looped the app forever.** `onAuthLost()`
   cleared the token for a *remote* server but not for the local one, so boot
   re-authed, got 401, and reloaded — never reaching the login screen. Observed

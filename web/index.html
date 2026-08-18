@@ -60,6 +60,12 @@
     <button id="connect-add" class="btn primary wide iconled"><span data-icon="plus"></span> Add a server</button>
     <button id="connect-scan" class="btn wide iconled"><span data-icon="camera"></span> Scan pairing QR</button>
     <button id="connect-ssh" class="btn wide iconled"><span data-icon="terminal"></span> Set up a new server over SSH</button>
+    <!-- No server of your own yet? One tap into a real, running instance. This
+         is the only path on this screen that needs nothing but the internet. -->
+    <div class="connect-or"><span>or</span></div>
+    <button id="connect-demo" class="btn wide iconled"><span data-icon="play"></span> Try the live demo</button>
+    <p class="muted connect-demo-sub">A real PocketADM server, read-only. No signup, nothing to install.</p>
+    <p id="connect-demo-status" class="error hidden"></p>
     <details class="install-hint">
       <summary>No server yet? Install PocketADM</summary>
       <p class="muted">SSH into any Linux server and run the one-line installer —
