@@ -240,6 +240,34 @@ workflows:
           xcodegen generate
           test -d "$XCODE_PROJECT"
 
+      - name: Ensure the Metal toolchain is available
+        script: |
+          set -uo pipefail
+          # SwiftTerm ships Apple/Metal/Shaders.metal as an unconditional
+          # package resource, so the `metal` compiler has to exist even though
+          # the Metal renderer is only an optional fast path at runtime (there
+          # is no build flag to opt out; the disableMetalRenderer* calls are
+          # runtime fallbacks). Since Xcode 16.3 the Metal toolchain is a
+          # separate downloadable component that is NOT on the CI image, and
+          # without it the shader build dies with:
+          #   cannot execute tool 'metal' due to missing Metal Toolchain
+          if xcrun metal --version >/dev/null 2>&1; then
+            echo "✓ Metal toolchain already present"
+          else
+            echo "Downloading the Metal toolchain (several minutes, once per VM)…"
+            xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20 \
+              || sudo xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20
+            if xcrun metal --version >/dev/null 2>&1; then
+              echo "✓ Metal toolchain installed: $(xcrun metal --version 2>&1 | head -1)"
+            else
+              echo "!! The Metal toolchain is still unavailable."
+              echo "!! Fallback if this keeps failing: pin SwiftTerm to 1.11.2 in"
+              echo "!! client-swift/project.yml — the last release before the Metal"
+              echo "!! backend landed in 1.12.0."
+              exit 1
+            fi
+          fi
+
       - name: Build for the simulator
         script: |
           set -eo pipefail
@@ -420,6 +448,34 @@ workflows:
           keychain add-certificates
           # Must run after xcodegen — there is no project to patch before that.
           xcode-project use-profiles
+
+      - name: Ensure the Metal toolchain is available
+        script: |
+          set -uo pipefail
+          # SwiftTerm ships Apple/Metal/Shaders.metal as an unconditional
+          # package resource, so the `metal` compiler has to exist even though
+          # the Metal renderer is only an optional fast path at runtime (there
+          # is no build flag to opt out; the disableMetalRenderer* calls are
+          # runtime fallbacks). Since Xcode 16.3 the Metal toolchain is a
+          # separate downloadable component that is NOT on the CI image, and
+          # without it the shader build dies with:
+          #   cannot execute tool 'metal' due to missing Metal Toolchain
+          if xcrun metal --version >/dev/null 2>&1; then
+            echo "✓ Metal toolchain already present"
+          else
+            echo "Downloading the Metal toolchain (several minutes, once per VM)…"
+            xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20 \
+              || sudo xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20
+            if xcrun metal --version >/dev/null 2>&1; then
+              echo "✓ Metal toolchain installed: $(xcrun metal --version 2>&1 | head -1)"
+            else
+              echo "!! The Metal toolchain is still unavailable."
+              echo "!! Fallback if this keeps failing: pin SwiftTerm to 1.11.2 in"
+              echo "!! client-swift/project.yml — the last release before the Metal"
+              echo "!! backend landed in 1.12.0."
+              exit 1
+            fi
+          fi
 
       - name: Build the signed IPA
         script: |
