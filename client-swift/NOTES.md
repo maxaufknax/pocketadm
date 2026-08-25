@@ -132,9 +132,11 @@ could not be proven:
   round-trip to undo.
 - Brace/string sanity across all 18 Swift files.
 
-**Not proven — verify on the first build**
-- The **SwiftUI and UIKit layer has never been compiled.** It needs macOS.
-  That is exactly what `ios-native-check` is for: run it before tagging.
+- **The whole app compiles.** `ios-native-check` is green on Codemagic
+  (Xcode, iOS Simulator target), so the SwiftUI and UIKit layer builds — that
+  needed macOS and could not be checked here.
+
+**Not proven — verify on device**
 - **Safe areas on a Face ID device.** See below.
 
 ### Safe areas
@@ -155,6 +157,22 @@ design does about it:
 
 **Check on device:** the terminal with the keyboard both up and down, in
 portrait *and* landscape, on an iPhone 15/16.
+
+### CI gotchas already hit and fixed
+
+- **Metal toolchain.** SwiftTerm lists `Apple/Metal/Shaders.metal` as an
+  unconditional package resource, so the `metal` compiler must exist at build
+  time even though the Metal renderer is only an optional runtime fast path —
+  there is no build flag to opt out. Since Xcode 16.3 that toolchain is a
+  separate downloadable component and is *not* on the Codemagic image; without
+  it the build dies with `cannot execute tool 'metal'`. Both native workflows
+  now run `xcodebuild -downloadComponent MetalToolchain` first. It is
+  idempotent, but it re-downloads on every fresh VM, so builds take noticeably
+  longer. Fallback if it ever proves unreliable: pin SwiftTerm to 1.11.2, the
+  last release before the Metal backend landed in 1.12.0.
+- **`-skipPackagePluginValidation`.** SwiftTerm also ships a build-tool plugin,
+  and Xcode refuses to run an unvalidated plugin non-interactively. Already
+  passed in both workflows.
 
 ---
 
