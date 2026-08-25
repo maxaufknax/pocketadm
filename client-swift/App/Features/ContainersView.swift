@@ -1,5 +1,16 @@
 import SwiftUI
 
+/// A compose stack and its containers.
+///
+/// Deliberately a struct rather than the tuple this started as: `ForEach` needs
+/// an identity, and Swift key paths cannot address tuple elements — `\.name` on
+/// a `(name:containers:)` tuple does not compile.
+struct Stack: Identifiable {
+    let name: String
+    let containers: [Container]
+    var id: String { name }
+}
+
 @MainActor
 final class ContainersModel: ObservableObject {
     @Published var containers: [Container] = []
@@ -9,9 +20,9 @@ final class ContainersModel: ObservableObject {
     /// refuse a second tap without freezing the whole list.
     @Published var busy: Set<String> = []
 
-    var stacks: [(name: String, containers: [Container])] {
+    var stacks: [Stack] {
         Dictionary(grouping: containers, by: \.stack)
-            .map { (name: $0.key, containers: $0.value.sorted { $0.displayName < $1.displayName }) }
+            .map { Stack(name: $0.key, containers: $0.value.sorted { $0.displayName < $1.displayName }) }
             .sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
 
@@ -72,7 +83,7 @@ struct ContainersView: View {
         .task { await model.load(app) }
     }
 
-    private var filtered: [(name: String, containers: [Container])] {
+    private var filtered: [Stack] {
         guard !search.isEmpty else { return model.stacks }
         let needle = search.lowercased()
         return model.stacks.compactMap { stack in
@@ -81,13 +92,13 @@ struct ContainersView: View {
                     || $0.displayName.lowercased().contains(needle)
                     || $0.image.lowercased().contains(needle)
             }
-            return hits.isEmpty ? nil : (name: stack.name, containers: hits)
+            return hits.isEmpty ? nil : Stack(name: stack.name, containers: hits)
         }
     }
 
     private var list: some View {
         List {
-            ForEach(filtered, id: \.name) { stack in
+            ForEach(filtered) { stack in
                 Section {
                     ForEach(stack.containers) { container in
                         NavigationLink(value: container) {

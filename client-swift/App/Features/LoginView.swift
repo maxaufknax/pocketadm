@@ -122,8 +122,11 @@ struct LoginView: View {
             totp = ""
             focus = .totp
             error = message
-        } catch {
-            error = error.localizedDescription
+        } catch let failure {
+            // Named explicitly: a bare `catch` binds the thrown error to a
+            // constant called `error`, which shadows this view's @State of the
+            // same name — the assignment then targets the immutable constant.
+            error = failure.localizedDescription
         }
     }
 }

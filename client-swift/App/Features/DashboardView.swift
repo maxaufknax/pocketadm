@@ -152,7 +152,7 @@ struct DashboardView: View {
             }
             .chartYScale(domain: 0...100)
             .chartYAxis {
-                AxisMarks(values: [0, 50, 100]) {
+                AxisMarks(values: [0.0, 50.0, 100.0]) {
                     AxisGridLine().foregroundStyle(Theme.border)
                     AxisValueLabel().foregroundStyle(Theme.muted)
                 }
