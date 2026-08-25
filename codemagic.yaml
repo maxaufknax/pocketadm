@@ -483,10 +483,21 @@ workflows:
           # otherwise reports only "exited with status 1" and the real error
           # stays in a file nobody sees.
           set +e
+          # NOT `--xcargs` — xcode-project has no such option; it splits the
+          # passthrough into --archive-xcargs and --export-xcargs. Only the
+          # archive compiles the package, so only it needs the skip flags.
+          #
+          # COMPILER_INDEX_STORE_ENABLE=NO is the option's own default and has
+          # to be repeated here, because passing a value replaces it rather
+          # than adding to it.
+          #
+          # The `=` form is deliberate: argparse otherwise mistakes a value
+          # beginning with "-" for another option, which is exactly how the
+          # previous attempt turned into "unrecognized arguments".
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
-            --xcargs "-skipPackagePluginValidation -skipMacroValidation"
+            --archive-xcargs="COMPILER_INDEX_STORE_ENABLE=NO -skipPackagePluginValidation -skipMacroValidation"
           status=$?
           if [ $status -ne 0 ]; then
             echo "═══════ build-ipa failed (exit $status) — Xcode error below ═══════"
