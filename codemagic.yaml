@@ -178,3 +178,299 @@ workflows:
         # `date +%Y%m%d%H%M`, so parallel TestFlight builds never collide with
         # the one under review -- only this flag does.
         submit_to_app_store: false
+
+  # ---------------------------------------------------------------------------
+  # NATIVE SWIFTUI PREVIEW (experiment/swift-native)
+  #
+  # A second, completely separate app: bundle id de.maxaufknax.pocketadm.native,
+  # its own App Store Connect record, its own Xcode project in client-swift/.
+  # It shares exactly two things with `ios-release` above — the Apple account's
+  # ASC API key and the distribution certificate's private key — because both
+  # are per-account resources that Apple rate-limits, not per-app ones.
+  #
+  # Nothing here can disturb the App Review that de.maxaufknax.pocketadm is
+  # sitting in: different app record, and `submit_to_app_store` is false.
+  # ---------------------------------------------------------------------------
+
+  # Compiles the SwiftUI app for the simulator. No Apple account, no signing,
+  # no upload — so it runs green before any of the Apple-portal setup exists,
+  # and a syntax error costs one cheap build instead of a signing round trip.
+  ios-native-check:
+    name: Native preview · build check (no Apple account)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    working_directory: client-swift
+    environment:
+      xcode: latest
+      vars:
+        XCODE_SCHEME: "PocketADMNative"
+        XCODE_PROJECT: "PocketADMNative.xcodeproj"
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        # Scoped to the experiment branch. Unscoped, every push to main would
+        # start a macOS build of an app that only exists on this branch.
+        - pattern: "experiment/*"
+          include: true
+          source: true
+    scripts:
+      - name: Swift syntax sanity check
+        script: |
+          # Runs in seconds and catches an unbalanced brace before it burns
+          # half an Xcode build.
+          python3 tools/swift-sanity.py App
+
+      - name: Provide XcodeGen
+        script: |
+          which xcodegen || brew install xcodegen
+          xcodegen --version
+
+      - name: Write a placeholder build number
+        script: |
+          # project.yml references this file; without it xcodegen has nothing to
+          # attach. The real number is only set in the TestFlight workflow.
+          mkdir -p Config
+          echo "CURRENT_PROJECT_VERSION = ${BUILD_NUMBER:-1}" > Config/Build.xcconfig
+
+      - name: Generate the Xcode project
+        script: |
+          set -eo pipefail
+          xcodegen generate
+          test -d "$XCODE_PROJECT"
+
+      - name: Build for the simulator
+        script: |
+          set -eo pipefail
+          mkdir -p build/logs
+          FORMATTER=cat
+          command -v xcbeautify >/dev/null && FORMATTER=xcbeautify
+          # -skipPackagePluginValidation / -skipMacroValidation: SwiftTerm ships
+          # a build-tool plugin. Xcode refuses to run an unvalidated plugin in a
+          # non-interactive build and there is no prompt to accept it in CI, so
+          # without these the build dies at "package plugin
+          # SwiftTermBuildInfoPlugin ... is disabled".
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "generic/platform=iOS Simulator" \
+            -configuration Debug \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build/logs/xcodebuild.log | $FORMATTER
+
+      - name: Summarise warnings
+        script: |
+          # Reports only; never fails the build.
+          grep -E "warning:" build/logs/xcodebuild.log \
+            | sed 's|/Users/builder/clone/||' | sort -u | head -60 \
+            || echo "No warnings."
+    artifacts:
+      - build/logs/*.log
+
+  # Signs the native preview and uploads it to TestFlight under the NEW bundle id.
+  ios-native-preview:
+    name: Native preview · TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    working_directory: client-swift
+    integrations:
+      # The same key as `ios-release`, on purpose: an App Store Connect API key
+      # belongs to the Apple *account*, not to an app. There is exactly one on
+      # this account and it is named "PocketADM ASC key". A second integration
+      # would be the same key twice, and renaming this one would break the
+      # release pipeline above. If Codemagic reports "integration does not
+      # exist", the name here is misspelled — do not create another key.
+      app_store_connect: PocketADM ASC key
+    environment:
+      # Deliberately no `ios_signing:` block. That block only *fetches*
+      # already-existing provisioning profiles and fails on a brand-new app id
+      # with "No matching profiles found". The signing step below instead
+      # creates the certificate and profile with `fetch-signing-files --create`.
+      groups:
+        # Reuses the existing group purely for CERTIFICATE_PRIVATE_KEY_B64.
+        # Apple caps distribution certificates per account, so both apps must
+        # sign with the same key rather than each minting its own.
+        - ios-release
+      vars:
+        BUNDLE_ID: "de.maxaufknax.pocketadm.native"
+        XCODE_SCHEME: "PocketADMNative"
+        XCODE_PROJECT: "PocketADMNative.xcodeproj"
+      xcode: latest
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        # Its own tag namespace, so tagging the native preview can never kick
+        # off the release pipeline and vice versa.
+        - pattern: "native-v*"
+          include: true
+    scripts:
+      - name: Check prerequisites
+        script: |
+          set -eo pipefail
+          if [ -z "${CERTIFICATE_PRIVATE_KEY_B64:-}" ] && [ -z "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
+            echo "!! Neither CERTIFICATE_PRIVATE_KEY_B64 nor CERTIFICATE_PRIVATE_KEY is set."
+            echo "!! Codemagic -> Environment variables -> group 'ios-release'."
+            exit 1
+          fi
+
+          # Informational only: without an App Store Connect app record the
+          # build signs fine and then dies at the very last step with
+          # "Cannot determine the Apple ID from Bundle ID". Better to say so now.
+          if app-store-connect apps list --bundle-id-identifier "$BUNDLE_ID" \
+               > /tmp/asc_apps.json 2>/tmp/asc_err.txt; then
+            if grep -q "$BUNDLE_ID" /tmp/asc_apps.json; then
+              echo "✓ App Store Connect record found for $BUNDLE_ID."
+            else
+              echo "!! No App Store Connect app with bundle id $BUNDLE_ID."
+              echo "!!"
+              echo "!! The build will produce a correctly signed IPA, but the"
+              echo "!! upload at the end will fail."
+              echo "!!"
+              echo "!! Fix (one time, by hand — the API cannot create this):"
+              echo "!!   App Store Connect -> Apps -> + -> New App"
+              echo "!!   Platform iOS, Name 'PocketADM Native', Language English,"
+              echo "!!   Bundle ID $BUNDLE_ID, SKU pocketadm-native"
+              echo "!! See client-swift/NOTES.md."
+            fi
+          else
+            # A check that silently fails is worse than no check — you rely on
+            # a result that never came.
+            echo "!! Could not query the app record; this pre-flight check is skipped:"
+            sed 's/^/!!   /' /tmp/asc_err.txt 2>/dev/null | head -5
+          fi
+
+      - name: Provide XcodeGen
+        script: |
+          which xcodegen || brew install xcodegen
+          xcodegen --version
+
+      - name: Determine the build number
+        script: |
+          set -e
+          # A fresh app record starts at zero, so a timestamp is both unique and
+          # monotonic. It shares no numbering with the Capacitor app.
+          NEW_BUILD="$(date +%Y%m%d%H%M)"
+          echo "Build number: $NEW_BUILD"
+          echo "NATIVE_BUILD_NUMBER=$NEW_BUILD" >> "$CM_ENV"
+
+      - name: Write the build number into an xcconfig
+        script: |
+          set -e
+          mkdir -p Config
+          cat > Config/Build.xcconfig <<XCCONFIG
+          CURRENT_PROJECT_VERSION = ${NATIVE_BUILD_NUMBER}
+          XCCONFIG
+          cat Config/Build.xcconfig
+
+      - name: Generate the Xcode project
+        script: |
+          set -eo pipefail
+          xcodegen generate
+          test -d "$XCODE_PROJECT"
+
+      - name: Verify the build number reaches the target
+        script: |
+          set -eo pipefail
+          # Proves Config/Build.xcconfig is actually attached. If it is not,
+          # CFBundleVersion stays at 1 and the *second* upload is rejected for a
+          # duplicate build number — long after this build reported success.
+          set +e
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -configuration Release -showBuildSettings > /tmp/buildsettings.txt 2>/dev/null
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            echo "!! Build settings unreadable — check skipped."
+          else
+            BUILD_NO=$(awk -F' = ' '/ CURRENT_PROJECT_VERSION = /{print $2; exit}' /tmp/buildsettings.txt)
+            echo "CURRENT_PROJECT_VERSION = ${BUILD_NO:-<empty>}"
+            if [ "${BUILD_NO:-1}" = "1" ]; then
+              echo "!! The xcconfig is not attached to the target — in project.yml"
+              echo "!! this belongs under 'configFiles:', not under"
+              echo "!! 'settings.configs.<name>.xcconfig'."
+              exit 1
+            fi
+          fi
+
+      - name: Set up code signing (creates the app id, certificate and profile)
+        script: |
+          set -eo pipefail
+          # Apple's API can create a distribution certificate but NEVER hands
+          # out its private key — that has to come from here. Without it this
+          # step fails with "Cannot save Signing Certificates without
+          # certificate private key" and creates neither cert nor profile.
+          key_raw="${CERTIFICATE_PRIVATE_KEY:-${CERTIFICATE_PRIVATE_KEY_B64:-}}"
+          if printf '%s' "$key_raw" | grep -q -- "-----BEGIN"; then
+            printf '%s\n' "$key_raw" > /tmp/cert_key.pem
+          else
+            printf '%s' "$key_raw" | tr -d '[:space:]' \
+              | openssl base64 -d -A -out /tmp/cert_key.pem
+          fi
+
+          keychain initialize
+          # --create also REGISTERS the bundle id in the Developer Portal if it
+          # does not exist yet, which is why the new app id needs no manual
+          # click there. It cannot create the App Store Connect app record —
+          # that one is genuinely manual, see the prerequisites step.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --certificate-key @file:/tmp/cert_key.pem \
+            --create
+          keychain add-certificates
+          # Must run after xcodegen — there is no project to patch before that.
+          xcode-project use-profiles
+
+      - name: Build the signed IPA
+        script: |
+          # No `set -e`: on failure the log has to be surfaced first. build-ipa
+          # otherwise reports only "exited with status 1" and the real error
+          # stays in a file nobody sees.
+          set +e
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --xcargs "-skipPackagePluginValidation -skipMacroValidation"
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "═══════ build-ipa failed (exit $status) — Xcode error below ═══════"
+            log=$(ls -t /tmp/xcodebuild_logs/*.log 2>/dev/null | head -n1)
+            if [ -n "$log" ]; then
+              echo ">> log file: $log"
+              echo "───────── error and signing lines ─────────"
+              grep -nE "error:|fatal error|The following build commands failed|Signing for|requires a provisioning|No profile|no matching|certificate|does not support|deployment target|Undefined symbol|linker command failed|plugin" "$log" | tail -n 100
+              echo "───────── last 200 log lines ─────────"
+              tail -n 200 "$log"
+            else
+              echo "!! no xcodebuild log under /tmp/xcodebuild_logs"
+            fi
+            exit $status
+          fi
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+
+        # Upload only — do not submit for beta review.
+        #
+        # `submit_to_testflight: true` requests **external** tester review,
+        # which demands full test information (feedback email, contact with
+        # phone number) and fails without it. Internal testers need none of
+        # that: they get every processed build automatically. For installing on
+        # your own iPhone, that is the right path.
+        submit_to_testflight: false
+
+        # MUST stay false. This is the only flag in this file that could touch
+        # the pending App Review — and even then only for its own app record.
+        # There is no reason to ever set it here: this is a preview build.
+        submit_to_app_store: false
+      email:
+        recipients:
+          - maximilian.elias.paasch@gmail.com
+        notify:
+          success: true
+          failure: true
