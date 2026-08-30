@@ -187,11 +187,12 @@ server still decodes, and a severity word this build has never seen reads as
 There is no Mac and no iOS simulator on this server, so this is what could and
 could not be proven.
 
-**Proven, by two scripts that run here**
+**Proven, by three scripts that run here**
 
 ```bash
-./tools/typecheck-core.sh     # real Swift compiler over the Foundation-only layer
-./tools/decode-check.sh       # 59 assertions against captured server responses
+./tools/typecheck-core.sh                       # real compiler, Foundation-only layer
+./tools/decode-check.sh                         # 59 assertions against captured JSON
+./tools/live-check.sh http://127.0.0.1:8091 demo   # the real client, a real server
 ```
 
 Both run the `swift:6.2-noble` container. `tools/linux-src.sh` assembles the
@@ -214,6 +215,13 @@ scaffolding for its own test rig.
   against what `sessions.py` switches on.
 - **WebSocket URL derivation** (`https→wss`, `http→ws`, port preserved, token
   and extra query items present) and address normalisation.
+
+`live-check` covers the half a fixture cannot: it signs in and drives **32 read
+endpoints through the same `APIClient` actor the app uses**, printing what each
+one actually returned. A mistyped path, a wrong query parameter or a body field
+FastAPI silently ignores all decode perfectly against a fixture and fail only on
+a device. Point it at the demo container (`docker-compose.demo.yml`, password
+`demo`) or at any real box — it never mutates anything.
 
 Also proven: the app icon is 1024×1024 **RGB with no alpha channel** — an alpha
 channel is the `ITMS-90717` rejection that the Capacitor pipeline needs a `sips`
@@ -337,7 +345,12 @@ before every push:
 python3 tools/swift-sanity.py App   # braces and string literals, in seconds
 ./tools/typecheck-core.sh           # real compiler over the Foundation layer
 ./tools/decode-check.sh             # models against captured server responses
+./tools/live-check.sh http://127.0.0.1:8091 demo   # against a running server
 ```
+
+They need Docker and the `swift:6.2-noble` image; `tools/linux-src.sh` assembles
+the buildable subset and is where the Linux/Darwin Foundation differences are
+absorbed, so the app itself carries no portability scaffolding.
 
 The `.xcodeproj` is generated and gitignored, so `project.yml` is the source of
 truth — edit that, not the Xcode project.
