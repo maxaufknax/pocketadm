@@ -26,17 +26,35 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    @EnvironmentObject private var app: AppState
+
     var body: some View {
         TabView {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent") }
+
             ContainersView()
                 .tabItem { Label("Containers", systemImage: "shippingbox") }
+
             TerminalHomeView()
                 .tabItem { Label("Terminal", systemImage: "terminal") }
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
+
+            ChatView()
+                .tabItem { Label("Assistant", systemImage: "sparkles") }
+
+            MoreView()
+                .tabItem { Label("More", systemImage: "ellipsis.circle") }
+                // One badge for everything behind the hub: without it an alert
+                // raised while you are on another tab is invisible.
+                .badge(app.unseenAlerts)
         }
         .tint(Theme.accent)
+        .task {
+            // Capabilities gate half the UI (the assistant tab, pairing, the
+            // exposure warning), so they are fetched once the tabs appear
+            // rather than lazily per screen.
+            await app.refreshMe()
+            await app.refreshAlerts()
+        }
     }
 }

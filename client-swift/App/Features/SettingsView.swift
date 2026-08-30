@@ -1,98 +1,147 @@
-import CoreImage.CIFilterBuiltins
 import SwiftUI
+import UIKit
 
+/// Connection, identity and this device.
+///
+/// Pushed from the More hub, so it deliberately has no `NavigationStack` of its
+/// own — nesting one inside another breaks the back button and the large-title
+/// collapse.
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
 
-    @State private var me: MeResponse?
     @State private var showPairSheet = false
     @State private var confirmForget = false
+    @State private var editingName = false
+    @State private var serverName = ""
+    @State private var toast: Toast?
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    row("Server", app.serverName.isEmpty ? "—" : app.serverName)
-                    row("Address", app.serverURL?.absoluteString ?? "—")
-                    if let me {
-                        row("Version", me.version)
-                        row("Hostname", me.hostname)
-                        row("2FA", me.totpEnabled ? "on" : "off")
+        List {
+            Section {
+                FactRow(label: "Server", value: app.serverName.isEmpty ? "—" : app.serverName)
+                HairlineDivider()
+                FactRow(label: "Address",
+                        value: app.serverURL?.absoluteString ?? "—",
+                        selectable: true)
+                if let me = app.me {
+                    HairlineDivider()
+                    FactRow(label: "Version", value: me.version)
+                    HairlineDivider()
+                    FactRow(label: "Hostname", value: me.hostname)
+                    if me.demo {
+                        HairlineDivider()
+                        FactRow(label: "Mode", value: "demo — data is simulated", tint: Theme.warn)
                     }
-                } header: {
-                    Text("CONNECTION").font(.caption2.weight(.semibold)).foregroundStyle(Theme.muted)
                 }
-                .listRowBackground(Theme.bg2)
+            } header: {
+                SectionCaption(text: "Connection")
+            }
+            .listRowBackground(Theme.bg2)
 
+            Section {
+                Button {
+                    serverName = app.serverName
+                    editingName = true
+                } label: {
+                    NavRow(symbol: "tag", title: "Rename this server",
+                           subtitle: "Shown on every device that connects")
+                }
+
+                Button {
+                    showPairSheet = true
+                } label: {
+                    NavRow(symbol: "qrcode", title: "Pair another device",
+                           subtitle: app.me?.canPair == false
+                             ? "Disabled on this server"
+                             : "Sign in a second phone with no password")
+                }
+                .disabled(app.me?.canPair == false)
+            } header: {
+                SectionCaption(text: "Devices")
+            } footer: {
+                Text("A pairing code works once and grants full access. Anyone who scans it is in.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.muted)
+            }
+            .listRowBackground(Theme.bg2)
+
+            if let workspaces = app.me?.workspaces, !workspaces.isEmpty {
                 Section {
-                    Button {
-                        showPairSheet = true
-                    } label: {
-                        Label("Pair another device", systemImage: "qrcode")
-                            .foregroundStyle(Theme.accent)
+                    ForEach(workspaces, id: \.self) { path in
+                        HStack {
+                            Text(path)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(Theme.text)
+                            Spacer()
+                            if path == app.me?.defaultWorkspace {
+                                StatusPill(text: "default", tint: Theme.accent)
+                            }
+                        }
                     }
-                    .disabled(me?.canPair == false)
                 } header: {
-                    Text("DEVICES").font(.caption2.weight(.semibold)).foregroundStyle(Theme.muted)
+                    SectionCaption(text: "Workspaces")
                 } footer: {
-                    Text(me?.canPair == false
-                         ? "This server has pairing disabled."
-                         : "Shows a QR code another phone can scan to sign itself in — no password needed.")
+                    Text("The only directories the agent's file tools and the file browser can reach.")
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
                 }
                 .listRowBackground(Theme.bg2)
+            }
 
-                Section {
-                    Button(role: .destructive) {
-                        app.signOut()
-                    } label: {
-                        Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                    Button(role: .destructive) {
-                        confirmForget = true
-                    } label: {
-                        Label("Forget this server", systemImage: "trash")
-                    }
+            Section {
+                Button(role: .destructive) {
+                    app.signOut()
+                } label: {
+                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
-                .listRowBackground(Theme.bg2)
+                Button(role: .destructive) {
+                    confirmForget = true
+                } label: {
+                    Label("Forget this server", systemImage: "trash")
+                }
+            }
+            .listRowBackground(Theme.bg2)
 
-                Section {
-                    Text("Native SwiftUI preview build. Dashboard, containers and terminal are live; Vibe Code, App Store, Updates and Checks are not built yet.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.muted)
-                }
-                .listRowBackground(Theme.bg)
+            Section {
+                Text("PocketADM native · built with SwiftUI. The terminal is a real xterm emulator and the assistant runs on your server, not on this phone.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.muted)
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Theme.bg)
-            .navigationTitle("Settings")
-            .screenBackground()
-            .sheet(isPresented: $showPairSheet) { PairCodeSheet() }
-            .alert("Forget this server?", isPresented: $confirmForget) {
-                Button("Forget", role: .destructive) { app.forgetServer() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("The address and token are removed from this device.")
-            }
-            .task {
-                guard let client = app.client else { return }
-                me = try? await client.me()
-            }
+            .listRowBackground(Theme.bg)
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.bg)
+        .navigationTitle("Settings")
+        .screenBackground()
+        .toast($toast)
+        .sheet(isPresented: $showPairSheet) { PairCodeSheet() }
+        .alert("Rename server", isPresented: $editingName) {
+            TextField("Name", text: $serverName)
+            Button("Save") { Task { await rename() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This is the name every client shows for this box.")
+        }
+        .alert("Forget this server?", isPresented: $confirmForget) {
+            Button("Forget", role: .destructive) { app.forgetServer() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The address and token are removed from this device.")
+        }
+        .task { await app.refreshMe() }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label).foregroundStyle(Theme.muted)
-            Spacer()
-            Text(value)
-                .foregroundStyle(Theme.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
+    private func rename() async {
+        guard let client = app.client else { return }
+        do {
+            _ = try await client.setServerName(serverName)
+            await app.refreshMe()
+            toast = Toast(text: "Renamed")
+        } catch {
+            toast = Toast(text: error.localizedDescription, isError: true)
+            app.handle(error)
         }
-        .font(.subheadline)
     }
 }
 
@@ -109,7 +158,7 @@ struct PairCodeSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                if let pair, let image = qrImage(for: payload(pair)) {
+                if let pair, let image = QRRenderer.image(for: payload(pair)) {
                     Image(uiImage: image)
                         .interpolation(.none)
                         .resizable()
@@ -163,7 +212,8 @@ struct PairCodeSheet: View {
     /// Must match what the web client encodes — `<origin>/pair?code=<code>` —
     /// so a code from either client scans on either client.
     private func payload(_ pair: PairCode) -> String {
-        let origin = app.serverURL?.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        let origin = app.serverURL?.absoluteString
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         return "\(origin)/pair?code=\(pair.code)"
     }
 
@@ -178,20 +228,5 @@ struct PairCodeSheet: View {
             self.error = error.localizedDescription
             app.handle(error)
         }
-    }
-
-    /// Rendered on-device. The server offers POST /api/qr, but a round trip for
-    /// something CoreImage draws locally would only add a failure mode.
-    private func qrImage(for text: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(text.utf8)
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage else { return nil }
-        // The generator emits roughly one pixel per module; scaling up before
-        // rasterising is what keeps the code crisp instead of a blurry mess.
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return UIImage(cgImage: cgImage)
     }
 }

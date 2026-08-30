@@ -8,6 +8,12 @@ final class DashboardModel: ObservableObject {
     @Published var error: String?
     @Published var loaded = false
 
+    /// Glance data. Fetched once per appearance rather than on the 5s tick: an
+    /// update check can hit a registry and the report is a file read, and
+    /// neither changes between two heartbeats.
+    @Published var pendingUpdates = 0
+    @Published var health: Severity?
+
     private var ticker: Task<Void, Never>?
 
     /// The server samples every ~10s, so polling faster only burns battery.
@@ -45,6 +51,14 @@ final class DashboardModel: ObservableObject {
         }
         loaded = true
     }
+
+    func refreshGlance(_ app: AppState) async {
+        guard let client = app.client else { return }
+        await app.refreshAlerts()
+        if let updates = try? await client.updates() { pendingUpdates = updates.pending.count }
+        // A 404 here simply means no check has ever run.
+        health = (try? await client.latestReport())?.score
+    }
 }
 
 struct DashboardView: View {
@@ -74,14 +88,29 @@ struct DashboardView: View {
             .navigationTitle(app.serverName.isEmpty ? "Dashboard" : app.serverName)
             .navigationBarTitleDisplayMode(.large)
             .screenBackground()
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        NotificationsView()
+                    } label: {
+                        Image(systemName: app.unseenAlerts > 0 ? "bell.badge.fill" : "bell")
+                            .foregroundStyle(app.unseenAlerts > 0 ? Theme.warn : Theme.accent)
+                    }
+                }
+            }
         }
-        .task { model.start(app) }
+        .task {
+            model.start(app)
+            await model.refreshGlance(app)
+        }
         .onDisappear { model.stop() }
     }
 
     private func content(_ system: SystemSnapshot) -> some View {
         ScrollView {
             VStack(spacing: 14) {
+                if app.me?.shouldWarnAboutExposure == true { exposureWarning }
+
                 LazyVGrid(columns: columns, spacing: 12) {
                     MetricTile(
                         title: "CPU",
@@ -115,21 +144,88 @@ struct DashboardView: View {
                     )
                 }
 
+                glanceRow
+
                 if !model.history.isEmpty { historyChart }
 
                 hostCard(system)
             }
             .padding(16)
         }
-        .refreshable { await model.refresh(app) }
+        .refreshable {
+            await model.refresh(app)
+            await model.refreshGlance(app)
+        }
+    }
+
+    private var exposureWarning: some View {
+        NavigationLink {
+            SecurityView()
+        } label: {
+            // No action button here: the whole banner is already the link, and
+            // a Button nested inside a NavigationLink label swallows the tap.
+            WarningBanner(
+                title: "Public and unprotected",
+                message: "Reachable from the internet with 2FA off. PocketADM can open a root shell — tap to fix.",
+                tint: Theme.danger
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Two things you want to know without opening anything: is there work
+    /// waiting, and is the server healthy.
+    private var glanceRow: some View {
+        HStack(spacing: 12) {
+            NavigationLink {
+                UpdatesView()
+            } label: {
+                glanceTile(
+                    symbol: "arrow.triangle.2.circlepath",
+                    title: "Updates",
+                    value: model.pendingUpdates == 0 ? "None" : String(model.pendingUpdates),
+                    tint: model.pendingUpdates == 0 ? Theme.accent2 : Theme.accent
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                ChecksView()
+            } label: {
+                glanceTile(
+                    symbol: model.health?.symbol ?? "checkmark.shield",
+                    title: "Health",
+                    value: model.health?.label ?? "—",
+                    tint: model.health?.tint ?? Theme.muted
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func glanceTile(symbol: String, title: String, value: String, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 18))
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.muted)
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.text)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(padding: 12)
     }
 
     private var historyChart: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("LAST HOUR")
-                .font(.caption2.weight(.semibold))
-                .tracking(0.6)
-                .foregroundStyle(Theme.muted)
+            SectionCaption(text: "Last hour")
 
             Chart {
                 ForEach(model.history) { point in
@@ -182,29 +278,24 @@ struct DashboardView: View {
     }
 
     private func hostCard(_ system: SystemSnapshot) -> some View {
-        VStack(spacing: 0) {
-            row("Host", system.hostname)
-            Divider().overlay(Theme.border)
-            row("Uptime", Fmt.uptime(system.uptime))
+        FactsCard {
+            FactRow(label: "Host", value: system.hostname)
+            HairlineDivider()
+            FactRow(label: "Uptime", value: Fmt.uptime(system.uptime))
+            HairlineDivider()
+            FactRow(label: "Load",
+                    value: system.load.prefix(3)
+                        .map { String(format: "%.2f", $0) }
+                        .joined(separator: "  "))
             if let docker = system.docker {
-                Divider().overlay(Theme.border)
-                row("Docker", "\(docker.running) of \(docker.containers) running")
-                Divider().overlay(Theme.border)
-                row("Engine", docker.version)
+                HairlineDivider()
+                FactRow(label: "Docker", value: "\(docker.running) of \(docker.containers) running")
+                HairlineDivider()
+                FactRow(label: "Engine", value: docker.version)
+                HairlineDivider()
+                FactRow(label: "Images", value: String(docker.images))
             }
         }
-        .card(padding: 0)
-    }
-
-    private func row(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label).foregroundStyle(Theme.muted)
-            Spacer()
-            Text(value).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
     }
 
     // MARK: - Helpers

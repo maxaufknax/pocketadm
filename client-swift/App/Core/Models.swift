@@ -37,7 +37,10 @@ struct TokenResponse: Decodable {
     }
 }
 
-/// GET /api/me — the signed-in server's capabilities.
+/// GET /api/me — the signed-in server's capabilities. This is the screen-gating
+/// payload: it decides which features are even offered (AI configured? pairing
+/// allowed? is this a demo?), so every field it can omit has a default here
+/// rather than failing the request that unlocks the whole app.
 struct MeResponse: Decodable {
     let ok: Bool
     let version: String
@@ -46,12 +49,58 @@ struct MeResponse: Decodable {
     let serverName: String
     let totpEnabled: Bool
     let canPair: Bool
+    let onboarded: Bool
+    /// False until an API key or a local model exists — the assistant tab says
+    /// so instead of opening a socket that can only fail.
+    let aiConfigured: Bool
+    let aiDefault: ModelChoice
+    let aiProviders: [String]
+    let workspaces: [String]
+    let defaultWorkspace: String
+    let reportConfig: ReportConfig
+    /// The server believes it is reachable from the public internet. Combined
+    /// with 2FA off, that is the one thing worth shouting about on a root
+    /// gateway — `exposureAck` records that the admin already knows.
+    let publicExposure: Bool
+    let exposureAck: Bool
+
+    /// Warn only when the risk is real and unacknowledged.
+    var shouldWarnAboutExposure: Bool {
+        publicExposure && !totpEnabled && !exposureAck && !demo
+    }
 
     enum CodingKeys: String, CodingKey {
-        case ok, version, demo, hostname
+        case ok, version, demo, hostname, onboarded, workspaces
         case serverName = "server_name"
         case totpEnabled = "totp_enabled"
         case canPair = "can_pair"
+        case aiConfigured = "ai_configured"
+        case aiDefault = "ai_default"
+        case aiProviders = "ai_providers"
+        case defaultWorkspace = "default_workspace"
+        case reportConfig = "report_config"
+        case publicExposure = "public_exposure"
+        case exposureAck = "exposure_ack"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = c.get(.ok, true)
+        version = c.get(.version, "")
+        demo = c.get(.demo, false)
+        hostname = c.get(.hostname, "")
+        serverName = c.get(.serverName, "")
+        totpEnabled = c.get(.totpEnabled, false)
+        canPair = c.get(.canPair, false)
+        onboarded = c.get(.onboarded, true)
+        aiConfigured = c.get(.aiConfigured, false)
+        aiDefault = c.opt(.aiDefault) ?? ModelChoice()
+        aiProviders = c.get(.aiProviders, [])
+        workspaces = c.get(.workspaces, [])
+        defaultWorkspace = c.get(.defaultWorkspace, "")
+        reportConfig = c.opt(.reportConfig) ?? ReportConfig()
+        publicExposure = c.get(.publicExposure, false)
+        exposureAck = c.get(.exposureAck, false)
     }
 }
 

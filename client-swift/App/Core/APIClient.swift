@@ -48,8 +48,12 @@ actor APIClient {
     }
 
     // MARK: - Request plumbing
+    //
+    // Internal rather than private: the endpoint list is split across
+    // APIClient+Ops.swift to keep either file readable, and `private` in Swift
+    // is file-scoped — it would hide these from the other half of the same type.
 
-    private func request(
+    func request(
         _ method: String,
         _ path: String,
         query: [URLQueryItem] = [],
@@ -74,7 +78,7 @@ actor APIClient {
 
     /// Pulls `detail` out of FastAPI's error envelope so the UI can show what
     /// the server actually said instead of a bare status code.
-    private func decodeError(_ data: Data, status: Int) -> APIError {
+    func decodeError(_ data: Data, status: Int) -> APIError {
         let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let detail = (obj?["detail"] as? String) ?? ""
         if status == 401 {
@@ -90,7 +94,7 @@ actor APIClient {
         return .http(status, detail)
     }
 
-    private func send<T: Decodable>(_ req: URLRequest, as: T.Type) async throws -> T {
+    func send<T: Decodable>(_ req: URLRequest, as: T.Type) async throws -> T {
         let data: Data
         let response: URLResponse
         do {
@@ -112,7 +116,7 @@ actor APIClient {
     }
 
     @discardableResult
-    private func sendIgnoringBody(_ req: URLRequest) async throws -> Bool {
+    func sendIgnoringBody(_ req: URLRequest) async throws -> Bool {
         let data: Data
         let response: URLResponse
         do {

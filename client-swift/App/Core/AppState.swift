@@ -20,6 +20,14 @@ final class AppState: ObservableObject {
     @Published private(set) var serverName: String = ""
     @Published private(set) var serverInfo: ServerInfo?
 
+    /// GET /api/me, cached. It decides which features are even offered — the
+    /// assistant tab without an AI key, pairing on a server that forbids it —
+    /// so screens read this instead of each re-fetching capabilities.
+    @Published private(set) var me: MeResponse?
+    /// Unread count behind the dashboard's bell. Refreshed with the dashboard
+    /// poll rather than on its own timer.
+    @Published private(set) var unseenAlerts = 0
+
     private var token: String?
 
     private static let urlKey = "pocketadm.serverURL"
@@ -66,11 +74,42 @@ final class AppState: ObservableObject {
         phase = .ready
     }
 
+    /// Changing the password and revoking other sessions both invalidate every
+    /// existing token — including this device's. The server hands back a
+    /// replacement, and dropping it on the floor signs the admin out of their
+    /// own phone one request later.
+    func replaceToken(_ token: String) {
+        self.token = token
+        KeychainStore.set(token, for: Self.tokenAccount)
+    }
+
+    /// Refreshes the capability snapshot. Silent on failure: a screen that
+    /// merely wanted to know whether to show a button must not tear down the
+    /// session because the network blinked.
+    func refreshMe() async {
+        guard let client else { return }
+        if let fresh = try? await client.me() {
+            me = fresh
+            if !fresh.serverName.isEmpty { serverName = fresh.serverName }
+        }
+    }
+
+    func refreshAlerts() async {
+        guard let client else { return }
+        if let feed = try? await client.notifications() {
+            unseenAlerts = feed.unseen
+        }
+    }
+
+    func clearAlertBadge() { unseenAlerts = 0 }
+
     /// Drops the token but keeps the server URL, so signing out lands on the
     /// login screen for the same box instead of making you retype the address.
     func signOut(reason: String? = nil) {
         token = nil
         KeychainStore.set(nil, for: Self.tokenAccount)
+        me = nil
+        unseenAlerts = 0
         signOutReason = reason
         if let info = serverInfo {
             phase = .authenticate(info)
@@ -83,6 +122,8 @@ final class AppState: ObservableObject {
     func forgetServer() {
         token = nil
         KeychainStore.set(nil, for: Self.tokenAccount)
+        me = nil
+        unseenAlerts = 0
         serverURL = nil
         serverInfo = nil
         serverName = ""
@@ -113,26 +154,5 @@ final class AppState: ObservableObject {
             serverInfo = info
             serverName = info.serverName
         }
-    }
-}
-
-// MARK: - URL normalisation
-
-enum ServerURL {
-    /// Turns whatever someone typed into candidate URLs to probe, in order.
-    ///
-    /// People type `192.168.1.10:8090`, `myserver.duckdns.org`, or a full URL.
-    /// With no scheme, https is tried first and http second — a LAN box on a
-    /// plain port is the common self-hosted case and must still work, but it
-    /// should never win over a working TLS endpoint.
-    static func candidates(from raw: String) -> [URL] {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-
-        let stripped = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
-        if stripped.lowercased().hasPrefix("http://") || stripped.lowercased().hasPrefix("https://") {
-            return URL(string: stripped).map { [$0] } ?? []
-        }
-        return ["https://\(stripped)", "http://\(stripped)"].compactMap(URL.init(string:))
     }
 }

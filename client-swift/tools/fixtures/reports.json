@@ -1,0 +1,1 @@
+{"reports":[{"file":"20260716-135421","time":1784210061.7904341,"score":"crit","counts":{"ok":4,"info":0,"warn":2,"crit":1},"trigger":"scheduled"}],"config":{"interval_min":360,"auto":true}}
