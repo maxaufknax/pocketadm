@@ -1,7 +1,7 @@
 # XcodeGen description — produces PocketADMNative.xcodeproj so no binary project
 # file lives in the repo:  xcodegen generate
 #
-# This is the *native SwiftUI preview* of PocketADM. It is deliberately a
+# This is the *native SwiftUI client* of PocketADM. It is deliberately a
 # separate app from the Capacitor client in ../client: different bundle id,
 # different App Store Connect record, different Codemagic workflow. Nothing
 # here can touch the release that is sitting in App Review.
@@ -34,7 +34,7 @@ settings:
     # SWIFT_VERSION only knows language modes (5.0 / 6.0), not point releases.
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
