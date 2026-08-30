@@ -188,6 +188,10 @@ struct AppDetailSheet: View {
     @State private var output = ""
     @State private var failure: String?
     @State private var confirmUninstall = false
+    /// `installed` is captured when the sheet opens, so after a successful
+    /// install it still says "not installed" and the form is still on screen —
+    /// which reads as the install having done nothing.
+    @State private var finished: String?
 
     var body: some View {
         NavigationStack {
@@ -207,7 +211,9 @@ struct AppDetailSheet: View {
                         .card()
                     }
 
-                    if let installed {
+                    if let finished {
+                        doneCard(finished)
+                    } else if let installed {
                         installedCard(installed)
                     } else {
                         installForm
@@ -325,6 +331,21 @@ struct AppDetailSheet: View {
         .card()
     }
 
+    private func doneCard(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(message, systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Theme.accent2)
+            Text("The output below is what the server did. Close this to see it in the list.")
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+            Button("Close") { dismiss() }
+                .buttonStyle(SecondaryButtonStyle(tint: Theme.accent))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
     private func installedCard(_ installed: InstalledApp) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             FactsCard {
@@ -393,6 +414,7 @@ struct AppDetailSheet: View {
         defer { working = false }
         do {
             output = try await client.installApp(entry.id, values: values)
+            finished = "\(entry.name) installed"
             onChange("\(entry.name) installed")
         } catch {
             failure = error.localizedDescription
@@ -407,6 +429,7 @@ struct AppDetailSheet: View {
         defer { working = false }
         do {
             output = try await client.uninstallApp(entry.id, removeData: removeData)
+            finished = "\(entry.name) removed"
             onChange("\(entry.name) removed")
         } catch {
             failure = error.localizedDescription

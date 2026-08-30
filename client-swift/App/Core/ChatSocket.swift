@@ -93,6 +93,13 @@ final class ChatSocket: ObservableObject {
     func submit(_ text: String, context: String = "") {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard task != nil else {
+            // Without this the composer clears and nothing else happens, which
+            // reads exactly like the model ignoring the question.
+            items.append(ChatItem(kind: .error,
+                                  text: "Not connected — the message was not sent."))
+            return
+        }
         // Echoed back by the server as `user_echo`; appending here as well
         // would show the message twice.
         send(raw: ChatProtocol.user(text: trimmed, context: context))

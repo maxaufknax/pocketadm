@@ -31,10 +31,27 @@ struct UpdatesView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var model = UpdatesModel()
 
-    @State private var job: PendingJob?
-    @State private var detail: DockerUpdate?
+    /// One sheet, not two.
+    ///
+    /// Applying an update dismisses the detail sheet and opens the job console
+    /// in the same tick. With two `.sheet` modifiers SwiftUI drops the second
+    /// presentation when the first is still animating out, and the update
+    /// appears to do nothing. A single enum makes it one transition.
+    @State private var sheet: Sheet?
     @State private var confirmAll = false
     @State private var toast: Toast?
+
+    enum Sheet: Identifiable {
+        case detail(DockerUpdate)
+        case job(PendingJob)
+
+        var id: String {
+            switch self {
+            case .detail(let update): return "detail-" + update.image
+            case .job(let job):       return "job-" + job.id
+            }
+        }
+    }
 
     var body: some View {
         Group {
@@ -54,16 +71,18 @@ struct UpdatesView: View {
         .screenBackground()
         .toast($toast)
         .task { if !model.loaded { await model.load(app) } }
-        .sheet(item: $detail) { update in
-            UpdateDetailSheet(update: update) { image in
-                await apply(images: [image], title: update.displayName)
-            } onIgnore: { image, ignored in
-                await setIgnored(image: image, ignored: ignored)
-            }
-        }
-        .sheet(item: $job) { pending in
-            JobConsoleView(jobID: pending.id, title: pending.title) { _ in
-                Task { await model.load(app) }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .detail(let update):
+                UpdateDetailSheet(update: update) { image in
+                    await apply(images: [image], title: update.displayName)
+                } onIgnore: { image, ignored in
+                    await setIgnored(image: image, ignored: ignored)
+                }
+            case .job(let pending):
+                JobConsoleView(jobID: pending.id, title: pending.title) { _ in
+                    Task { await model.load(app) }
+                }
             }
         }
         .confirmationDialog("Update everything?", isPresented: $confirmAll, titleVisibility: .visible) {
@@ -84,7 +103,7 @@ struct UpdatesView: View {
             if !updates.pending.isEmpty {
                 Section {
                     ForEach(updates.pending) { update in
-                        Button { detail = update } label: { UpdateRow(update: update) }
+                        Button { sheet = .detail(update) } label: { UpdateRow(update: update) }
                             .listRowBackground(Theme.bg2)
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button {
@@ -226,12 +245,12 @@ struct UpdatesView: View {
 
     private func apply(images: [String], title: String) async {
         guard let client = app.client, !images.isEmpty else { return }
-        detail = nil
         do {
             let jobID = images.count == 1
                 ? try await client.applyUpdate(image: images[0])
                 : try await client.applyAllUpdates(images: images)
-            job = PendingJob(id: jobID, title: title)
+            // Replaces the detail sheet rather than closing and reopening.
+            sheet = .job(PendingJob(id: jobID, title: title))
         } catch {
             toast = Toast(text: error.localizedDescription, isError: true)
             app.handle(error)
@@ -242,7 +261,7 @@ struct UpdatesView: View {
         guard let client = app.client else { return }
         do {
             try await client.setUpdateIgnored(image: image, ignored: ignored)
-            detail = nil
+            sheet = nil
             toast = Toast(text: ignored ? "Ignored" : "Watching again")
             await model.load(app)
         } catch {
@@ -255,7 +274,7 @@ struct UpdatesView: View {
         guard let client = app.client else { return }
         do {
             let jobID = try await client.rollbackSnapshot(snapshot.id)
-            job = PendingJob(id: jobID, title: "Roll back \(snapshot.image)")
+            sheet = .job(PendingJob(id: jobID, title: "Roll back \(snapshot.image)"))
         } catch {
             toast = Toast(text: error.localizedDescription, isError: true)
             app.handle(error)
