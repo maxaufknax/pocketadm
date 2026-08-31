@@ -128,6 +128,15 @@ it for you. This is the exact list Apple returned, so nothing here is guesswork:
       `client/screenshots/iphone-65/` (see the README there for what they show).
       `APP_IPAD_PRO_3GEN_129` is **no longer required**: the app now ships
       iPhone-only (`TARGETED_DEVICE_FAMILY = 1`, set in `scripts/ios-configure.sh`).
+      **Upload them to *every* localization, not just one.** Screenshots hang off
+      the `appStoreVersionLocalization`, so `de-DE` and `en-US` each carry their
+      own set and the store serves whichever matches the customer's region. On
+      2026-08-26 only `en-US` had the hand-made captioned set; `de-DE` was filled
+      with the raw captures to get past the submission gate, and the German store
+      then shipped those raw ones for the whole 1.0.0 release. Once a version is
+      `READY_FOR_SALE` this cannot be corrected — the API answers `409
+      ENTITY_ERROR.ATTRIBUTE.INVALID.INVALID_STATE` — so it costs a new version
+      and a new review. Check both locales *before* submitting.
 - [ ] **App Review Information** (`appStoreReviewDetail was not found`) — the
       demo account and notes from § *Review notes*.
 

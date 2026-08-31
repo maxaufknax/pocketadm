@@ -39,7 +39,7 @@ workflows:
         TEAM_ID: "ZPF4QUFXXH"            # Apple Developer Team ID (App ID prefix)
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
-        MARKETING_VERSION: "1.0.0"       # public App Store version string
+        MARKETING_VERSION: "1.0.1"       # public App Store version string
       node: 20
       xcode: latest
       cocoapods: default
