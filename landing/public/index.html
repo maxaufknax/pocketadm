@@ -59,6 +59,15 @@ header.nav.scrolled{border-color:var(--border)}
   box-shadow:0 6px 20px rgba(77,163,255,.28)}
 .btn.primary:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(77,163,255,.4)}
 .btn.ghost:hover{border-color:var(--accent);color:#fff}
+/* official-style "Download on the App Store" badge, built in CSS so it inherits the dark theme */
+.btn.appstore{background:#fff;color:#000;border-color:transparent;gap:10px;padding:8px 20px;
+  box-shadow:0 6px 20px rgba(255,255,255,.14)}
+.btn.appstore:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(255,255,255,.24)}
+.btn.appstore svg{width:19px;height:23px;flex:none;fill:currentColor;margin-top:-1px}
+.btn.appstore .as-txt{display:flex;flex-direction:column;align-items:flex-start;line-height:1;text-align:left}
+.btn.appstore .as-sm{font-size:9.5px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;opacity:.72}
+.btn.appstore .as-lg{font-size:17px;font-weight:600;letter-spacing:-.02em;margin-top:3px}
+.hero-cta .btn.appstore{padding:8px 22px}
 @media(max-width:720px){.nav-links a.hide-sm{display:none}}
 
 /* hero */
@@ -346,6 +355,13 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 @keyframes heroin{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.hero-in{animation:none;opacity:1}.tilt{transition:none}}
 @media(prefers-reduced-motion:reduce){.reveal{transition:none}.aurora::after{animation:none}}
+
+/* Einheitliche Inline-Icons (ersetzen die bisherigen Emojis) */
+svg.ic{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-0.125em;flex:none}
+.feat .fico svg.ic{width:24px;height:24px}
+.tbtn svg.ic{width:15px;height:15px}
+.svc-hd svg.ic{width:13px;height:13px}
+.updrow .acts svg.ic{width:11px;height:11px}
 </style>
 </head>
 <body>
@@ -359,7 +375,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
       <a href="#agent" class="hide-sm">AI agent</a>
       <a href="#stack" class="hide-sm">Stack</a>
       <a href="#install" class="hide-sm">Install</a>
-      <a href="https://github.com/maxaufknax/pocketadm" class="btn primary">★ Star on GitHub</a>
+      <a href="https://github.com/maxaufknax/pocketadm" class="btn primary"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z"/></svg> Star on GitHub</a>
     </nav>
   </div>
 </header>
@@ -376,24 +392,28 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
       with your own host login, one-tap app installs and local AI. Termius plus Claude Code plus
       an app store, for your homelab.</p>
     <div class="hero-cta hero-in" style="animation-delay:.24s">
-      <a href="#install" class="btn primary">⚡ Install in one command</a>
+      <a href="https://apps.apple.com/de/app/pocketadm/id6790731797" target="_blank" rel="noopener" class="btn appstore" aria-label="Download PocketADM on the App Store">
+        <svg viewBox="0 0 384 512" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+        <span class="as-txt"><span class="as-sm">Download on the</span><span class="as-lg">App Store</span></span>
+      </a>
+      <a href="#install" class="btn primary"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg> Install in one command</a>
       <a href="https://github.com/maxaufknax/pocketadm" class="btn ghost">View on GitHub →</a>
     </div>
     <div class="trust hero-in" style="animation-delay:.32s">
-      <span>🐳 <b>Docker</b>-native</span>
-      <span>🔑 <b>Bring your own</b> AI key</span>
-      <span>📱 Installable <b>PWA</b></span>
-      <span>🖧 <b>Multi-arch</b> (arm64 + amd64)</span>
+      <span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg><b>Docker</b>-native</span>
+      <span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg><b>Bring your own</b> AI key</span>
+      <span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>Installable <b>PWA</b></span>
+      <span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg><b>Multi-arch</b> (arm64 + amd64)</span>
     </div>
 
     <!-- interactive phone: the real app, recreated & animated -->
     <div class="stage" id="stage">
       <div class="tabs" role="tablist">
-        <button class="on" data-tab="home" role="tab"><span class="tico">▦</span> Home</button>
-        <button data-tab="vibe" role="tab"><span class="tico">✦</span> Vibe Code</button>
-        <button data-tab="term" role="tab"><span class="tico">❯_</span> Terminal</button>
-        <button data-tab="health" role="tab"><span class="tico">♥</span> Health</button>
-        <button data-tab="apps" role="tab"><span class="tico">◲</span> Apps</button>
+        <button class="on" data-tab="home" role="tab"><span class="tico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></span> Home</button>
+        <button data-tab="vibe" role="tab"><span class="tico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg></span> Vibe Code</button>
+        <button data-tab="term" role="tab"><span class="tico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span> Terminal</button>
+        <button data-tab="health" role="tab"><span class="tico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span> Health</button>
+        <button data-tab="apps" role="tab"><span class="tico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> Apps</button>
       </div>
       <div class="tilt" id="tilt">
       <div class="phone">
@@ -403,7 +423,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
           <div class="ptop">
             <span class="pa">P<b>/A</b></span>
             <span class="who">maxaufknax</span><span class="caret">▾</span>
-            <span class="sp"><span>⚡</span><span>🔔</span><span class="dotg"></span></span>
+            <span class="sp"><span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></span><span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span class="dotg"></span></span>
           </div>
 
           <!-- HOME -->
@@ -451,7 +471,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
           <div class="pane" data-pane="term">
             <div class="tbar">
               <span class="ttarget"><span class="ui">⛭</span> maxaufknax@stream <span class="cv">▾</span></span>
-              <span class="tbtn">📋</span><span class="tbtn">⋯</span>
+              <span class="tbtn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span><span class="tbtn">⋯</span>
             </div>
             <div class="tscreen" id="tscreen"></div>
             <div class="keybar"><span>esc</span><span>tab</span><span>ctrl</span><span>↑</span><span>↓</span><span>←</span><span>→</span><span>^C</span></div>
@@ -462,19 +482,19 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
             <div class="scr-body">
               <div class="hchip"><span class="on">Updates</span><span>Checks</span></div>
               <div class="svc-hd"><span><b style="font-size:13px">Updates</b> · 18 available</span><b style="font-weight:500;color:var(--muted);font-size:10px">Re-check</b></div>
-              <div class="updall"><span class="ua">⬆ Update all (18)</span><span class="wf">✦ Which first?</span></div>
+              <div class="updall"><span class="ua"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg> Update all (18)</span><span class="wf"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg> Which first?</span></div>
               <div class="updrow" id="updredis" style="--d:.10s;--tile:linear-gradient(135deg,#ff6b5e,#d92b1f)">
                 <div class="r1"><span class="ico">R</span><div><div class="nm">Redis <span class="hi">HIGH</span></div><div class="sb">new version · used by authentik-redis</div></div><span class="donepill">✓ updated</span></div>
-                <div class="acts"><b class="up">⬆ Update</b><b class="dt">Details</b><b class="ex">✦ Explain</b></div>
+                <div class="acts"><b class="up"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg> Update</b><b class="dt">Details</b><b class="ex"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg> Explain</b></div>
                 <div class="prog"><i></i></div>
               </div>
               <div class="updrow" style="--d:.20s;--tile:linear-gradient(135deg,#3b5266,#1f3240)">
                 <div class="r1"><span class="ico">◠</span><div><div class="nm">MariaDB <span class="hi">HIGH</span></div><div class="sb">v11.8.8 · used by nextcloud-db</div></div></div>
-                <div class="acts"><b class="up">⬆ Update</b><b class="dt">Details</b><b class="ex">✦ Explain</b></div>
+                <div class="acts"><b class="up"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg> Update</b><b class="dt">Details</b><b class="ex"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg> Explain</b></div>
               </div>
               <div class="updrow" style="--d:.30s;--tile:linear-gradient(135deg,#2b2b33,#101014)">
                 <div class="r1"><span class="ico">[m]</span><div><div class="nm">Matrix Synapse <span class="hi">HIGH</span></div><div class="sb">v1.156.0 · used by synapse</div></div></div>
-                <div class="acts"><b class="up">⬆ Update</b><b class="dt">Details</b><b class="ex">✦ Explain</b></div>
+                <div class="acts"><b class="up"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg> Update</b><b class="dt">Details</b><b class="ex"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg> Explain</b></div>
               </div>
             </div>
           </div>
@@ -483,7 +503,7 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
           <div class="pane" data-pane="apps">
             <div class="scr-body">
               <div class="appshd"><b>App Store</b><span>one-tap installs for your server</span></div>
-              <div class="svc-hd"><span>43 apps · 19 from the online catalog</span><b style="font-weight:500">⟳</b></div>
+              <div class="svc-hd"><span>43 apps · 19 from the online catalog</span><b style="font-weight:500"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg></b></div>
               <div class="searchbar">Search apps…</div>
               <div class="catchips"><span class="on">All</span><span>Installed</span><span>AI</span><span>Analytics</span><span>Automation</span></div>
               <div class="svc" style="--d:.10s;--tile:linear-gradient(135deg,#4aa8ee,#2563eb)"><span class="ico">P</span><div><div class="nm">Portainer</div><div class="sb">Docker management UI</div></div><span class="run">RUNNING</span><span class="self">SELF-MANAGED</span></div>
@@ -496,11 +516,11 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 
           <!-- in-phone tab bar -->
           <div class="ptabs">
-            <button class="ptab on" data-tab="home"><span class="pi">▦</span>Home</button>
-            <button class="ptab" data-tab="vibe"><span class="pi">✦</span>Vibe</button>
-            <button class="ptab" data-tab="term"><span class="pi">❯_</span>Term</button>
-            <button class="ptab" data-tab="health"><span class="pi">♥</span>Health<span class="bdg">18</span></button>
-            <button class="ptab" data-tab="apps"><span class="pi">◲</span>Apps</button>
+            <button class="ptab on" data-tab="home"><span class="pi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></span>Home</button>
+            <button class="ptab" data-tab="vibe"><span class="pi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg></span>Vibe</button>
+            <button class="ptab" data-tab="term"><span class="pi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>Term</button>
+            <button class="ptab" data-tab="health"><span class="pi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>Health<span class="bdg">18</span></button>
+            <button class="ptab" data-tab="apps"><span class="pi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Apps</button>
           </div>
 
         </div>
@@ -519,23 +539,23 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
     <p class="lead reveal">No more SSH-ing from a laptop to fix a container at 11pm. PocketADM puts the
       whole box (metrics, logs, updates, terminal and an AI engineer) one tap away.</p>
     <div class="feat-grid">
-      <div class="feat reveal"><div class="fico">✦</div><h3>Vibe Code: an AI that works on your server</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg></div><h3>Vibe Code: an AI that works on your server</h3>
         <p>Chat with an agent that runs commands, reads and writes files, and fixes things directly on your box. It streams live, keeps working when you close the app, and asks before anything destructive, or flip on Auto.</p></div>
-      <div class="feat reveal"><div class="fico">📊</div><h3>Live dashboard</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg></div><h3>Live dashboard</h3>
         <p>Real-time CPU, RAM, disk, uptime and internet latency with tap-through history graphs. Every container grouped by stack, with one-tap port links and a live running count.</p></div>
-      <div class="feat reveal"><div class="fico">🗂</div><h3>Service control sheets</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg></div><h3>Service control sheets</h3>
         <p>Tap any container for a full sheet: live CPU and RAM, restart, stop, logs and a shell. Plus AI shortcuts: What is this, check logs, troubleshoot, optimize, backup, or open it straight in Vibe Chat.</p></div>
-      <div class="feat reveal"><div class="fico">❯_</div><h3>A real terminal — as <em>you</em></h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></div><h3>A real terminal — as <em>you</em></h3>
         <p>A full xterm terminal with a mobile key bar, copy&nbsp;&amp;&nbsp;paste, and a clear shell picker: your real host login (<span class="mono">you@yourserver</span>), the app box, or <span class="mono">docker exec</span> into any container. Claude Code, Codex and Mistral Vibe install right into it.</p></div>
-      <div class="feat reveal"><div class="fico">◲</div><h3>One-tap App Store</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div><h3>One-tap App Store</h3>
         <p>Deploy popular self-hosted apps as clean compose projects with friendly config forms, sorted by category. Already running something? PocketADM detects it and helps you finish setup.</p></div>
-      <div class="feat reveal"><div class="fico">⟳</div><h3>Smart updates and rollback</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg></div><h3>Smart updates and rollback</h3>
         <p>Detects newer images by registry digest, no pull needed, with priority flags and AI release-note explanations. Snapshots the running image before every update so you can roll back in one tap.</p></div>
-      <div class="feat reveal"><div class="fico">🩺</div><h3>Security and health checks</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Security and health checks</h3>
         <p>Scheduled checks for SSH hardening, failed logins, fail2ban, exposed ports and restarting containers. Each warning comes with a plain-English fix and a one-tap Fix with AI.</p></div>
-      <div class="feat reveal"><div class="fico">🧠</div><h3>Local AI, built in</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></div><h3>Local AI, built in</h3>
         <p>Run models on your own hardware via Ollama: PocketADM detects or installs it, recommends models that fit your RAM, and wires them straight into the chat. Private, free, offline.</p></div>
-      <div class="feat reveal"><div class="fico">🔒</div><h3>Secure by design</h3>
+      <div class="feat reveal"><div class="fico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><h3>Secure by design</h3>
         <p>Password plus optional TOTP 2FA, token revocation, an append-only audit log of every action (including the AI's), and integration tokens that are never shown to the model.</p></div>
     </div>
   </div>
@@ -548,10 +568,10 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
     <h2 class="h2 reveal">Four ways to work with the agent</h2>
     <p class="lead reveal">From read-only exploration to full autonomy: pick how much rope the AI gets, then bring any key.</p>
     <div class="modes">
-      <div class="mode reveal"><div class="mi">💬</div><div class="m">Chat</div><small>Talk only. No tools, just answers and advice.</small></div>
-      <div class="mode reveal"><div class="mi">📋</div><div class="m c1">Plan</div><small>Read-only investigation, ends with a concrete plan.</small></div>
-      <div class="mode reveal"><div class="mi">🤖</div><div class="m c1">Agent</div><small>Full tools, asks before anything destructive.</small></div>
-      <div class="mode reveal"><div class="mi">⚡</div><div class="m c2">Auto</div><small>Free rein. Runs to completion while you sleep.</small></div>
+      <div class="mode reveal"><div class="mi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="m">Chat</div><small>Talk only. No tools, just answers and advice.</small></div>
+      <div class="mode reveal"><div class="mi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></div><div class="m c1">Plan</div><small>Read-only investigation, ends with a concrete plan.</small></div>
+      <div class="mode reveal"><div class="mi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></div><div class="m c1">Agent</div><small>Full tools, asks before anything destructive.</small></div>
+      <div class="mode reveal"><div class="mi"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></div><div class="m c2">Auto</div><small>Free rein. Runs to completion while you sleep.</small></div>
     </div>
   </div>
 </section>
@@ -585,16 +605,16 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
     <p class="lead reveal">Little AI watchmen check your server even when the app is closed, and push findings to your
       phone via ntfy. They only ever look, never change anything on their own. Every alert has a one-tap discuss and fix.</p>
     <div class="sent-grid">
-      <div class="sent reveal"><div class="si">🛡️</div><div class="st">Security watch</div>
+      <div class="sent reveal"><div class="si"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></div><div class="st">Security watch</div>
         <div class="sd">Failed SSH logins, fail2ban bans, newly exposed ports and containers restarting out of nowhere.</div>
         <div class="sk">every 6 hours</div></div>
-      <div class="sent reveal"><div class="si">⬆️</div><div class="st">Update watch</div>
+      <div class="sent reveal"><div class="si"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></div><div class="st">Update watch</div>
         <div class="sd">Reviews pending image and system updates and flags which ones are security-relevant and worth applying soon.</div>
         <div class="sk">daily</div></div>
-      <div class="sent reveal"><div class="si">💚</div><div class="st">Health digest</div>
+      <div class="sent reveal"><div class="si"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></div><div class="st">Health digest</div>
         <div class="sd">Disk space, memory pressure, unhealthy or restarting containers and error bursts in your core services.</div>
         <div class="sk">every 12 hours</div></div>
-      <div class="sent reveal"><div class="si">🔁</div><div class="st">Custom loop</div>
+      <div class="sent reveal"><div class="si"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></div><div class="st">Custom loop</div>
         <div class="sd">You decide what it watches. Describe the job in plain words and the agent checks it on your schedule.</div>
         <div class="sk">your schedule</div></div>
     </div>
@@ -609,18 +629,18 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
     <p class="lead reveal">PocketADM is not a toy. It runs and manages a full self-hosted stack from a
       single app: the popular apps you already know, side by side.</p>
     <div class="stack-grid">
-      <div class="svc-card reveal"><span class="big">☁️</span><span class="t">Nextcloud</span><span class="d">Private cloud and files</span></div>
-      <div class="svc-card reveal"><span class="big">🔐</span><span class="t">Authentik</span><span class="d">Single sign-on and 2FA</span></div>
-      <div class="svc-card reveal"><span class="big">🤖</span><span class="t">Open WebUI</span><span class="d">Self-hosted AI chat</span></div>
-      <div class="svc-card reveal"><span class="big">🔑</span><span class="t">Vaultwarden</span><span class="d">Passwords, self-hosted</span></div>
-      <div class="svc-card reveal"><span class="big">🎬</span><span class="t">Jellyfin</span><span class="d">Movies and shows</span></div>
-      <div class="svc-card reveal"><span class="big">🌿</span><span class="t">Gitea</span><span class="d">Self-hosted Git</span></div>
-      <div class="svc-card reveal"><span class="big">💬</span><span class="t">Matrix</span><span class="d">Encrypted chat</span></div>
-      <div class="svc-card reveal"><span class="big">📊</span><span class="t">Grafana</span><span class="d">Metrics and monitoring</span></div>
-      <div class="svc-card reveal"><span class="big">📄</span><span class="t">Paperless-ngx</span><span class="d">Document archive</span></div>
-      <div class="svc-card reveal"><span class="big">👁️</span><span class="t">Uptime Kuma</span><span class="d">Uptime monitoring</span></div>
-      <div class="svc-card reveal"><span class="big">⌨️</span><span class="t">code-server</span><span class="d">VS Code in the browser</span></div>
-      <div class="svc-card reveal"><span class="big">➕</span><span class="t">and many more</span><span class="d">Any Docker or compose app you run</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg></span><span class="t">Nextcloud</span><span class="d">Private cloud and files</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/></svg></span><span class="t">Authentik</span><span class="d">Single sign-on and 2FA</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></span><span class="t">Open WebUI</span><span class="d">Self-hosted AI chat</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg></span><span class="t">Vaultwarden</span><span class="d">Passwords, self-hosted</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/><path d="m6.8 7.5 2.3.8"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span><span class="t">Jellyfin</span><span class="d">Movies and shows</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/><circle cx="6" cy="18" r="3"/></svg></span><span class="t">Gitea</span><span class="d">Self-hosted Git</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span class="t">Matrix</span><span class="d">Encrypted chat</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg></span><span class="t">Grafana</span><span class="d">Metrics and monitoring</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></span><span class="t">Paperless-ngx</span><span class="d">Document archive</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="t">Uptime Kuma</span><span class="d">Uptime monitoring</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01"/><path d="M10 10h.01"/><path d="M14 10h.01"/><path d="M18 10h.01"/><path d="M7 14h10"/></svg></span><span class="t">code-server</span><span class="d">VS Code in the browser</span></div>
+      <div class="svc-card reveal"><span class="big"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span><span class="t">and many more</span><span class="d">Any Docker or compose app you run</span></div>
     </div>
   </div>
 </section>
@@ -653,8 +673,12 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
       <h2>Take the helm.</h2>
       <p>Free, open source, and yours to run. Steer your whole server from the palm of your hand.</p>
       <div class="hero-cta">
-        <a href="#install" class="btn primary">⚡ Get started</a>
-        <a href="https://github.com/maxaufknax/pocketadm" class="btn ghost">★ Star on GitHub</a>
+        <a href="https://apps.apple.com/de/app/pocketadm/id6790731797" target="_blank" rel="noopener" class="btn appstore" aria-label="Download PocketADM on the App Store">
+          <svg viewBox="0 0 384 512" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+          <span class="as-txt"><span class="as-sm">Download on the</span><span class="as-lg">App Store</span></span>
+      </a>
+        <a href="#install" class="btn primary"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg> Get started</a>
+        <a href="https://github.com/maxaufknax/pocketadm" class="btn ghost"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z"/></svg> Star on GitHub</a>
       </div>
     </div>
   </div>
@@ -665,12 +689,16 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 <footer>
   <div class="wrap foot-in">
     <div><span class="brand" style="font-size:16px"><img class="mark" src="/logo.svg" alt="" style="height:22px"> PocketADM</span>
-      <div style="margin-top:6px;font-size:13px">Open-source server command center · MIT licensed</div></div>
+      <div style="margin-top:6px;font-size:13px">Open-source server command center · MIT licensed</div>
+      <div style="margin-top:2px;font-size:13px">A private, non-commercial project by Maximilian Paasch</div></div>
     <nav class="foot-links">
       <a href="https://github.com/maxaufknax/pocketadm">GitHub</a>
       <a href="https://github.com/maxaufknax/pocketadm#readme">Docs</a>
+      <a href="https://apps.apple.com/de/app/pocketadm/id6790731797">App Store</a>
       <a href="#features">Features</a>
       <a href="#install">Install</a>
+      <a href="/privacy/">Privacy</a>
+      <a href="/support/">Support</a>
       <a href="https://maxaufknax.de">maxaufknax.de</a>
     </nav>
   </div>
