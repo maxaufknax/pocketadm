@@ -11,7 +11,9 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
+import re
 import secrets
 import struct
 import time
@@ -255,9 +257,86 @@ def require_auth(request: Request) -> None:
 
 
 async def require_auth_ws(ws: WebSocket) -> bool:
-    """WebSocket auth: token passed as query param. Closes socket if invalid."""
-    token = ws.query_params.get("token", "")
-    if not check_token(token):
+    """WebSocket auth. Closes the socket if the credential is not valid.
+
+    Browsers cannot set an Authorization header on a WebSocket, so the
+    credential rides in the URL — and URLs end up in reverse-proxy access logs.
+    Clients therefore first trade their token for a single-use ticket
+    (POST /api/ws/ticket) that expires in seconds, and connect with
+    `?ticket=`. A logged ticket is already spent.
+
+    `?token=` still works for clients released before 0.23 (the 1.0.x App
+    Store build bundles its own web UI); set POCKETADM_WS_LEGACY_TOKEN=0 to
+    refuse it."""
+    ticket = ws.query_params.get("ticket", "")
+    if ticket:
+        ok = consume_ws_ticket(ticket)
+    else:
+        ok = LEGACY_WS_TOKEN and check_token(ws.query_params.get("token", ""))
+    if not ok:
         await ws.close(code=4401)
         return False
     return True
+
+
+# ------------------------------------------------------- WebSocket tickets
+
+WS_TICKET_TTL = 30          # seconds between minting a ticket and connecting
+_WS_TICKET_MAX = 256
+LEGACY_WS_TOKEN = os.environ.get("POCKETADM_WS_LEGACY_TOKEN", "1") != "0"
+_ws_tickets: dict[str, tuple[float, int]] = {}   # ticket -> (expiry, auth generation)
+
+
+def issue_ws_ticket() -> str:
+    """A single-use, short-lived credential for exactly one WebSocket connect."""
+    now = time.time()
+    for t in [t for t, (exp, _) in _ws_tickets.items() if exp <= now]:
+        _ws_tickets.pop(t, None)
+    while len(_ws_tickets) >= _WS_TICKET_MAX:
+        _ws_tickets.pop(min(_ws_tickets, key=lambda t: _ws_tickets[t][0]), None)
+    ticket = secrets.token_urlsafe(24)
+    _ws_tickets[ticket] = (now + WS_TICKET_TTL, config.get_auth_generation())
+    return ticket
+
+
+def consume_ws_ticket(ticket: str) -> bool:
+    """True exactly once per valid ticket. "Sign out everywhere" also voids
+    tickets minted before it."""
+    entry = _ws_tickets.pop(ticket or "", None)
+    if not entry:
+        return False
+    expiry, gen = entry
+    return expiry > time.time() and gen == config.get_auth_generation()
+
+
+# --------------------------------------------------- credentials in logs
+
+_CRED_IN_URL = re.compile(r"((?:^|[?&])(?:token|ticket|code|sso)=)[^&\s\"']+")
+
+
+def redact_url(text):
+    """Mask token / ticket / code values in a URL or log line."""
+    return _CRED_IN_URL.sub(r"\1***", text) if isinstance(text, str) else text
+
+
+class RedactCredentials(logging.Filter):
+    """uvicorn logs every request line, WebSocket handshakes included, with the
+    query string. Masks credentials before anything reaches the log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.args:
+                record.args = tuple(redact_url(a) if isinstance(a, str) else a
+                                    for a in record.args)
+            if isinstance(record.msg, str) and "=" in record.msg:
+                record.msg = redact_url(record.msg)
+        except Exception:      # a log line must never break a request
+            pass
+        return True
+
+
+def install_log_redaction() -> None:
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, RedactCredentials) for f in logger.filters):
+            logger.addFilter(RedactCredentials())

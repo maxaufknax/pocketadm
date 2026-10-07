@@ -122,7 +122,12 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function wsUrl(path, params = {}) {
+// A WebSocket cannot carry an Authorization header, so its credential travels
+// in the URL — and URLs land in reverse-proxy access logs. Instead of the
+// 30-day token, connect with a single-use ticket that expires in seconds
+// (POST /api/ws/ticket). Only a server that predates tickets (404/405 — an
+// older box in the multi-server list) still gets the token itself.
+async function wsUrl(path, params = {}) {
   const base = apiBase();
   let origin;
   if (base) {
@@ -131,7 +136,22 @@ function wsUrl(path, params = {}) {
   } else {
     origin = (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host;
   }
-  const qs = new URLSearchParams({ token: state.token, ...params });
+  const res = await fetch(base + "/api/ws/ticket", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + state.token },
+  });
+  let cred;
+  if (res.ok) {
+    cred = { ticket: (await res.json()).ticket };
+  } else if (res.status === 404 || res.status === 405) {
+    cred = { token: state.token };
+  } else if (res.status === 401) {
+    onAuthLost();
+    throw new Error("unauthorized");
+  } else {
+    throw new Error("could not open a live connection (" + res.status + ")");
+  }
+  const qs = new URLSearchParams({ ...cred, ...params });
   return `${origin}${path}?${qs}`;
 }
 
@@ -308,7 +328,10 @@ function iconTile(icon, category, size = "", brandHint = "") {
 
 /* Markdown: headings, lists, bold, code (long fences collapsible), links */
 function renderMarkdown(text) {
-  const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Quotes too: the link rule below puts the URL inside href="…", and model
+  // output that contains a quote must not be able to close that attribute.
+  const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   const inline = (s) => s
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
@@ -2561,9 +2584,26 @@ $("#default-ws-change").addEventListener("click", () => openFolderPicker({
 
 /* ----- chat stream ----- */
 
-function chatConnect() {
+async function chatConnect() {
+  if (state.chatConnecting || (state.chatWs && state.chatWs.readyState <= 1)) return;
+  state.chatConnecting = true;
+  let url;
+  try {
+    url = await wsUrl("/ws/chat");
+  } catch (e) {
+    state.chatConnecting = false;
+    // offline / server restarting: try again like a dropped socket would
+    if (state.token && !state.chatReconnectTimer) {
+      state.chatReconnectTimer = setTimeout(() => {
+        state.chatReconnectTimer = null;
+        chatConnect();
+      }, 3000);
+    }
+    return;
+  }
+  state.chatConnecting = false;
   if (state.chatWs && state.chatWs.readyState <= 1) return;
-  const ws = new WebSocket(wsUrl("/ws/chat"));
+  const ws = new WebSocket(url);
   state.chatWs = ws;
   ws.onopen = () => {
     // re-attach to the last conversation — the server replays finished turns
@@ -3883,7 +3923,14 @@ async function connectTerminal() {
     }
   }
 
-  const ws = new WebSocket(wsUrl("/ws/terminal", { session: state.termSessionId }));
+  let url;
+  try {
+    url = await wsUrl("/ws/terminal", { session: state.termSessionId });
+  } catch (e) {
+    termStatus("couldn't connect — " + e.message, "warn");
+    return;
+  }
+  const ws = new WebSocket(url);
   state.termWs = ws;
   ws.onopen = () => {
     termStatus("", "");

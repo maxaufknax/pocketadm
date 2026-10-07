@@ -4,18 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b0f14">
-<script>
-/* apply the saved theme before first paint (no flash) */
-(function () {
-  try {
-    var t = localStorage.getItem("helmsman_theme") || "auto";
-    if (t === "auto") {
-      t = matchMedia("(prefers-color-scheme: light)").matches ? "daybreak" : "deep-sea";
-    }
-    document.documentElement.dataset.theme = t;
-  } catch (e) {}
-})();
-</script>
+<script src="/theme-boot.js"></script>
 <title>PocketADM</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">

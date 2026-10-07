@@ -18,11 +18,14 @@ from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
+auth.install_log_redaction()
 
 authed = Depends(auth.require_auth)
 
 # Demo instances are a public read-only playground: every mutation is blocked.
-DEMO_ALLOW = {"/api/login", "/api/notifications/seen"}
+# A WebSocket ticket changes nothing — without it the demo's chat and terminal
+# could not even connect.
+DEMO_ALLOW = {"/api/login", "/api/notifications/seen", "/api/ws/ticket"}
 
 
 @app.middleware("http")
@@ -32,6 +35,34 @@ async def _demo_guard(request: Request, call_next):
         return JSONResponse({"detail": "Demo mode — this instance is read-only"},
                             status_code=403)
     return await call_next(request)
+
+
+# The web UI renders model output, so a script-injection bug there would run
+# with a root-on-host session. The policy allows only scripts served by this
+# server (no inline script, no eval); styles may be inline because the UI and
+# xterm.js set them from code. connect-src stays open: the multi-server client
+# talks to other PocketADM boxes. frame-ancestors stops clickjacking, and
+# no-referrer keeps one-time codes in the URL from leaking to external links.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data: blob:; font-src 'self' data:; "
+       "connect-src 'self' https: wss: http: ws:; worker-src 'self'; "
+       "manifest-src 'self'; object-src 'none'; base-uri 'none'; "
+       "form-action 'self'; frame-ancestors 'none'")
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=()",
+}
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
 
 
 # The client app may be served from a different Helmsman instance (multi-server
@@ -184,6 +215,13 @@ async def pair_claim(body: PairClaimBody, request: Request):
     audit.record("pair_claim", target=ip, detail="new device paired")
     return {"token": auth.issue_token(),
             "server_name": config.get_server_name() or sysinfo.hostname()}
+
+
+@app.post("/api/ws/ticket", dependencies=[authed])
+async def ws_ticket():
+    """Trade the bearer token (sent as a header) for a single-use WebSocket
+    ticket, so the long-lived token never appears in a URL or an access log."""
+    return {"ticket": auth.issue_ws_ticket(), "ttl": auth.WS_TICKET_TTL}
 
 
 @app.get("/api/me", dependencies=[authed])

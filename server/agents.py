@@ -15,11 +15,28 @@ import time
 
 import httpx
 
-from . import ai, audit, config
+from . import ai, audit, cmdpolicy, config
 
 NOTIF_FILE = config.DATA_DIR / "notifications.json"
 MAX_NOTIFICATIONS = 120
-LOOP_TOOLS = ["run_command", "read_file", "list_dir", "search_files", "fetch_url"]
+# Sentinel runs unattended, so nobody can approve anything: it gets read-only
+# tools, every command must pass cmdpolicy.is_read_only (which also means "stays
+# on this server"), and there is no fetch_url — a monitoring loop that reads
+# auth logs full of attacker-chosen usernames must have no way to send data out.
+LOOP_TOOLS = ["run_command", "read_file", "list_dir", "search_files"]
+SENTINEL_BLOCKED = ("[blocked: Sentinel only runs read-only commands that stay on this "
+                    "server. Describe what you would check or change instead.]")
+
+
+def sentinel_may_run(name: str, args: dict) -> bool:
+    """The hard gate in front of every Sentinel tool call — the prompt asks for
+    read-only behaviour, this enforces it."""
+    if name not in LOOP_TOOLS:
+        return False
+    if name == "run_command":
+        command = (args or {}).get("command") or ""
+        return cmdpolicy.is_read_only(command) and not cmdpolicy.touches_protected(command)
+    return True
 MAX_LOOP_TURNS = 10
 
 SENTINEL_SYSTEM = """You are Sentinel, the background monitoring agent of Helmsman on the \
@@ -247,7 +264,10 @@ async def _run_mini_agent(prompt: str, sysprompt: str,
             break
         for tc in tool_calls:
             t0 = time.time()
-            out = await ai.execute_tool(tc["name"], tc["args"], ai.DEFAULT_WORKDIR)
+            if sentinel_may_run(tc["name"], tc.get("args") or {}):
+                out = await ai.execute_tool(tc["name"], tc["args"], ai.DEFAULT_WORKDIR)
+            else:
+                out = SENTINEL_BLOCKED
             if trace is not None and len(trace) < MAX_TRACE_STEPS:
                 trace.append({
                     "tool": tc["name"],

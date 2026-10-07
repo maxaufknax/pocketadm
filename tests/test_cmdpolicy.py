@@ -41,7 +41,9 @@ READ_ONLY = [
     "timeout 10s free",
     "nice cat file",
     "nohup tail -f log",
-    "FOO=bar ls",
+    "LANG=C ls",
+    "LC_ALL=C.UTF-8 sort file",
+    "GIT_PAGER=cat git log -3",
     "env ls",
     # redirects that don't write a file
     "grep x file 2>&1",
@@ -100,12 +102,21 @@ READ_ONLY = [
     "ip a",
     "ip route",
     "ss -tlnp",
-    "ping -c 4 1.1.1.1",
-    "curl https://example.com",
-    "curl -fsSL https://example.com/health",
-    "curl -X GET https://api.example.com",
-    "wget https://example.com",
     "mount",
+    # network commands whose every destination stays on this server / LAN
+    "ping -c 4 192.168.1.1",
+    "ping -c1 localhost",
+    "curl http://localhost:8080/health",
+    "curl -fsSL http://127.0.0.1:9000/api/info",
+    "curl -X GET http://nextcloud/status.php",
+    "curl -s -o /dev/null -w '%{http_code}' http://10.0.0.5",
+    "curl http://[::1]:8080/",
+    "wget -qO- http://localhost:3000",
+    "wget --spider http://jellyfin:8096",
+    "dig @127.0.0.1 router.lan",
+    "nslookup nas.local",
+    "getent hosts nextcloud",
+    "getent group docker",
 ]
 
 
@@ -198,6 +209,18 @@ MUTATING = [
     "curl -O https://example.com/file",
     "curl -X POST https://api.example.com -d @body",
     "wget -O out https://example.com",
+    # talking to the internet asks first: a URL, a DNS name or a ping payload
+    # can carry data off the box as well as a POST body can
+    "ping -c 4 1.1.1.1",
+    "curl https://example.com",
+    "curl -fsSL https://example.com/health",
+    "curl -X GET https://api.example.com",
+    "wget https://example.com",
+    "dig example.com",
+    # environment prefixes that can make a command run something else
+    "FOO=bar ls",
+    "GIT_EXTERNAL_DIFF='touch /tmp/pwn' git diff",
+    "LESSOPEN='|id' less file",
     # empty / oversized
     "",
 ]

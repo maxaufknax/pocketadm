@@ -264,7 +264,12 @@ TOOLS = [
     },
 ]
 
-SAFE_TOOLS = {"read_file", "list_dir", "search_files", "fetch_url",
+# Tools that run without a tap in Agent and Plan mode. fetch_url is not one of
+# them: a model steered by text it read can put a secret into a URL as easily
+# as into a POST body, so fetching from the internet asks first. Fetches that
+# stay on this network (localhost, a private address, a container name) still
+# run on their own — see cmdpolicy.url_is_local and sessions.py.
+SAFE_TOOLS = {"read_file", "list_dir", "search_files",
               "update_memory", "update_plan", "read_skill", "save_skill"}
 MODE_TOOLS = {
     "chat": [],
@@ -420,7 +425,10 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
                 text += f"\n[exit code: {proc.returncode}]"
             return _truncate(text) or "[no output]"
         if name == "read_file":
-            return _truncate(_read_path(args["path"], workdir).read_text(errors="replace"))
+            target = _read_path(args["path"], workdir)
+            if is_protected_path(target):
+                return PROTECTED_REFUSAL
+            return _truncate(target.read_text(errors="replace"))
         if name == "write_file":
             host_path = _map_host_path(args["path"], workdir)
             if host_path:
@@ -469,7 +477,10 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
             if args.get("glob"):
                 cmd.append("--include=" + args["glob"])
             cmd += ["--exclude-dir=.git", "--exclude-dir=node_modules",
-                    "--exclude-dir=.venv", path]
+                    "--exclude-dir=.venv"]
+            # never grep PocketADM's own credentials or a coding CLI's login
+            cmd += [f"--exclude={n}" for n in _PROTECTED_NAMES]
+            cmd += ["--exclude-dir=.codex", path]
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             try:
@@ -640,6 +651,33 @@ def _map_host_path(path: str, workdir: str) -> str | None:
     if os.path.exists(hostrun.HOST + p) or os.path.isdir(hostrun.HOST + os.path.dirname(p)):
         return p
     return None
+
+
+# ------------------------------------------------- PocketADM's own secrets
+# The admin password hash, the token-signing key, the settings file (AI keys,
+# the 2FA secret, the SSO client secret) and the coding CLIs' logins. The agent
+# has no reason to read any of them, and they are exactly what a model steered
+# by something it read would go for.
+_PROTECTED_NAMES = ("secret.key", "admin.pw", "login_attempts.json", ".credentials.json")
+_DATA_SECRETS = {"settings.json", "secret.key", "admin.pw", "login_attempts.json"}
+PROTECTED_REFUSAL = ("Error: this file holds PocketADM's own credentials (or a coding "
+                     "CLI's login) and is not readable by the agent.")
+
+
+def is_protected_path(path) -> bool:
+    try:
+        p = Path(os.path.realpath(str(path)))
+    except (OSError, ValueError):
+        return False
+    if p.name == ".credentials.json" or (p.name == "auth.json" and p.parent.name == ".codex"):
+        return True
+    if p.name not in _DATA_SECRETS:
+        return False
+    data = Path(os.path.realpath(str(config.DATA_DIR)))
+    if p.parent == data:
+        return True
+    # the same directory seen from the host side (/host/var/lib/docker/volumes/…)
+    return (p.parent / "secret.key").exists() and (p.parent / "admin.pw").exists()
 
 
 def _read_path(path: str, workdir: str) -> Path:

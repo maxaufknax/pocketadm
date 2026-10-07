@@ -328,15 +328,30 @@ class Session:
             raise
 
     async def _run_tool_with_approval(self, tc: dict) -> str:
+        # Only the tools this mode offers can run. A model can name any tool in
+        # its reply (a hallucination, or text it read telling it to), and Chat
+        # or Plan mode must not turn that into an approval card for a write.
+        if tc["name"] not in ai.allowed_tools(self.mode):
+            await self.broadcast(type="tool_result", id=tc["id"],
+                                 output=f"[{tc['name']} is not available in {self.mode} mode]")
+            return (f"The tool {tc['name']} is not available in {self.mode} mode. "
+                    "Work with the tools you were given.")
         if tc["name"] == "update_plan":
             return await self._apply_plan(tc)
         # read-only shell commands skip the approval tap (Settings → AI toggle):
-        # inspection must be cheap or the agent grinds through taps to diagnose
+        # inspection must be cheap or the agent grinds through taps to diagnose.
+        # "Read-only" includes "stays on this server" (cmdpolicy), and anything
+        # naming PocketADM's own credentials always shows the user the command.
+        command = tc["args"].get("command") or ""
         auto_read = (tc["name"] == "run_command"
                      and self.mode in ("agent", "plan")
                      and config.get_autoread()
-                     and cmdpolicy.is_read_only(tc["args"].get("command") or ""))
-        auto = (self.mode == "auto" or auto_read
+                     and cmdpolicy.is_read_only(command)
+                     and not cmdpolicy.touches_protected(command))
+        # a fetch from localhost / the LAN / a container cannot carry data away
+        local_fetch = (tc["name"] == "fetch_url" and self.mode in ("agent", "plan")
+                       and cmdpolicy.url_is_local(tc["args"].get("url") or ""))
+        auto = (self.mode == "auto" or auto_read or local_fetch
                 or (self.mode in ("agent", "plan") and tc["name"] in ai.SAFE_TOOLS)) \
             and not ai._sensitive_call(tc)
         if not auto:
