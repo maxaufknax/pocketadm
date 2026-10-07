@@ -6889,7 +6889,7 @@ $("#connect-ssh")?.addEventListener("click", openBootstrapWizard);
 
 // add a remote server by URL + password (or open a signed-out one)
 function openConnectModal(existing) {
-  const urlIn = el("input", { type: "url", placeholder: "https://server.example.com:8090",
+  const urlIn = el("input", { type: "url", placeholder: "https://203.0.113.10:8443",
     value: existing?.base || "", inputmode: "url", autocapitalize: "off" });
   const pwIn = el("input", { type: "password", placeholder: "Admin password", autocomplete: "current-password" });
   const totpIn = el("input", { type: "text", class: "hidden", placeholder: "6-digit 2FA code",
