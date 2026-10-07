@@ -1,6 +1,6 @@
 PocketADM 2.0 ist eine neue App: von Grund auf als native iPhone-App gebaut.
 
-• Durchgehend nativ: schnellere Ansichten, ein echter Terminal-Emulator, Live-Diagramme.
+• Durchgehend nativ: das Aussehen von iOS in Hell und Dunkel, echte Logos deiner Dienste, ein echter Terminal-Emulator und Live-Diagramme.
 • In Sekunden verbunden: Der Installer auf dem Server endet jetzt mit einem QR-Code. Scannen und du bist angemeldet, von der ersten Minute an über HTTPS, auch ohne Domain.
 • Coding-Agenten auf deinem Server: Claude Code oder Codex im Assistant-Tab, mit deinem eigenen Abo. Jeder Schritt ist sichtbar, riskante warten auf deinen Tipp.
 • Anmelden mit Authentik, Authelia, Keycloak oder jedem OpenID-Connect-Anbieter, zusätzlich zu Passwort und 2FA.

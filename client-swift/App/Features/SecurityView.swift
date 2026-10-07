@@ -81,7 +81,7 @@ struct SecurityView: View {
                         .foregroundStyle(Theme.text)
                     Spacer()
                     Text(totpEnabled ? "On" : "Off")
-                        .foregroundStyle(totpEnabled ? .green : Theme.muted)
+                        .foregroundStyle(totpEnabled ? Color.green : Theme.muted)
                 }
 
                 if totpEnabled {
@@ -106,8 +106,6 @@ struct SecurityView: View {
                 Text("Every other phone, tablet and browser is signed out immediately. This device stays signed in.")
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
-            }
-
             }
         }
         .listStyle(.insetGrouped)

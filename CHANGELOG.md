@@ -43,9 +43,13 @@ top; the session is resumed per chat; switching engines hands over a transcript.
 
 **iPhone app 2.0** — the native SwiftUI client replaces the web-view app in the App Store, with
 the live demo on its first screen, QR pairing with certificate pinning, single sign-on and the
-coding agents. `codemagic.yaml` gained `ios-native-release`, which builds, photographs the app,
-uploads and prepares the App Store version, and never submits it. All Codemagic workflows pin
-Xcode 26.6.
+coding agents. It looks like iOS rather than like the web app: system colours in light and dark
+mode, the system's bars and lists, More ordered like Settings, and the services' own logos
+(the web client's Simple Icons, generated into the app with the same matching rules) instead of
+emoji. In the read-only demo the terminal now opens the simulated shell instead of an error.
+`codemagic.yaml` gained `ios-native-release`, which builds, photographs the app, uploads to
+TestFlight and prepares the App Store version, and never submits it, and `ios-native-shots`,
+which photographs every screen in both appearances. All Codemagic workflows pin Xcode 26.6.
 
 Tests: 746.
 

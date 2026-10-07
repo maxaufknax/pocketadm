@@ -9,6 +9,8 @@ CAMERA: used only to scan the pairing QR code a PocketADM server prints at the e
 
 ASSISTANT: an AI agent that works on the user's own server with the user's own API key or coding-agent subscription (Claude Code, Codex). The demo is read-only, so its Assistant tab shows a recorded sample session; sending a message there explains that the demo cannot run the agent.
 
+TERMINAL: in the demo, opening any shell shows a simulated, read-only shell (try ls, docker ps, free, df, cat readme.txt); nothing is executed. On a user's own server it is a real terminal.
+
 APP TRANSPORT SECURITY: arbitrary loads are allowed because PocketADM connects only to servers the user adds, which are often local addresses (192.168.x.x, .local hosts) or VPN addresses. New servers use HTTPS with their own certificate; the app trusts such a certificate only when its key matches the fingerprint in the pairing QR code the user scanned. No traffic goes anywhere other than the servers the user adds.
 
 The app collects no personal data.

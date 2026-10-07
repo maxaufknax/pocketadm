@@ -72,7 +72,7 @@ struct ContainersView: View {
                         title: model.error == nil ? "No containers" : "Cannot list containers",
                         message: model.error ?? "Nothing is running in Docker on this server yet.",
                         tint: model.error == nil ? Theme.muted : Theme.danger,
-                        retry: model.error == nil ? nil : { Task { await model.load(app) } }
+                        retry: retryIfFailed
                     )
                 } else {
                     list
@@ -95,6 +95,12 @@ struct ContainersView: View {
                 path = [first]
             }
         }
+    }
+
+    /// Offered only when listing failed — no containers needs no retry.
+    private var retryIfFailed: (() -> Void)? {
+        guard model.error != nil else { return nil }
+        return { Task { await model.load(app) } }
     }
 
     private var filtered: [Stack] {

@@ -43,7 +43,7 @@ struct AppsView: View {
                              title: "No catalog",
                              message: model.error ?? "This server's app catalog is empty.",
                              tint: model.error == nil ? Theme.muted : Theme.danger,
-                             retry: model.error == nil ? nil : { Task { await model.load(app) } })
+                             retry: retryIfFailed)
             }
         }
         .navigationTitle("Apps")
@@ -57,6 +57,12 @@ struct AppsView: View {
                 Task { await model.load(app) }
             }
         }
+    }
+
+    /// Offered only when loading failed — an empty catalog needs no retry.
+    private var retryIfFailed: (() -> Void)? {
+        guard model.error != nil else { return nil }
+        return { Task { await model.load(app) } }
     }
 
     private func content(_ response: AppsResponse) -> some View {

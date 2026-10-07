@@ -20,12 +20,18 @@ struct NotificationsView: View {
                              title: error == nil ? "Nothing to report" : "Cannot load alerts",
                              message: error ?? "The server has raised no alerts.",
                              tint: error == nil ? Theme.muted : Theme.danger,
-                             retry: error == nil ? nil : { Task { await load() } })
+                             retry: retryIfFailed)
             }
         }
         .navigationTitle("Alerts")
         .navigationBarTitleDisplayMode(.large)
         .task { await load() }
+    }
+
+    /// Offered only when loading failed — no alerts needs no retry.
+    private var retryIfFailed: (() -> Void)? {
+        guard error != nil else { return nil }
+        return { Task { await load() } }
     }
 
     private func list(_ feed: NotificationFeed) -> some View {

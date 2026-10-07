@@ -21,7 +21,7 @@ struct AuditView: View {
                              title: error == nil ? "Nothing logged yet" : "Cannot read the log",
                              message: error,
                              tint: error == nil ? Theme.muted : Theme.danger,
-                             retry: error == nil ? nil : { Task { await reload() } })
+                             retry: retryIfFailed)
             } else {
                 list
             }
@@ -29,6 +29,12 @@ struct AuditView: View {
         .navigationTitle("Activity")
         .navigationBarTitleDisplayMode(.large)
         .task { if !loaded { await reload() } }
+    }
+
+    /// Offered only when loading failed — an empty log needs no retry.
+    private var retryIfFailed: (() -> Void)? {
+        guard error != nil else { return nil }
+        return { Task { await reload() } }
     }
 
     private var list: some View {
