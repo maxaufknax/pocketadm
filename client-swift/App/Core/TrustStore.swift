@@ -62,47 +62,50 @@ enum TrustStore {
 
 /// Answers every TLS challenge for the app's sessions: the system's verdict
 /// first, then this device's pins, otherwise the connection is refused.
-final class PinningDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+///
+/// The async forms of the challenge methods on purpose: the completion-handler
+/// forms carry `@Sendable` in current SDKs, and a witness that only *nearly*
+/// matches an optional Objective-C requirement is silently never called — the
+/// pin would simply not exist.
+final class PinningDelegate: NSObject, URLSessionTaskDelegate {
     static let shared = PinningDelegate()
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        decide(challenge, completionHandler)
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async
+        -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        Self.decide(challenge)
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        decide(challenge, completionHandler)
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didReceive challenge: URLAuthenticationChallenge) async
+        -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        Self.decide(challenge)
     }
 
-    private func decide(_ challenge: URLAuthenticationChallenge,
-                        _ completion: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    static func decide(_ challenge: URLAuthenticationChallenge)
+        -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let space = challenge.protectionSpace
         guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = space.serverTrust else {
-            completion(.performDefaultHandling, nil)
-            return
+            return (.performDefaultHandling, nil)
         }
         // A certificate the system already trusts (hostname included) — done.
         if SecTrustEvaluateWithError(trust, nil) {
-            completion(.performDefaultHandling, nil)
-            return
+            return (.performDefaultHandling, nil)
         }
         // Otherwise only the exact key a pairing QR vouched for.
         if let pinned = TrustStore.pin(host: space.host, port: space.port),
            let presented = TrustStore.fingerprint(of: trust),
            pinned == presented {
-            completion(.useCredential, URLCredential(trust: trust))
-            return
+            return (.useCredential, URLCredential(trust: trust))
         }
-        completion(.cancelAuthenticationChallenge, nil)
+        return (.cancelAuthenticationChallenge, nil)
     }
 }
 
 /// The only way the app makes URLSessions, so every request — API calls,
 /// WebSockets, job log streams — goes through the same trust decision.
 enum NetworkSession {
-    static let shared = make(.default)
+    static let shared = NetworkSession.make(.default)
 
     static func make(_ configuration: URLSessionConfiguration) -> URLSession {
         URLSession(configuration: configuration, delegate: PinningDelegate.shared, delegateQueue: nil)
