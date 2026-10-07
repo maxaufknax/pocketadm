@@ -3,6 +3,52 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.23.0 — Scan, done · coding agents on your subscription · iPhone app 2.0
+
+**Installing is finally the five-minute thing it was meant to be.** Since 0.19 the app port
+binds to loopback, but the installer, the website and the app kept sending people to
+`http://<server>:8090`, which a fresh install no longer answers. Now:
+
+- **The installer ends with a QR code.** It holds the server's https address, a one-time
+  pairing code and the fingerprint of the server's own TLS key. The iPhone app scans it and is
+  signed in, trusting exactly that key. No domain needed: PocketADM serves HTTPS on 8443 with
+  its own certificate (re-issued with the same key before it expires, so pairings last).
+- **With a domain** (`--domain`), Caddy fetches a Let's Encrypt certificate. With your own
+  reverse proxy (`--behind-proxy URL`), everything stays on loopback. Port checks, a ufw hint,
+  settings kept in `.env` across re-runs; an existing install publishes nothing new.
+- `python -m server.cli pair` shows a new QR any time; the SSH installer in the app shows the
+  QR of the server it just installed.
+- **One pairing format for every client** (`<server>/?pair=CODE&fp=KEY`). Until now the web app
+  and the iOS app encoded different formats and could not scan each other's codes.
+
+**Claude Code and Codex as engines — on your own subscription** (after Happy/Happier). Pick them
+in the model menu once they are installed and signed in on the server. PocketADM speaks their
+machine protocols (Claude Code's stream-json, Codex's app-server), streams their work to every
+device, and turns each permission question into an approval tap. PocketADM's rules apply on
+top; the session is resumed per chat; switching engines hands over a transcript.
+
+**Security** — from a review of what the agent could do without a tap:
+
+- Read-only now also means *stays on this server*: `curl`/`wget`/`dig`/`ping` to the internet
+  and `fetch_url` ask first in Agent mode; local and container addresses still run on their own.
+- Commands that were waved through but write or launch programs now ask: `sort -o`, `uniq IN
+  OUT`, `date -s`, `hostname X`, `dmesg -C`, `sed e/w`, `git -c`, `rg --pre`, `VAR=x` prefixes
+  such as `GIT_EXTERNAL_DIFF` and more. `ip` no longer trusts any word containing "show".
+- **Sentinel loops are read-only in code**, not only in the prompt, and have no `fetch_url`.
+- A chat only runs the tools its mode offers, whatever tool name a model writes.
+- The agent's file tools refuse PocketADM's own credentials and the coding CLIs' logins.
+- **WebSocket tickets** replace the token in WebSocket URLs (it ended up in proxy logs).
+- A quote in a model's markdown link can no longer add attributes to the link, and the web UI
+  runs under a strict Content-Security-Policy.
+
+**iPhone app 2.0** — the native SwiftUI client replaces the web-view app in the App Store, with
+the live demo on its first screen, QR pairing with certificate pinning, single sign-on and the
+coding agents. `codemagic.yaml` gained `ios-native-release`, which builds, photographs the app,
+uploads and prepares the App Store version, and never submits it. All Codemagic workflows pin
+Xcode 26.6.
+
+Tests: 746.
+
 ## v0.22.0 — Sign in with Authentik
 
 Self-hosters who already run an identity provider no longer need a separate

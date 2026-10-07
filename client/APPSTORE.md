@@ -1,5 +1,11 @@
 # Shipping PocketADM to the App Store — no Mac needed
 
+> **Frozen at 1.0.1.** Since 2.0 the App Store app is the native SwiftUI client
+> in `../client-swift`, released with the `ios-native-release` workflow — see
+> `client-swift/NOTES.md` §0. This file documents the Capacitor build and how
+> 1.0.x went through review; `ios-release` still builds it (iOS 15 minimum,
+> Xcode 26.6), but it is no longer what ships.
+
 This is the end-to-end runbook. The build, signing and upload all happen on
 Codemagic's macOS cloud VMs; you drive it from a browser (your iPhone is enough).
 Everything an agent can prepare is already in this repo:

@@ -1,6 +1,6 @@
 # PocketADM
 
-**Your server, in your pocket.** An open-source, self-hosted command center for your server. Installable as a mobile app (PWA), with an AI engineer built in.
+**Your server, in your pocket.** An open-source, self-hosted command center for your server: a native iPhone app ([App Store](https://apps.apple.com/app/pocketadm/id6790731797)) and a web app, with an AI engineer built in — your own API key, a local model, or the Claude Code / Codex subscription you already have.
 
 Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and understanding of my whole server from my phone."*
 
@@ -10,6 +10,13 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
   tile opens an interactive history graph (2 h in-memory sampling). All Docker containers
   grouped by stack (collapsible), with start / stop / restart / logs and one-tap port links.
   
+- **Coding agents on your subscription:** run **Claude Code** or **Codex** from the
+  Assistant / Vibe chat, signed in with your own Claude or ChatGPT plan — no API key. The
+  CLI does the work on your server; PocketADM streams it to every device, turns each of its
+  permission questions into an approval tap on your phone, and applies its own rules on top
+  (reads that stay on the box run, anything touching the internet asks). Install them under
+  *More → Coding agents*, sign in once in the terminal, pick them in the model menu.
+
 - **✦ Vibe Code:** chat with an AI agent that works *directly on your server* via tools:
   `run_command`, `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`,
   `fetch_url`, `integration_request` and a **persistent memory** it maintains about your server
@@ -46,7 +53,9 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
 - **Server settings:** rename your server, change the admin password, edit agent
   memory & workspaces — plus a first-run onboarding wizard.
 
-- **PWA:** add to home screen, dark, fast, offline shell. One codebase, phone + desktop.
+- **iPhone app:** native SwiftUI client in the App Store — pair by scanning the QR the
+  installer prints, real terminal emulator, live charts, approvals for the agent, single
+  sign-on. The web app (PWA) keeps working in any browser, phone or desktop.
 
 - **Live, device-independent sessions:** the agent runs **server-side**, decoupled from the
   connection: close the app or lock your phone and it keeps working; reopen and it’s still
@@ -87,11 +96,29 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
 
 ## Quick start
 
-One-liner on a fresh server (installs Docker if needed, prints the admin password):
+One line on a fresh server (Linux with Docker, or it installs Docker for you):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash
 ```
+
+It ends with a **QR code**. Open the [PocketADM app](https://apps.apple.com/app/pocketadm/id6790731797),
+tap *Scan pairing code*, done — signed in over HTTPS, without a domain:
+
+- **No domain (default):** PocketADM serves HTTPS on port **8443** with its own certificate.
+  The QR carries the fingerprint of that certificate's key, and the app trusts exactly that key
+  — the scan *is* the trust decision. A browser warns once about the certificate; the app does not.
+- **`--domain pocketadm.example.com`:** Caddy gets a Let's Encrypt certificate (ports 80/443
+  free, DNS pointing at the server). Everything trusts it.
+- **`--behind-proxy https://pocketadm.example.com`:** you run a reverse proxy already;
+  PocketADM stays on `127.0.0.1:8090` and the QR uses your address.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash -s -- --domain pocketadm.example.com
+```
+
+A second phone later: `sudo docker exec helmsman python -m server.cli pair`. Re-running the
+installer updates an existing install and keeps its settings (`.env`).
 
 Or manually:
 
@@ -107,9 +134,9 @@ Prefer a prebuilt image? CI publishes a **multi-arch image (amd64 + arm64)** to
 
 | Tag | What you get |
 | --- | --- |
-| `:latest` | the newest release |
-| `:0.15.0` | that exact version — **pin this** if you want to choose when to move |
-| `:0.15` | the newest 0.15.x patch |
+| `:latest` | the newest commit on `main` |
+| `:0.23.0` | that exact release (versioned tags exist from v0.23.0 on) — **pin this** if you want to choose when to move |
+| `:0.23` | the newest 0.23.x patch |
 
 Pinning a version is the honest default for a server tool: `:latest` means a `docker compose
 pull` can change your admin panel underneath you.
@@ -120,11 +147,10 @@ Want to try it first? Spin up the read-only demo (password `demo`):
 docker compose -f docker-compose.demo.yml up -d   # http://<server>:8091
 ```
 
-Open `http://<your-server>:8090`, sign in, and on your phone use
-*Add to Home Screen* to install it as an app.
-
-> **Note:** for camera/clipboard/PWA install on iOS you'll want HTTPS — put PocketADM
-> behind your reverse proxy (Caddy/Traefik/nginx) like any other service.
+Without the installer, the app port is bound to `127.0.0.1:8090` on purpose: it is a root shell
+on the host and must not answer the open internet in plain HTTP. Publish HTTPS with
+`HELMSMAN_TLS_BIND=0.0.0.0` (port 8443, own certificate, pair by QR), or put your reverse proxy
+(Caddy/Traefik/nginx) in front of `127.0.0.1:8090`.
 
 ### Configuration (all optional)
 
@@ -186,9 +212,20 @@ apt update checks work too.
 **Security model:** single-admin password (scrypt-hashed), HMAC-signed expiring tokens,
 login rate-limiting, optional TOTP 2FA and optional single sign-on through an OpenID Connect
 provider (see above). The container has the Docker socket (= root-equivalent on the host) —
-that is the point of a server manager, the same trust level as Portainer. AI tool calls
-require explicit in-chat approval unless you enable auto-mode; the API key never leaves
-your server.
+that is the point of a server manager, the same trust level as Portainer. So:
+
+- **The agent asks before it acts.** In Agent mode only read-only commands run without a tap,
+  and "read-only" includes *stays on this server*: anything that talks to the internet — `curl`,
+  `wget`, `dig`, `ping` to a public host, `fetch_url` — asks first, because a URL or a DNS name
+  can carry a secret as well as a POST body can. Plan/Chat cannot change anything; Auto runs
+  everything, by your choice. PocketADM's own credentials are not readable by the agent.
+- **Sentinel loops only look** — enforced in code, not just in the prompt: read-only, local
+  commands, no `fetch_url`.
+- **Credentials stay out of URLs and logs.** WebSockets connect with a single-use ticket that
+  expires in 30 seconds; the 30-day token never appears in a proxy log.
+- **The web UI runs under a Content-Security-Policy** without inline script, and model output
+  is rendered with everything escaped.
+- API keys never leave your server; Claude Code and Codex use their own logins on the server.
 
 ## Roadmap
 
@@ -204,13 +241,16 @@ your server.
 - [x] **Local AI** — run models on your own hardware via Ollama, RAM-aware recommendations — **v0.8**
 - [x] **Service detection** spot new containers the agent brings up and help finish setup — **v0.8**
 - [x] **Single sign-on** via OpenID Connect (Authentik, Authelia, Keycloak …) next to password + 2FA — **v0.22**
-- [ ] Native mobile app shell (Capacitor) with push notifications for updates/alerts
+- [x] **Native iPhone app** (SwiftUI) in the App Store, pairing by QR with a pinned certificate — **2.0 / v0.23**
+- [x] **HTTPS from the first minute**: installer with own certificate or Let's Encrypt + pairing QR — **v0.23**
+- [x] **Claude Code & Codex as agent engines** on your own subscription — **v0.23**
+- [x] Agent skills (self-created runbooks à la hermes-agent/agentskills.io)
+- [ ] Push notifications (APNs) for alerts and approvals in the iPhone app
 - [ ] Domain / reverse-proxy automation: choose "reachable at sub.domain.tld" at install
   time, PocketADM wires up the proxy + DNS (script first, AI agent as fallback)
 - [ ] Backups: scheduled, verifiable snapshots of volumes + configs (biggest gap)
 - [ ] Service integrations: read Grafana/Portainer/Uptime-Kuma APIs and render them natively
 - [ ] Scheduled update auto-apply + notification digest
-- [ ] Agent skills (self-created runbooks à la hermes-agent/agentskills.io)
 - [ ] SSH-only bootstrap: enter host + domain + API keys in the app, PocketADM installs
   itself on the server over SSH (Termius-style onboarding)
 - [ ] Premium hosted AI option (no own API key needed) — the open-source core stays free

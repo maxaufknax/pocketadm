@@ -1,20 +1,39 @@
 # PocketADM — the native SwiftUI client
 
-A rewrite of the PocketADM client as a real SwiftUI app. It started as a
-proof of concept for four screens; it now covers everything the web client
-does that makes sense on a phone (see §3).
-
-It talks to the **same, unmodified backend** as the PWA. Nothing in `server/`,
-`web/`, `client/` or `docker-compose.yml` was touched.
+Since **2.0** this is the App Store app (`de.maxaufknax.pocketadm`, app id
+`6790731797`), replacing the Capacitor shell in `../client`, which is frozen at
+1.0.1. It covers everything the web client does that makes sense on a phone
+(see §3) and talks to the same backend as the web app.
 
 ---
 
-## 1. Releasing a build
+## 0. Releasing to the App Store (2.0 and later)
 
-**The one-time setup is done.** The App Store Connect record for
-`de.maxaufknax.pocketadm.native` exists (app id `6805165975`), the bundle id is
-registered in the Developer Portal, and build `202608251936` (0.1.0) is already
-in TestFlight. Nothing here is manual any more.
+1. Bump `MARKETING_VERSION` in `project.yml` **and** `APP_VERSION` in the
+   `ios-native-release` workflow (the workflow refuses a mismatch).
+2. Push to `main`. Codemagic builds the branch, not a local working tree.
+3. Codemagic → PocketADM → *Start new build* → `ios-native-release`, branch
+   `main`. It builds and checks the IPA, photographs the app on a simulator
+   against the demo (`-PocketADMScreenshotTab <tab>` launch argument) and lays the
+   shots into store images (`tools/store-shots.py`), uploads the build, waits for
+   processing and prepares the version with `tools/asc_release.py`: version
+   string, build, What's New from `AppStore/whats-new/<locale>.txt`, review notes
+   from `AppStore/review-notes.txt` with the demo account, and the new screenshots
+   — for the version being prepared only.
+4. Install the build from TestFlight and use it once on a real iPhone.
+5. Open the link the last log line prints and press **Submit for Review**. The
+   workflow never submits, and it refuses to run while a version is in review.
+
+The live demo must answer (`curl -s https://demo.pocketadm.com/api/info`
+without `-k`), or App Review meets a dead end on the first screen.
+
+## 1. Releasing a TestFlight preview (separate app record)
+
+For experiments that should not reach the App Store app's TestFlight: the
+record for `de.maxaufknax.pocketadm.native` exists (app id `6805165975`). The
+bundle id comes from `Config/Build.xcconfig`, which each workflow writes —
+`project.yml` deliberately sets none, because a target-level setting would
+override the xcconfig.
 
 To ship a new build:
 
@@ -32,8 +51,8 @@ UI, so a push alone starts nothing. Start a run explicitly:
 
 ```bash
 curl -X POST -H "x-auth-token: $CM_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"appId":"6a56048d02f1cc13c7696155","workflowId":"ios-native-check",
-       "branch":"experiment/swift-native"}' \
+  -d '{"appId":"6ac0dcee56acf5be1edacd90","workflowId":"ios-native-check",
+       "branch":"main"}' \
   https://api.codemagic.io/builds
 ```
 
@@ -98,10 +117,21 @@ Two things worth knowing:
 
 - **Connect** — enter a host; probes `GET /api/info` and refuses anything that
   is not a PocketADM. Without a scheme it tries `https://` then `http://`.
-- **Pairing by QR** (the primary path) — scans `<origin>/pair?code=…`, which
-  carries the server address *and* the credential, then `POST /api/pair/claim`.
-  The reverse direction works too: Settings → *Pair another device* mints a code
-  and renders the QR on-device.
+- **Try the live demo** — one tap into `demo.pocketadm.com` (read-only). App
+  Review's path into the app; on the demo the Assistant opens the recorded
+  sample session.
+- **Pairing by QR** (the primary path) — reads `<server>/?pair=CODE&fp=KEY`
+  (installer, web app, this app) as well as the older `<server>/pair?code=` and
+  the web app's former JSON. `fp` is the SHA-256 of the server's TLS public key;
+  it is pinned before the first request (`TrustStore.swift`), so a server with
+  its own certificate is trusted exactly — and only — after a scan. *Paste
+  pairing link* pairs without a camera. Settings → *Pair another device* mints a
+  code and shows the same format.
+- **Certificate trust** — every URLSession is made by `NetworkSession`: the
+  system's verdict first (Let's Encrypt, a domain), then this device's pins,
+  otherwise the connection is refused with "scan the server's QR".
+- **Single sign-on** — "Sign in with …" when the server has OpenID Connect set
+  up, through `ASWebAuthenticationSession` and `pocketadm://sso`.
 - **Password login** with correct **2FA** handling.
 - **Dashboard** — CPU / memory / disk / network tiles, a one-hour Swift Charts
   history graph, host and Docker facts, an alert bell, the public-exposure
@@ -318,14 +348,15 @@ portrait *and* landscape, on an iPhone 15/16.
 - **`apt` updates are listed but not applied.** The server has no endpoint for
   it, and a half-supervised `apt upgrade` from a phone is worse than none.
 
-## 6. One thing to tighten before this is ever more than a private build
+## 6. App Transport Security — decided
 
-`NSAppTransportSecurity.NSAllowsArbitraryLoads` is **true** in `project.yml`.
-Self-hosted servers legitimately live at `http://192.168.1.10:8090` or behind a
-private CA, and ATS cannot know those are trusted. TestFlight does not care,
-but an App Store submission requires a written justification for this key — and
-the better answer is probably to allow cleartext only for local-network
-literals and require TLS for public hosts.
+`NSAllowsArbitraryLoads` stays **true**: older installs answer on plain
+`http://192.168.1.10:8090` inside a LAN or VPN, and ATS cannot know those are
+the user's own machines. New installs are HTTPS from the first minute, and a
+self-signed server is accepted only through the pinned key from its pairing QR
+— that replaces ATS's CA check rather than skipping it. The justification is in
+`AppStore/review-notes.txt`, which the release workflow writes into App Store
+Connect.
 
 ---
 
