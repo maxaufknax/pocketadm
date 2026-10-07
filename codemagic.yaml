@@ -719,9 +719,12 @@ workflows:
         ignore_failure: true
         script: |
           set -eo pipefail
-          # A simulator build of the same sources, signed by nobody.
+          # A simulator build of the same sources, signed by nobody. No `-sdk`:
+          # it would force SwiftTerm's build-info tool, a macOS executable run
+          # by its package plugin, onto the simulator SDK as well, and the
+          # build dies looking for it. The destination alone picks the SDK.
           xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -configuration Debug \
-            -sdk iphonesimulator -destination "generic/platform=iOS Simulator" \
+            -destination "generic/platform=iOS Simulator" \
             -derivedDataPath build/sim -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO build | tail -5
           SIMAPP=$(ls -d build/sim/Build/Products/Debug-iphonesimulator/*.app | head -1)

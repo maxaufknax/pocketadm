@@ -19,6 +19,15 @@ SCRIPT = ROOT / "client-swift" / "tools" / "asc_release.py"
 TEXTS = ROOT / "client-swift" / "AppStore"
 
 
+def p8() -> str:
+    """A fresh EC P-256 key as App Store Connect hands it out (.p8, PKCS#8)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    return ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+
+
 @pytest.fixture
 def mod(monkeypatch):
     # the script imports PyJWT; the simulated API never checks the token
@@ -27,9 +36,9 @@ def mod(monkeypatch):
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     monkeypatch.setattr(m.time, "sleep", lambda s: None)
-    for k in ("APP_STORE_CONNECT_ISSUER_ID", "APP_STORE_CONNECT_KEY_IDENTIFIER",
-              "APP_STORE_CONNECT_PRIVATE_KEY"):
+    for k in ("APP_STORE_CONNECT_ISSUER_ID", "APP_STORE_CONNECT_KEY_IDENTIFIER"):
         monkeypatch.setenv(k, "x")
+    monkeypatch.setenv("APP_STORE_CONNECT_PRIVATE_KEY", p8())
     return m
 
 
@@ -132,6 +141,44 @@ def test_a_rejected_build_stops_with_a_reason(mod, monkeypatch):
         run(mod, fake, monkeypatch)
     assert "INVALID" in str(exc.value)
     assert not fake.paths("PATCH")
+
+
+# ------------------------------------------------------------------ the API key
+
+def _shapes(key: str, tmp_path, monkeypatch) -> dict[str, str]:
+    import base64
+    body = "".join(key.strip().splitlines()[1:-1])
+    (tmp_path / "AuthKey.p8").write_text(key)
+    monkeypatch.setenv("OTHER_KEY_VAR", key)
+    return {
+        "pem": key,
+        "escaped newlines": key.replace("\n", "\\n"),
+        "one line with spaces": key.replace("\n", " "),
+        "crlf": key.replace("\n", "\r\n"),
+        "body only": body,
+        "base64 of the pem": base64.b64encode(key.encode()).decode(),
+        "@file:": f"@file:{tmp_path / 'AuthKey.p8'}",
+        "@env:": "@env:OTHER_KEY_VAR",
+    }
+
+
+def test_the_key_loads_in_every_shape_codemagic_might_hand_it_over(mod, tmp_path, monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    key = p8()
+    for name, raw in _shapes(key, tmp_path, monkeypatch).items():
+        framed = mod.pem(raw)
+        serialization.load_pem_private_key(framed.encode(), password=None)   # raises if not
+        assert framed.splitlines()[0] == "-----BEGIN PRIVATE KEY-----", name
+
+
+def test_an_unusable_key_is_described_without_being_shown(mod, monkeypatch):
+    secret = "-----BEGIN PRIVATE KEY-----\\nNOTAKEYATALLsecretbits\\n-----END PRIVATE KEY-----"
+    monkeypatch.setenv("APP_STORE_CONNECT_PRIVATE_KEY", secret)
+    with pytest.raises(SystemExit) as exc:
+        mod.ASC()
+    message = str(exc.value)
+    assert "escaped \\n inside" in message and "a PEM header" in message
+    assert "NOTAKEY" not in message and "secretbits" not in message
 
 
 # ------------------------------------------------------------------ TestFlight

@@ -27,9 +27,11 @@ _PRIVATE_KEY); nothing secret lives in this repository.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -38,6 +40,7 @@ import urllib.request
 from pathlib import Path
 
 import jwt  # PyJWT, installed by the workflow next to `cryptography`
+from cryptography.hazmat.primitives import serialization
 
 API = "https://api.appstoreconnect.apple.com"
 # states a version can be edited in (not yet submitted, or sent back)
@@ -49,11 +52,58 @@ HANDS_OFF = {"WAITING_FOR_REVIEW", "IN_REVIEW", "READY_FOR_REVIEW", "PENDING_APP
              "PROCESSING_FOR_DISTRIBUTION", "WAITING_FOR_EXPORT_COMPLIANCE", "ACCEPTED"}
 
 
+def pem(raw: str) -> str:
+    """The private key as a well-framed PEM, whatever shape it arrives in.
+
+    Codemagic's tools accept APP_STORE_CONNECT_PRIVATE_KEY as the PEM itself,
+    as `@file:<path>` or `@env:<name>`, with newlines escaped as `\\n`, or
+    flattened onto one line; `cryptography` accepts only the first. So the
+    base64 body is pulled out and re-framed the way PEM wants it."""
+    value = raw.strip()
+    if value.startswith("@file:"):
+        value = Path(os.path.expanduser(value[len("@file:"):])).read_text().strip()
+    elif value.startswith("@env:"):
+        value = os.environ[value[len("@env:"):]].strip()
+    value = value.replace("\\n", "\n").replace("\r", "")
+    framed = re.search(r"-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----", value, re.S)
+    if framed:
+        kind, body = framed.group(1), re.sub(r"\s+", "", framed.group(2))
+    else:
+        body = re.sub(r"\s+", "", value)
+        try:                                 # the whole PEM, base64-encoded once more
+            decoded = base64.b64decode(body, validate=True).decode()
+            if "-----BEGIN" in decoded:
+                return pem(decoded)
+        except (ValueError, UnicodeDecodeError):
+            pass
+        kind = "PRIVATE KEY"                 # just the body of a .p8
+    lines = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
+    return f"-----BEGIN {kind}-----\n{lines}\n-----END {kind}-----\n"
+
+
+def key_shape(raw: str) -> str:
+    """What the key variable looks like, without a single character of it."""
+    v = raw.strip()
+    traits = [f"{len(v)} chars", f"{v.count(chr(10))} line breaks",
+              "a PEM header" if v.startswith("-----BEGIN") else "no PEM header"]
+    if v.startswith(("@file:", "@env:")):
+        traits.append("a @file:/@env: reference")
+    if "\\n" in v:
+        traits.append("escaped \\n inside")
+    return ", ".join(traits)
+
+
 class ASC:
     def __init__(self) -> None:
         self.issuer = os.environ["APP_STORE_CONNECT_ISSUER_ID"]
         self.key_id = os.environ["APP_STORE_CONNECT_KEY_IDENTIFIER"]
-        self.key = os.environ["APP_STORE_CONNECT_PRIVATE_KEY"]
+        raw = os.environ["APP_STORE_CONNECT_PRIVATE_KEY"]
+        try:
+            self.key = pem(raw)
+            serialization.load_pem_private_key(self.key.encode(), password=None)
+        except Exception as e:  # noqa: BLE001 — reported in words, then stop
+            raise SystemExit(f"✗ APP_STORE_CONNECT_PRIVATE_KEY is not a usable key ({type(e).__name__}); "
+                             f"it looks like: {key_shape(raw)}") from None
         self._token, self._exp = "", 0.0
 
     def token(self) -> str:
