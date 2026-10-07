@@ -362,3 +362,19 @@ def test_engine_missing_is_a_clear_error(fake_clis):
     with pytest.raises(RuntimeError) as exc:
         _turn(s, "hi")
     assert "not installed" in str(exc.value)
+
+
+@pytest.mark.parametrize("message", [
+    "Not logged in · Please run /login",
+    "Failed to authenticate: OAuth session expired and could not be refreshed",
+    "401 Unauthorized",
+    "Invalid API key · Please run /login",
+])
+def test_every_flavour_of_signed_out_gets_the_sign_in_hint(message):
+    """Real wording seen from Claude Code 2.1 in a container whose login had
+    expired; the user should read what to do, not the CLI's internals."""
+    assert engines._looks_logged_out(message)
+
+
+def test_ordinary_failures_are_not_mistaken_for_a_login_problem():
+    assert not engines._looks_logged_out("Error: max turns reached")

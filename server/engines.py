@@ -241,8 +241,9 @@ async def _stop(proc: asyncio.subprocess.Process) -> str:
 def _looks_logged_out(text: str) -> bool:
     t = (text or "").lower()
     return any(s in t for s in ("not logged in", "/login", "please log in", "invalid api key",
-                                "authentication", "unauthorized", "401", "auth.json",
-                                "not signed in", "login required", "codex login"))
+                                "authentication", "failed to authenticate", "oauth",
+                                "session expired", "token expired", "unauthorized", "401",
+                                "auth.json", "not signed in", "login required", "codex login"))
 
 
 # ------------------------------------------------------------------ turn bookkeeping
