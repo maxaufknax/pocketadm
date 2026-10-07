@@ -206,21 +206,33 @@ struct TerminalSessionView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     switch socket.status {
-                    case .connected:  StatusDot(text: "Live", tint: .green)
-                    case .connecting: ProgressView()
-                    case .closed:     StatusDot(text: "Closed", tint: .red)
-                    case .idle:       EmptyView()
+                    case .connected:
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.green)
+                            .accessibilityLabel("Connected")
+                    case .connecting:
+                        ProgressView()
+                    case .closed:
+                        Image(systemName: "bolt.horizontal.circle")
+                            .foregroundStyle(.red)
+                            .accessibilityLabel("Disconnected")
+                    case .idle:
+                        EmptyView()
                     }
                 }
             }
             .onAppear { connect() }
             .onDisappear { socket.disconnect() }
             .onChange(of: socket.status) { _, status in
-                // Screenshot runs show a terminal with something in it.
+                // Screenshot runs show a terminal with something in it —
+                // commands whose output fits a phone's width.
                 guard status == .connected, AppState.screenshotRoute == "session" else { return }
                 Task {
-                    try? await Task.sleep(for: .seconds(1))
-                    socket.send(input: "docker ps\r")
+                    for command in ["uname -a", "free", "df -h", "docker images"] {
+                        try? await Task.sleep(for: .milliseconds(700))
+                        socket.send(input: command + "\r")
+                    }
                 }
             }
     }
@@ -275,7 +287,11 @@ struct SwiftTermView: UIViewRepresentable {
         //
         // Deferred: a view that is not in the window hierarchy yet cannot
         // become first responder, and makeUIView runs before it is installed.
-        DispatchQueue.main.async { _ = view.becomeFirstResponder() }
+        // (Not in screenshot runs: a fresh simulator's keyboard opens with a
+        // tutorial card over half the screen.)
+        if AppState.screenshotRoute != "session" {
+            DispatchQueue.main.async { _ = view.becomeFirstResponder() }
+        }
         host.view = view
         return view
     }

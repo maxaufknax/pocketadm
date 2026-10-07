@@ -27,6 +27,14 @@ Since **2.0** this is the App Store app (`de.maxaufknax.pocketadm`, app id
 The live demo must answer (`curl -s https://demo.pocketadm.com/api/info`
 without `-k`), or App Review meets a dead end on the first screen.
 
+**Checking the UI without a phone:** `ios-native-shots` (any branch) builds for
+the simulator and photographs every screen in light and dark against the demo
+— `tools/shots-review.txt` lists them, `tools/simulator-shots.sh` takes them,
+and the PNGs come back as build artifacts. The launch arguments
+`-PocketADMScreenshotTab <tab|connect|login>` and
+`-PocketADMScreenshotRoute <route>` open any screen directly (routes: the More
+tab's `MoreRoute` cases, `detail` under containers, `session` under terminal).
+
 ## 1. Releasing a TestFlight preview (separate app record)
 
 For experiments that should not reach the App Store app's TestFlight: the
@@ -307,10 +315,22 @@ portrait *and* landscape, on an iPhone 15/16.
 
 ## 5. Design decisions
 
-- **Palette taken verbatim** from `web/style.css` ("Deep Sea": `#0b0f14`,
-  `#121821`, accent `#4da3ff`). The web app offers several themes per device;
-  this preview commits to the default one and forces `.preferredColorScheme(.dark)` —
-  the palette is unreadable if the system flips it to light.
+- **System colours, not a palette of its own** (since 2.0). `Theme` maps
+  roles to the system's semantic colours (`systemGroupedBackground`,
+  `label`, …), so the app follows light and dark mode — or a fixed choice under
+  More → Appearance — and the bars, lists and sheets are the system's own. Only
+  the accent is PocketADM's blue (`#0069E0` light, `#3D93FF` dark, readable with
+  white text). Consoles stay dark in both appearances, as terminals do.
+- **One icon language:** a white glyph on a coloured rounded square
+  (`IconTile`), as in Settings. Services show their brand mark (`ServiceIcon`):
+  the web client's Simple Icons set, generated into the asset catalog by
+  `tools/gen-brands.py` with the same name → brand rules as the web client's
+  `brandSlug()` (checked by `tests/test_brand_assets.py`); without a brand, a
+  symbol for the catalog category. The server's emoji are never drawn.
+- **More is ordered like Settings:** the server first (as Settings shows your
+  account), then Manage, Monitor, Assistant, Security, App. Every tab root and
+  More route sets its title display mode explicitly — on iOS 26 `.automatic`
+  leaves a tab root's title empty.
 - **Five tabs** (Dashboard / Containers / Terminal / Assistant / More) instead
   of the web app's larger nav. Five is the practical limit before the tab bar
   becomes a row of unreadable icons, so everything else lives behind **More**:

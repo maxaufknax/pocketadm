@@ -74,13 +74,14 @@ struct SecurityView: View {
             }
 
             Section {
-                HStack {
-                    Label("Two-factor", systemImage: totpEnabled ? "lock.shield.fill" : "lock.shield")
-                        .foregroundStyle(totpEnabled ? Theme.accent2 : Theme.text)
+                HStack(spacing: 14) {
+                    IconTile(symbol: totpEnabled ? "lock.shield.fill" : "lock.shield",
+                             color: totpEnabled ? .green : .orange)
+                    Text("Code from an authenticator app")
+                        .foregroundStyle(Theme.text)
                     Spacer()
-                    Text(totpEnabled ? "on" : "off")
-                        .font(.subheadline)
-                        .foregroundStyle(totpEnabled ? Theme.accent2 : Theme.muted)
+                    Text(totpEnabled ? "On" : "Off")
+                        .foregroundStyle(totpEnabled ? .green : Theme.muted)
                 }
 
                 if totpEnabled {
@@ -107,18 +108,11 @@ struct SecurityView: View {
                     .foregroundStyle(Theme.muted)
             }
 
-            Section {
-                NavigationLink {
-                    AuditView()
-                } label: {
-                    NavRow(symbol: "list.bullet.rectangle", title: "Activity log",
-                           subtitle: "Every action taken on this server")
-                }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Security")
-        .screenBackground()
+        .navigationTitle("Password & 2FA")
+        .navigationBarTitleDisplayMode(.inline)
         .toast($toast)
         .task { await app.refreshMe() }
         .sheet(isPresented: $showTOTPSetup) {

@@ -52,6 +52,13 @@ struct JobConsoleView: View {
             }
         }
         .interactiveDismissDisabled(false)
+        .sensoryFeedback(trigger: runner.outcome) { _, outcome in
+            switch outcome {
+            case .running:   return nil
+            case .succeeded: return .success
+            case .failed:    return .error
+            }
+        }
     }
 
     @ViewBuilder

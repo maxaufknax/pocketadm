@@ -5,9 +5,13 @@ import SwiftUI
 /// Deliberately read-only: editing a compose file from a phone with no diff and
 /// no undo is how servers break. Reading one at 3am is how they get fixed.
 struct FilesView: View {
+    /// The folder this screen shows; "" is the list of workspaces. Every
+    /// folder is its own screen, pushed like in the Files app, so going up is
+    /// the back button and the swipe.
+    var start: String = ""
+
     @EnvironmentObject private var app: AppState
 
-    @State private var path = ""
     @State private var listing: FSListing?
     @State private var loading = true
     @State private var error: String?
@@ -24,67 +28,48 @@ struct FilesView: View {
                              title: "Cannot list files",
                              message: error,
                              tint: Theme.danger,
-                             retry: { Task { await load(path) } })
+                             retry: { Task { await load() } })
             }
         }
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .screenBackground()
-        .task { if listing == nil { await load("") } }
+        .navigationBarTitleDisplayMode(start.isEmpty ? .large : .inline)
+        .task { if listing == nil { await load() } }
         .sheet(item: $preview) { entry in
             FilePreviewSheet(entry: entry)
         }
     }
 
     private var title: String {
-        guard let listing, !listing.path.isEmpty else { return "Files" }
-        return (listing.path as NSString).lastPathComponent
+        guard !start.isEmpty else { return "Files" }
+        return (start as NSString).lastPathComponent
     }
 
     private func content(_ listing: FSListing) -> some View {
         List {
-            if !listing.path.isEmpty {
+            if listing.dirs.isEmpty && listing.fileEntries.isEmpty {
                 Section {
-                    Text(listing.path)
-                        .font(.system(size: 12, design: .monospaced))
+                    Text("This folder is empty.")
                         .foregroundStyle(Theme.muted)
-                        .textSelection(.enabled)
-                }
-            }
-
-            if !listing.parent.isEmpty {
-                Section {
-                    Button {
-                        Task { await load(listing.parent) }
-                    } label: {
-                        Label("Up one level", systemImage: "arrow.up.left")
-                            .foregroundStyle(Theme.accent)
-                    }
                 }
             }
 
             if !listing.dirs.isEmpty {
                 Section {
                     ForEach(listing.dirs) { dir in
-                        Button {
-                            Task { await load(dir.path) }
+                        NavigationLink {
+                            FilesView(start: dir.path)
                         } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "folder.fill")
-                                    .foregroundStyle(Theme.accent)
-                                    .frame(width: 20)
+                            Label {
                                 Text(dir.name)
-                                    .font(.subheadline)
                                     .foregroundStyle(Theme.text)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Theme.muted)
+                            } icon: {
+                                Image(systemName: "folder.fill")
+                                    .foregroundStyle(.blue)
                             }
                         }
                     }
                 } header: {
-                    SectionCaption(text: listing.path.isEmpty ? "Workspaces" : "Folders")
+                    Text(listing.path.isEmpty ? "Workspaces" : "Folders")
                 }
             }
 
@@ -96,39 +81,48 @@ struct FilesView: View {
                             // told us which is which.
                             if file.text { preview = file }
                         } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: file.text ? "doc.text" : "doc")
-                                    .foregroundStyle(file.text ? Theme.muted : Theme.border)
-                                    .frame(width: 20)
+                            HStack(spacing: 12) {
+                                Image(systemName: file.text ? "doc.text.fill" : "doc.fill")
+                                    .foregroundStyle(file.text ? Color.gray : Color(uiColor: .systemGray3))
+                                    .frame(width: 24)
                                 Text(file.name)
-                                    .font(.subheadline)
                                     .foregroundStyle(file.text ? Theme.text : Theme.muted)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Spacer()
                                 Text(Fmt.bytes(file.size))
-                                    .font(.caption)
+                                    .font(.footnote)
                                     .foregroundStyle(Theme.muted)
                             }
                         }
                         .disabled(!file.text)
                     }
                 } header: {
-                    SectionCaption(text: "\(listing.files) files")
+                    Text("\(listing.files) files")
+                }
+            }
+
+            if !listing.path.isEmpty {
+                Section {
+                    Text(listing.path)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(Theme.muted)
+                        .textSelection(.enabled)
+                } header: {
+                    Text("Path")
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable { await load(path) }
+        .refreshable { await load() }
     }
 
-    private func load(_ next: String) async {
+    private func load() async {
         guard let client = app.client else { return }
         loading = true
         defer { loading = false }
         do {
-            listing = try await client.listDirectory(next)
-            path = next
+            listing = try await client.listDirectory(start)
             error = nil
         } catch {
             self.error = error.localizedDescription

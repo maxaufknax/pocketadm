@@ -241,8 +241,9 @@ struct DashboardView: View {
                           valueTint: Theme.muted, chevron: false)
             }
         }
-        .buttonStyle(.plain)
-        .background(Theme.bg2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .buttonStyle(PressableRowStyle())
+        .background(Theme.bg2)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 
     private func statusRow(symbol: String, color: Color, title: String, value: String,

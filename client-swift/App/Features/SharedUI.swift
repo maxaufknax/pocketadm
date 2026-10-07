@@ -279,6 +279,16 @@ struct SecondaryButtonStyle: ButtonStyle {
     }
 }
 
+/// A row inside a card that is not a List: highlights while pressed, the way
+/// a list row does, instead of giving no feedback at all.
+struct PressableRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color(uiColor: .systemGray4) : Color.clear)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 /// A text field outside a list, filled like a search field.
 struct FieldBox<Content: View>: View {
     @ViewBuilder var content: Content

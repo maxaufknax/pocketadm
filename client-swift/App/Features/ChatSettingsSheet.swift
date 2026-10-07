@@ -19,16 +19,13 @@ struct ChatSettingsSheet: View {
                         Button {
                             draft.mode = mode
                         } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: mode.symbol)
-                                    .foregroundStyle(mode.isDangerous ? Theme.warn : Theme.accent)
-                                    .frame(width: 22)
-                                VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .top, spacing: 14) {
+                                IconTile(symbol: mode.symbol, color: mode.isDangerous ? .orange : .blue)
+                                VStack(alignment: .leading, spacing: 2) {
                                     Text(mode.title)
-                                        .font(.subheadline.weight(.medium))
                                         .foregroundStyle(Theme.text)
                                     Text(mode.blurb)
-                                        .font(.caption)
+                                        .font(.footnote)
                                         .foregroundStyle(Theme.muted)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -63,7 +60,6 @@ struct ChatSettingsSheet: View {
                                         HStack {
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(model.name)
-                                                    .font(.subheadline)
                                                     .foregroundStyle(Theme.text)
                                                 if !model.tools {
                                                     // Without tool calling the
@@ -87,9 +83,11 @@ struct ChatSettingsSheet: View {
                                     }
                                 }
                             } label: {
-                                HStack {
+                                HStack(spacing: 12) {
+                                    ServiceIcon(names: [entry.provider == "codex" ? "openai" : entry.provider,
+                                                        entry.label],
+                                                category: "AI", size: 30)
                                     Text(entry.displayName)
-                                        .font(.subheadline.weight(.medium))
                                         .foregroundStyle(Theme.text)
                                     if entry.agent {
                                         // runs the CLI's own agent with its
@@ -131,7 +129,6 @@ struct ChatSettingsSheet: View {
 
                 Section {
                     Toggle("Extended thinking", isOn: $draft.thinking)
-                        .tint(Theme.accent)
                 } footer: {
                     Text("Slower and more expensive, but better at multi-step reasoning. Only some models support it.")
                         .font(.caption)

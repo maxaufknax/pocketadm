@@ -43,7 +43,7 @@ struct AppsView: View {
                              title: "No catalog",
                              message: model.error ?? "This server's app catalog is empty.",
                              tint: model.error == nil ? Theme.muted : Theme.danger,
-                             retry: { Task { await model.load(app) } })
+                             retry: model.error == nil ? nil : { Task { await model.load(app) } })
             }
         }
         .navigationTitle("Apps")

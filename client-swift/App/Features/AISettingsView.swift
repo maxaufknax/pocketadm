@@ -35,13 +35,13 @@ struct AISettingsView: View {
             Section {
                 ForEach(Self.providers, id: \.self) { provider in
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack {
+                        HStack(spacing: 12) {
+                            ServiceIcon(names: [provider], category: "AI", size: 30)
                             Text(Self.labels[provider] ?? provider)
-                                .font(.subheadline.weight(.medium))
                                 .foregroundStyle(Theme.text)
                             Spacer()
                             if configured.contains(provider) {
-                                StatusPill(text: "key set", tint: Theme.accent2)
+                                StatusDot(text: "Key set", tint: .green)
                             }
                         }
                         SecureField(configured.contains(provider) ? "Replace key" : "Paste key",
@@ -49,13 +49,14 @@ struct AISettingsView: View {
                                                   set: { keys[provider] = $0 }))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            .font(.system(size: 13, design: .monospaced))
-                            .padding(10)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
                             .background(Theme.bg3,
-                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .foregroundStyle(Theme.text)
                         Text(Self.hints[provider] ?? "")
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundStyle(Theme.muted)
                         if configured.contains(provider) {
                             Button("Remove key") {
@@ -88,7 +89,6 @@ struct AISettingsView: View {
                                 } label: {
                                     HStack {
                                         Text(model.name)
-                                            .font(.subheadline)
                                             .foregroundStyle(Theme.text)
                                         Spacer()
                                         if defaultProvider == entry.provider
@@ -100,9 +100,18 @@ struct AISettingsView: View {
                                 }
                             }
                         } label: {
-                            Text(entry.provider.capitalized)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(Theme.text)
+                            HStack(spacing: 12) {
+                                ServiceIcon(names: [entry.provider == "codex" ? "openai" : entry.provider,
+                                                    entry.label],
+                                            category: "AI", size: 30)
+                                Text(entry.displayName)
+                                    .foregroundStyle(Theme.text)
+                                if entry.agent {
+                                    // a coding agent CLI on the server, using
+                                    // its own login and subscription
+                                    StatusPill(text: "your subscription", tint: Theme.accent)
+                                }
+                            }
                         }
                     }
                 } header: {
@@ -115,8 +124,26 @@ struct AISettingsView: View {
                 }
             }
 
+            Section {
+                NavigationLink {
+                    LocalAIView()
+                } label: {
+                    NavRow(symbol: "cpu", title: "Local models",
+                           subtitle: "Run a model on the server itself — no keys, no cost",
+                           tint: .teal)
+                }
+
+                NavigationLink {
+                    AgentSettingsView()
+                } label: {
+                    NavRow(symbol: "wrench.and.screwdriver.fill", title: "Agent behaviour",
+                           subtitle: "Memory, instructions and which tools it may use",
+                           tint: .indigo)
+                }
+            }
+
             if let usage {
-                Section {
+                Section("Usage") {
                     FactRow(label: "Today",
                             value: "\(Fmt.money(usage.today.cost)) · \(usage.today.requests) requests")
                     FactRow(label: "This month",
@@ -126,38 +153,19 @@ struct AISettingsView: View {
                 }
             }
 
-            Section {
-                NavigationLink {
-                    LocalAIView()
-                } label: {
-                    NavRow(symbol: "cpu", title: "Local models",
-                           subtitle: "Run a model on the server itself — no keys, no cost")
-                }
-
-                NavigationLink {
-                    AgentSettingsView()
-                } label: {
-                    NavRow(symbol: "wrench.and.screwdriver", title: "Agent behaviour",
-                           subtitle: "Memory, instructions and which tools it may use")
-                }
-            }
-
-            Section {
-                Button {
-                    Task { await save() }
-                } label: {
-                    HStack {
-                        Spacer()
-                        if saving { ProgressView() } else { Text("Save") }
-                        Spacer()
-                    }
-                }
-                .tint(Theme.accent)
-                .disabled(saving)
-            }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("AI")
+        .navigationTitle("AI models")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if saving {
+                    ProgressView()
+                } else {
+                    Button("Save") { Task { await save() } }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
         .screenBackground()
         .toast($toast)
         .task { await load() }

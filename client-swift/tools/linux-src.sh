@@ -33,7 +33,7 @@ enum NetworkSession {
 }
 STUB
 
-for file in Models Models+Ops ChatProtocol Formatting ServerURL PairingPayload APIClient APIClient+Ops; do
+for file in Models Models+Ops ChatProtocol Formatting ServerURL PairingPayload Brands APIClient APIClient+Ops; do
   sed 's|^\( *\)cfg.waitsForConnectivity = false|\1// (dropped for the Linux harness — Darwin default is already false)|' \
     "$src/App/Core/$file.swift" > "$dest/$file.swift"
 done

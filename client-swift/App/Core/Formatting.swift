@@ -10,8 +10,12 @@ enum Fmt {
         return f.string(fromByteCount: value)
     }
 
+    /// Below a kilobyte a rate is shown in bytes: a quiet link reading
+    /// "0 KB/s" looks like a dead one.
     static func rate(_ bytesPerSecond: Double) -> String {
-        bytes(Int64(max(0, bytesPerSecond))) + "/s"
+        let value = max(0, bytesPerSecond)
+        if value < 1024 { return "\(Int(value.rounded())) B/s" }
+        return bytes(Int64(value)) + "/s"
     }
 
     static func percent(_ value: Double) -> String {

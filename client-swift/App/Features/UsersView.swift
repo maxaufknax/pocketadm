@@ -31,8 +31,16 @@ struct UsersView: View {
             }
         }
         .navigationTitle("Users")
-        .screenBackground()
+        .navigationBarTitleDisplayMode(.large)
         .toast($toast)
+        .toolbar {
+            if data?.canManage == true {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showCreate = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Add a user")
+                }
+            }
+        }
         .task { if !loaded { await load() } }
         .sheet(item: $selected) { user in
             UserSheet(user: user, canManage: data?.canManage ?? false) { message in
@@ -50,7 +58,7 @@ struct UsersView: View {
 
     private func content(_ data: ServerUsers) -> some View {
         List {
-            Section {
+            Section("This machine") {
                 FactRow(label: "Host", value: data.identity.hostname)
                 FactRow(label: "System", value: data.identity.os)
                 FactRow(label: "Kernel", value: "\(data.identity.kernel) · \(data.identity.arch)")
@@ -71,15 +79,7 @@ struct UsersView: View {
                     Button { selected = user } label: { UserRow(user: user) }
                 }
             } header: {
-                HStack {
-                    SectionCaption(text: "People")
-                    Spacer()
-                    if data.canManage {
-                        Button("Add") { showCreate = true }
-                            .font(.caption.weight(.semibold))
-                            .tint(Theme.accent)
-                    }
-                }
+                Text("People")
             }
 
             Section {
@@ -87,18 +87,17 @@ struct UsersView: View {
                     ForEach(system(data)) { user in
                         HStack {
                             Text(user.name)
-                                .font(.system(size: 13, design: .monospaced))
-                                .foregroundStyle(Theme.muted)
+                                .font(.system(.subheadline, design: .monospaced))
+                                .foregroundStyle(Theme.text)
                             Spacer()
                             Text("uid \(user.uid)")
-                                .font(.caption2)
+                                .font(.footnote)
                                 .foregroundStyle(Theme.muted)
                         }
                     }
                 } label: {
                     Text("\(system(data).count) system accounts")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.muted)
+                        .foregroundStyle(Theme.text)
                 }
             }
         }
@@ -131,18 +130,14 @@ struct UserRow: View {
     let user: HostUser
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: user.isRoot ? "crown.fill"
-                  : user.isAdmin ? "person.badge.shield.checkmark" : "person")
-                .foregroundStyle(user.isRoot ? Theme.warn : user.isAdmin ? Theme.accent : Theme.muted)
-                .frame(width: 22)
+        HStack(spacing: 14) {
+            UserAvatar(user: user)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(user.name)
-                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(Theme.text)
                 Text(user.role.isEmpty ? user.shell : user.role)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
             }
@@ -155,7 +150,7 @@ struct UserRow: View {
                 StatusPill(text: "no login", tint: Theme.muted)
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
     }
 }
 
@@ -275,7 +270,7 @@ struct CreateUserSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     SecureField("Password", text: $password)
-                    Toggle("Grant admin", isOn: $admin).tint(Theme.accent)
+                    Toggle("Grant admin", isOn: $admin)
                 } footer: {
                     Text("Creates a real Linux account on the host, with a home directory and a login shell.")
                         .font(.caption)
@@ -316,5 +311,35 @@ struct CreateUserSheet: View {
         } catch {
             failure = error.localizedDescription
         }
+    }
+}
+
+/// A Contacts-style avatar: the initial on a gradient disc — orange with a
+/// crown for root, blue for admins.
+struct UserAvatar: View {
+    let user: HostUser
+    var size: CGFloat = 38
+
+    var body: some View {
+        ZStack {
+            Circle().fill(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom))
+            if user.isRoot {
+                Image(systemName: "crown.fill")
+                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .foregroundStyle(.white)
+            } else {
+                Text(String(user.name.prefix(1)).uppercased())
+                    .font(.system(size: size * 0.45, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private var colors: [Color] {
+        if user.isRoot { return [Color.orange.opacity(0.85), .orange] }
+        if user.isAdmin { return [Color.blue.opacity(0.75), .blue] }
+        return [Color(uiColor: .systemGray2), Color(uiColor: .systemGray)]
     }
 }

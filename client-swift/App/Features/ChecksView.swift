@@ -74,10 +74,12 @@ struct ChecksView: View {
                              title: model.error == nil ? "No checks yet" : "Cannot load checks",
                              message: model.error ?? "Run the first health check to see how this server is doing.",
                              tint: model.error == nil ? Theme.muted : Theme.danger,
-                             retry: { Task { await model.runNow(app) } })
+                             retry: { Task { await model.runNow(app) } },
+                             retryTitle: model.error == nil ? "Run checks now" : "Try again")
             }
         }
-        .navigationTitle("Checks")
+        .navigationTitle("Health checks")
+        .navigationBarTitleDisplayMode(.large)
         .screenBackground()
         .toast($toast)
         .task { if !model.loaded { await model.load(app) } }
@@ -343,7 +345,6 @@ struct ReportScheduleSheet: View {
             List {
                 Section {
                     Toggle("Run automatically", isOn: $auto)
-                        .tint(Theme.accent)
                 }
 
                 Section {

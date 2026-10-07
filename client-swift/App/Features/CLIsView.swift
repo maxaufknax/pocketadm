@@ -14,45 +14,54 @@ struct CLIsView: View {
         List {
             Section {
                 ForEach(tools) { tool in
-                    HStack(alignment: .top, spacing: 12) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ServiceIcon(names: [tool.vendor, tool.name], category: "Development", size: 40)
+
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
                                 Text(tool.name)
-                                    .font(.subheadline.weight(.medium))
                                     .foregroundStyle(Theme.text)
-                                if tool.installed {
-                                    StatusPill(text: tool.version.isEmpty ? "installed" : tool.version,
-                                               tint: Theme.accent2)
+                                if tool.installed && !tool.version.isEmpty {
+                                    StatusPill(text: tool.version, tint: .green)
                                 }
                             }
                             Text(tool.tagline)
-                                .font(.caption)
+                                .font(.footnote)
                                 .foregroundStyle(Theme.muted)
-                            Text("Needs \(tool.subscription)")
-                                .font(.caption2)
-                                .foregroundStyle(Theme.muted)
+                            if tool.installed {
+                                Text("Start it in the Terminal with `\(tool.launch)`")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.muted)
+                            } else {
+                                Text("Needs \(tool.subscription)")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.muted)
+                            }
                         }
 
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 8)
 
                         if tool.installed {
-                            Text("`\(tool.launch)`")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(Theme.accent)
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.green)
+                                .accessibilityLabel("Installed")
                         } else {
                             Button {
                                 Task { await install(tool) }
                             } label: {
-                                Image(systemName: "arrow.down.circle").font(.title3)
+                                Text("Install")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 5)
+                                    .background(Theme.bg3, in: Capsule())
                             }
                             .buttonStyle(.plain)
-                            .tint(Theme.accent)
+                            .foregroundStyle(Theme.accent)
                         }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 4)
                 }
-            } header: {
-                SectionCaption(text: "Coding agents")
             } footer: {
                 Text("Installed onto the server itself. Start one from the Terminal tab and sign in there — the app never sees those credentials.")
                     .font(.caption)
@@ -61,7 +70,7 @@ struct CLIsView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Coding agents")
-        .screenBackground()
+        .navigationBarTitleDisplayMode(.inline)
         .toast($toast)
         .task { if !loaded { await load() } }
         .sheet(item: $job) { pending in

@@ -73,6 +73,7 @@ struct MessageState: View {
     var message: String? = nil
     var tint: Color = Theme.muted
     var retry: (() -> Void)? = nil
+    var retryTitle = "Try again"
 
     var body: some View {
         ContentUnavailableView {
@@ -87,7 +88,7 @@ struct MessageState: View {
             }
         } actions: {
             if let retry {
-                Button("Try again", action: retry)
+                Button(retryTitle, action: retry)
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.capsule)
             }

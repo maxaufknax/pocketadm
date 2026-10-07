@@ -72,7 +72,7 @@ struct ContainersView: View {
                         title: model.error == nil ? "No containers" : "Cannot list containers",
                         message: model.error ?? "Nothing is running in Docker on this server yet.",
                         tint: model.error == nil ? Theme.muted : Theme.danger,
-                        retry: { Task { await model.load(app) } }
+                        retry: model.error == nil ? nil : { Task { await model.load(app) } }
                     )
                 } else {
                     list

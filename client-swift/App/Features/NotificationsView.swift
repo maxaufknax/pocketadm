@@ -20,7 +20,7 @@ struct NotificationsView: View {
                              title: error == nil ? "Nothing to report" : "Cannot load alerts",
                              message: error ?? "The server has raised no alerts.",
                              tint: error == nil ? Theme.muted : Theme.danger,
-                             retry: { Task { await load() } })
+                             retry: error == nil ? nil : { Task { await load() } })
             }
         }
         .navigationTitle("Alerts")

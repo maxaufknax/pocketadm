@@ -28,13 +28,14 @@ struct ChatView: View {
             }
             .navigationTitle(socket.title.isEmpty ? "Assistant" : socket.title)
             .navigationBarTitleDisplayMode(.inline)
-            .screenBackground()
+            // A conversation sits on the plain page colour, like Messages.
+            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         showHistory = true
                     } label: { Image(systemName: "clock.arrow.circlepath") }
-                        .tint(Theme.accent)
+                        .accessibilityLabel("Earlier chats")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -54,7 +55,6 @@ struct ChatView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
-                    .tint(Theme.accent)
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -126,10 +126,11 @@ struct ChatView: View {
 
                     if socket.running && socket.awaitingApproval == nil {
                         HStack(spacing: 8) {
-                            ProgressView().tint(Theme.muted).controlSize(.small)
-                            Text("Working…").font(.caption).foregroundStyle(Theme.muted)
+                            ProgressView().controlSize(.small)
+                            Text("Working…").font(.footnote).foregroundStyle(Theme.muted)
                         }
                         .id("working")
+                        .transition(.opacity)
                     }
 
                     if case .failed(let message) = socket.status {
@@ -145,6 +146,7 @@ struct ChatView: View {
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(16)
+                .animation(.snappy, value: socket.items.count)
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: socket.items.count) { _, _ in scrollDown(proxy) }
@@ -154,30 +156,42 @@ struct ChatView: View {
     }
 
     private var intro: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
+            IconTile(symbol: "sparkles", color: .purple, size: 44)
             Text("Ask about this server")
-                .font(.headline)
+                .font(.title2.weight(.bold))
                 .foregroundStyle(Theme.text)
-            Text("It can read logs, inspect containers and — in Agent mode — fix things, asking before every change.")
-                .font(.subheadline)
+            Text("It reads logs, inspects containers and — in Agent mode — fixes things, asking before every change.")
+                .font(.body)
                 .foregroundStyle(Theme.muted)
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(Self.suggestions, id: \.self) { suggestion in
                     Button {
                         draft = suggestion
                         composerFocused = true
                     } label: {
-                        Text(suggestion)
-                            .font(.caption)
-                            .foregroundStyle(Theme.accent)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack {
+                            Text(suggestion)
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.text)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 8)
+                            Image(systemName: "arrow.up.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Color(uiColor: .secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .padding(.top, 24)
     }
 
     private static let suggestions = [
@@ -213,9 +227,10 @@ struct ChatView: View {
                         .foregroundStyle(socket.config.mode.isDangerous ? Theme.warn : Theme.muted)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(uiColor: .secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous))
 
             Button {
                 if socket.running {
@@ -235,8 +250,8 @@ struct ChatView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Theme.bg2)
-        .overlay(alignment: .top) { Divider().overlay(Theme.border) }
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private var sendEnabled: Bool {
@@ -282,19 +297,18 @@ struct ChatRow: View {
         switch item.kind {
         case .user:
             HStack {
-                Spacer(minLength: 40)
+                Spacer(minLength: 48)
                 Text(item.text)
-                    .font(.subheadline)
                     .foregroundStyle(Theme.onAccent)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(Theme.accent,
-                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .textSelection(.enabled)
             }
 
         case .assistant:
-            MarkdownText(text: item.text)
+            MarkdownText(text: item.text, font: .body)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
         case .thinking:
@@ -305,13 +319,13 @@ struct ChatRow: View {
 
         case .error:
             Label(item.text, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(Theme.danger)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
         case .notice:
             Text(item.text)
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(Theme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -398,13 +412,9 @@ struct ToolCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.bg2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(call.state == .denied ? Theme.danger.opacity(0.4) : Theme.border,
-                        lineWidth: 1)
-        )
-        .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } }
+        .background(call.state == .denied ? Theme.danger.opacity(0.10) : Color(uiColor: .secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
     }
 
     private var tint: Color {
@@ -492,12 +502,9 @@ struct ApprovalCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.warn.opacity(0.10),
+        .background(Theme.warn.opacity(0.12),
                     in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                .stroke(Theme.warn.opacity(0.4), lineWidth: 1)
-        )
+        .sensoryFeedback(.warning, trigger: call.callID)
     }
 }
 
@@ -526,11 +533,8 @@ struct PauseCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.bg2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                .stroke(Theme.accent.opacity(0.4), lineWidth: 1)
-        )
+        .background(Theme.accent.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 }
 
@@ -548,7 +552,7 @@ struct PlanCard: View {
                         .foregroundStyle(step.done ? Theme.accent2
                                          : step.active ? Theme.accent : Theme.muted)
                     Text(step.title)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(step.done ? Theme.muted : Theme.text)
                         .strikethrough(step.done, color: Theme.muted)
                     Spacer(minLength: 0)
@@ -556,6 +560,8 @@ struct PlanCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .padding(14)
+        .background(Color(uiColor: .secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 }
