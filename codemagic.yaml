@@ -135,6 +135,28 @@ workflows:
           # this fully configures signing — no manual xcodeproj patching needed.
           xcode-project use-profiles
 
+      - name: Verify minimum iOS version is 15.0 (final gate before xcodebuild)
+        script: |
+          set -eo pipefail
+          # ios-configure.sh pins the project to iOS 15.0, but it runs *before*
+          # pod install, agvtool and use-profiles. Those later steps rewrite the
+          # project, so re-assert here — the very last step before compiling —
+          # that no step silently reintroduced iOS 13/14. A below-floor build
+          # ships fine and is only rejected afterwards (ITMS-90068):
+          # cheap to catch now, expensive to catch in App Store Connect.
+          PROJ="ios/App/App.xcodeproj/project.pbxproj"
+          PLIST="ios/App/App/Info.plist"
+          if grep -nE 'IPHONEOS_DEPLOYMENT_TARGET = 1[0-4]\.' "$PROJ"; then
+            echo "!! IPHONEOS_DEPLOYMENT_TARGET below 15.0 reappeared in $PROJ"
+            echo "!! (did pod install / agvtool / use-profiles reset the template value?)"
+            exit 1
+          fi
+          grep -q 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;' "$PROJ" || {
+            echo "!! IPHONEOS_DEPLOYMENT_TARGET = 15.0 not found in $PROJ"; exit 1; }
+          M=$(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST" 2>/dev/null || true)
+          [ "$M" = "15.0" ] || { echo "!! Info.plist MinimumOSVersion is '${M:-<missing>}', expected 15.0"; exit 1; }
+          echo "✓ minimum iOS version is 15.0 in both the project and Info.plist"
+
       - name: Build the signed IPA
         script: |
           set +e
