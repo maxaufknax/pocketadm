@@ -18,7 +18,9 @@ struct ChatView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if app.me?.aiConfigured == false {
+                // The demo has no AI key on purpose, but it carries a recorded
+                // agent session: show that instead of a setup prompt.
+                if app.me?.aiConfigured == false && app.me?.demo != true {
                     notConfigured
                 } else {
                     transcript
@@ -56,7 +58,7 @@ struct ChatView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if app.me?.aiConfigured != false { composer }
+                if app.me?.aiConfigured != false || app.me?.demo == true { composer }
             }
             .sheet(isPresented: $showSettings) {
                 ChatSettingsSheet(config: socket.config, models: models,
@@ -244,10 +246,24 @@ struct ChatView: View {
     // MARK: - Plumbing
 
     private func connect() {
-        guard let client = app.client,
-              let token = app.currentToken,
-              let url = client.webSocketURL(path: "/ws/chat", token: token) else { return }
-        socket.connect(to: url, chatID: socket.chatID)
+        guard let client = app.client else { return }
+        Task {
+            do {
+                var chatID = socket.chatID
+                // The demo cannot run the agent (read-only, no key), so it opens
+                // its recorded sample session rather than an empty chat.
+                if chatID.isEmpty, app.me?.demo == true,
+                   let sample = try? await client.chats().first(where: { $0.messageCount > 0 }) {
+                    chatID = sample.id
+                }
+                // a single-use ticket, fetched per connect (APIClient.liveWebSocketURL)
+                let url = try await client.liveWebSocketURL(path: "/ws/chat")
+                socket.connect(to: url, chatID: chatID)
+            } catch {
+                socket.fail(error.localizedDescription)
+                app.handle(error)
+            }
+        }
     }
 
     private func scrollDown(_ proxy: ScrollViewProxy) {

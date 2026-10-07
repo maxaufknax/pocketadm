@@ -41,7 +41,8 @@ workflows:
         XCODE_SCHEME: "App"
         MARKETING_VERSION: "1.0.1"       # public App Store version string
       node: 20
-      xcode: latest
+      # Pinned, not `latest`: a new Xcode is a deliberate change, not a surprise.
+      xcode: 26.6
       cocoapods: default
     scripts:
       - name: Install JS dependencies
@@ -223,7 +224,8 @@ workflows:
     max_build_duration: 30
     working_directory: client-swift
     environment:
-      xcode: latest
+      # Pinned, not `latest`: a new Xcode is a deliberate change, not a surprise.
+      xcode: 26.6
       vars:
         XCODE_SCHEME: "PocketADMNative"
         XCODE_PROJECT: "PocketADMNative.xcodeproj"
@@ -254,7 +256,8 @@ workflows:
           # project.yml references this file; without it xcodegen has nothing to
           # attach. The real number is only set in the TestFlight workflow.
           mkdir -p Config
-          echo "CURRENT_PROJECT_VERSION = ${BUILD_NUMBER:-1}" > Config/Build.xcconfig
+          printf 'CURRENT_PROJECT_VERSION = %s\nPRODUCT_BUNDLE_IDENTIFIER = de.maxaufknax.pocketadm\n' \
+            "${BUILD_NUMBER:-1}" > Config/Build.xcconfig
 
       - name: Generate the Xcode project
         script: |
@@ -345,7 +348,8 @@ workflows:
         BUNDLE_ID: "de.maxaufknax.pocketadm.native"
         XCODE_SCHEME: "PocketADMNative"
         XCODE_PROJECT: "PocketADMNative.xcodeproj"
-      xcode: latest
+      # Pinned, not `latest`: a new Xcode is a deliberate change, not a surprise.
+      xcode: 26.6
     triggering:
       events:
         - tag
@@ -410,6 +414,7 @@ workflows:
           mkdir -p Config
           cat > Config/Build.xcconfig <<XCCONFIG
           CURRENT_PROJECT_VERSION = ${NATIVE_BUILD_NUMBER}
+          PRODUCT_BUNDLE_IDENTIFIER = ${BUNDLE_ID}
           XCCONFIG
           cat Config/Build.xcconfig
 
@@ -557,6 +562,208 @@ workflows:
         # the pending App Review — and even then only for its own app record.
         # There is no reason to ever set it here: this is a preview build.
         submit_to_app_store: false
+      email:
+        recipients:
+          - maximilian.elias.paasch@gmail.com
+        notify:
+          success: true
+          failure: true
+
+  # ---------------------------------------------------------------------------
+  # PocketADM 2.0+ — the native app as THE App Store app (de.maxaufknax.pocketadm,
+  # app 6790731797), replacing the Capacitor build above.
+  #
+  # Start it by hand (Codemagic → PocketADM → Start new build → ios-native-release,
+  # branch main). It builds and signs the IPA, photographs the app in the
+  # simulator against the demo server and lays the shots into store images,
+  # uploads the build, and then gets the App Store version ready: version string,
+  # build, What's New (en-US, de-DE), review notes with the demo account, and the
+  # new screenshots — for the version being prepared only; the live listing keeps
+  # its images until this version is approved.
+  #
+  # It NEVER submits. The last log line is the link to the version page in App
+  # Store Connect; pressing "Submit for Review" there is a person's decision.
+  # ---------------------------------------------------------------------------
+  ios-native-release:
+    name: PocketADM 2 · App Store (prepare, never submit)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    working_directory: client-swift
+    integrations:
+      app_store_connect: PocketADM ASC key
+    environment:
+      groups:
+        - ios-release          # CERTIFICATE_PRIVATE_KEY_B64, shared on purpose (see above)
+      vars:
+        BUNDLE_ID: "de.maxaufknax.pocketadm"
+        XCODE_SCHEME: "PocketADMNative"
+        XCODE_PROJECT: "PocketADMNative.xcodeproj"
+        APP_VERSION: "2.0.0"   # must equal MARKETING_VERSION in project.yml
+        SIM_DEVICE: "iPhone 17 Pro Max"
+      xcode: 26.6
+    scripts:
+      - name: Check prerequisites
+        script: |
+          set -eo pipefail
+          if [ -z "${CERTIFICATE_PRIVATE_KEY_B64:-}" ] && [ -z "${CERTIFICATE_PRIVATE_KEY:-}" ]; then
+            echo "!! CERTIFICATE_PRIVATE_KEY_B64 is not set (group ios-release)."; exit 1
+          fi
+          MV=$(awk -F'"' '/MARKETING_VERSION:/{print $2; exit}' project.yml)
+          if [ "$MV" != "$APP_VERSION" ]; then
+            echo "!! project.yml says MARKETING_VERSION $MV, this workflow releases $APP_VERSION."
+            echo "!! A build only attaches to the App Store version with the same number."
+            exit 1
+          fi
+          curl -fsS https://demo.pocketadm.com/api/info | grep -q '"demo":true' \
+            || { echo "!! demo.pocketadm.com is not answering as a demo — App Review depends on it."; exit 1; }
+          echo "✓ $BUNDLE_ID $APP_VERSION, signing key present, demo server up"
+
+      - name: Provide XcodeGen
+        script: |
+          which xcodegen || brew install xcodegen
+          xcodegen --version
+
+      - name: Determine the build number
+        script: |
+          set -e
+          # Timestamps keep rising past every Capacitor build of this app record.
+          NEW_BUILD="$(date +%Y%m%d%H%M)"
+          echo "Build number: $NEW_BUILD"
+          echo "NATIVE_BUILD_NUMBER=$NEW_BUILD" >> "$CM_ENV"
+
+      - name: Write the build configuration
+        script: |
+          set -e
+          mkdir -p Config
+          cat > Config/Build.xcconfig <<XCCONFIG
+          CURRENT_PROJECT_VERSION = ${NATIVE_BUILD_NUMBER}
+          PRODUCT_BUNDLE_IDENTIFIER = ${BUNDLE_ID}
+          XCCONFIG
+          cat Config/Build.xcconfig
+
+      - name: Generate the Xcode project
+        script: |
+          set -eo pipefail
+          xcodegen generate
+          test -d "$XCODE_PROJECT"
+
+      - name: Verify bundle id, version and build number reach the target
+        script: |
+          set -eo pipefail
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -configuration Release -showBuildSettings > /tmp/buildsettings.txt 2>/dev/null
+          get() { awk -F' = ' "/ $1 = /{print \$2; exit}" /tmp/buildsettings.txt; }
+          echo "PRODUCT_BUNDLE_IDENTIFIER = $(get PRODUCT_BUNDLE_IDENTIFIER)"
+          echo "MARKETING_VERSION = $(get MARKETING_VERSION)"
+          echo "CURRENT_PROJECT_VERSION = $(get CURRENT_PROJECT_VERSION)"
+          [ "$(get PRODUCT_BUNDLE_IDENTIFIER)" = "$BUNDLE_ID" ] || { echo "!! wrong bundle id"; exit 1; }
+          [ "$(get MARKETING_VERSION)" = "$APP_VERSION" ] || { echo "!! wrong version"; exit 1; }
+          [ "$(get CURRENT_PROJECT_VERSION)" = "$NATIVE_BUILD_NUMBER" ] || { echo "!! xcconfig not attached"; exit 1; }
+
+      - name: Set up code signing
+        script: |
+          set -eo pipefail
+          key_raw="${CERTIFICATE_PRIVATE_KEY:-${CERTIFICATE_PRIVATE_KEY_B64:-}}"
+          if printf '%s' "$key_raw" | grep -q -- "-----BEGIN"; then
+            printf '%s\n' "$key_raw" > /tmp/cert_key.pem
+          else
+            printf '%s' "$key_raw" | tr -d '[:space:]' | openssl base64 -d -A -out /tmp/cert_key.pem
+          fi
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE --certificate-key @file:/tmp/cert_key.pem --create
+          keychain add-certificates
+          xcode-project use-profiles
+
+      - name: Ensure the Metal toolchain is available
+        script: |
+          set -uo pipefail
+          # SwiftTerm compiles a Metal shader unconditionally (see ios-native-check).
+          if ! xcrun metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20 \
+              || sudo xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20
+          fi
+          xcrun metal --version >/dev/null 2>&1 || { echo "!! no Metal toolchain"; exit 1; }
+
+      - name: Build the signed IPA
+        script: |
+          set +e
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --archive-xcargs="COMPILER_INDEX_STORE_ENABLE=NO -skipPackagePluginValidation -skipMacroValidation"
+          status=$?
+          if [ $status -ne 0 ]; then
+            log=$(ls -t /tmp/xcodebuild_logs/*.log 2>/dev/null | head -n1)
+            [ -n "$log" ] && grep -nE "error:|fatal error|failed|Signing for|provisioning" "$log" | tail -n 80
+            exit $status
+          fi
+
+      - name: Check the IPA before it goes anywhere
+        script: |
+          set -eo pipefail
+          IPA=$(ls build/ios/ipa/*.ipa | head -1)
+          rm -rf /tmp/ipa && mkdir /tmp/ipa && unzip -q "$IPA" -d /tmp/ipa
+          APP=$(ls -d /tmp/ipa/Payload/*.app)
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist"; }
+          [ "$(plist CFBundleIdentifier)" = "$BUNDLE_ID" ] || { echo "!! bundle id"; exit 1; }
+          [ "$(plist CFBundleShortVersionString)" = "$APP_VERSION" ] || { echo "!! version"; exit 1; }
+          [ "$(plist ITSAppUsesNonExemptEncryption)" = "false" ] || { echo "!! export compliance key"; exit 1; }
+          plist NSCameraUsageDescription >/dev/null
+          test -f "$APP/PrivacyInfo.xcprivacy" || { echo "!! PrivacyInfo.xcprivacy is not in the app"; exit 1; }
+          echo "✓ $(plist CFBundleIdentifier) $(plist CFBundleShortVersionString) ($(plist CFBundleVersion)), minimum iOS $(plist MinimumOSVersion), privacy manifest present"
+
+      - name: Photograph the app for the store
+        script: |
+          set -eo pipefail
+          # A simulator build of the same sources, signed by nobody.
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -configuration Debug \
+            -sdk iphonesimulator -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build/sim -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO build | tail -5
+          SIMAPP=$(ls -d build/sim/Build/Products/Debug-iphonesimulator/*.app | head -1)
+          UDID=$(xcrun simctl create pocketadm-shots "$SIM_DEVICE")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time "9:41" --dataNetwork wifi --wifiMode active \
+            --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+          xcrun simctl install "$UDID" "$SIMAPP"
+          mkdir -p build/shots/raw
+          # -PocketADMScreenshotTab signs in to the demo server and opens that tab
+          for tab in dashboard assistant containers terminal more; do
+            xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" -PocketADMScreenshotTab "$tab"
+            sleep 15
+            xcrun simctl io "$UDID" screenshot "build/shots/raw/raw-$tab.png"
+          done
+          xcrun simctl shutdown "$UDID" || true
+          python3 -m venv /tmp/shots-venv
+          /tmp/shots-venv/bin/pip install --quiet pillow
+          /tmp/shots-venv/bin/python tools/store-shots.py build/shots/raw build/shots/store
+
+      - name: Upload the build to App Store Connect
+        script: |
+          set -eo pipefail
+          IPA=$(ls build/ios/ipa/*.ipa | head -1)
+          # Upload only: neither TestFlight beta review nor App Store review.
+          app-store-connect publish --path "$IPA"
+
+      - name: Get the App Store version ready (never submits)
+        script: |
+          set -eo pipefail
+          python3 -m venv /tmp/asc-venv
+          /tmp/asc-venv/bin/pip install --quiet pyjwt cryptography
+          /tmp/asc-venv/bin/python tools/asc_release.py \
+            --bundle-id "$BUNDLE_ID" --version "$APP_VERSION" \
+            --build-number "$NATIVE_BUILD_NUMBER" --texts AppStore \
+            --screenshots build/shots/store --wait-minutes 75
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/shots/raw/*.png
+      - build/shots/store/**/*.png
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
       email:
         recipients:
           - maximilian.elias.paasch@gmail.com

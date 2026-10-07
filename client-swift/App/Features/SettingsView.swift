@@ -209,12 +209,13 @@ struct PairCodeSheet: View {
         }
     }
 
-    /// Must match what the web client encodes — `<origin>/pair?code=<code>` —
-    /// so a code from either client scans on either client.
+    /// The link every client reads — `<origin>/?pair=CODE&fp=KEY` — so a code
+    /// from this app scans in the web app and in the 1.0 App Store build too.
+    /// `fp` lets the new device pin a server that uses its own certificate.
     private func payload(_ pair: PairCode) -> String {
-        let origin = app.serverURL?.absoluteString
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
-        return "\(origin)/pair?code=\(pair.code)"
+        guard let server = app.serverURL else { return "" }
+        return PairingPayload.link(serverURL: server, code: pair.code,
+                                   fingerprint: pair.tlsFingerprint)
     }
 
     private func load() async {

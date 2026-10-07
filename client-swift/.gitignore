@@ -19,5 +19,5 @@ Package.resolved
 .DS_Store
 __pycache__/
 
-# Generated build configuration (build number only, no secrets)
+# Generated build configuration (build number + bundle id, no secrets)
 Config/

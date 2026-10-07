@@ -1029,15 +1029,24 @@ struct AIModels: Decodable {
         let provider: String
         let models: [Model]
         let local: Bool
+        /// Display name from the server ("Claude Code", "Codex"); older
+        /// servers send none, and the provider id is shown instead.
+        let label: String
+        /// A coding agent CLI on the server (Claude Code, Codex) rather than
+        /// a model API: it uses that CLI's own login and subscription.
+        let agent: Bool
         var id: String { provider }
+        var displayName: String { label.isEmpty ? provider.capitalized : label }
 
-        enum CodingKeys: String, CodingKey { case provider, models, local }
+        enum CodingKeys: String, CodingKey { case provider, models, local, label, agent }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             provider = c.get(.provider, "")
             models = c.get(.models, [])
             local = c.get(.local, false)
+            label = c.get(.label, "")
+            agent = c.get(.agent, false)
         }
     }
 

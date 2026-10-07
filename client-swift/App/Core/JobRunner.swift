@@ -52,7 +52,9 @@ final class JobRunner: ObservableObject {
 
         do {
             let request = try await client.jobStreamRequest(jobID)
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            // the shared pinned session: a self-signed server's log stream has
+            // to pass the same certificate check as every other request
+            let (bytes, response) = try await NetworkSession.shared.bytes(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 outcome = .failed("The server rejected the log stream (\(http.statusCode)).")
                 return

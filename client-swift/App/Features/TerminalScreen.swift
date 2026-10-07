@@ -213,19 +213,22 @@ struct TerminalSessionView: View {
     }
 
     private func connect() {
-        guard let client = app.client,
-              let token = app.currentToken,
-              let url = client.webSocketURL(
-                  path: "/ws/terminal",
-                  token: token,
-                  extra: [URLQueryItem(name: "session", value: session.id)]
-              )
-        else { return }
-
+        guard let client = app.client else { return }
         socket.onOutput = { text in
             terminal.view?.feed(text: text)
         }
-        socket.connect(to: url)
+        Task {
+            do {
+                // a single-use ticket, fetched per connect (APIClient.liveWebSocketURL)
+                let url = try await client.liveWebSocketURL(
+                    path: "/ws/terminal",
+                    extra: [URLQueryItem(name: "session", value: session.id)])
+                socket.connect(to: url)
+            } catch {
+                socket.fail(error.localizedDescription)
+                app.handle(error)
+            }
+        }
     }
 }
 

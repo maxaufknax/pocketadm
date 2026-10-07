@@ -31,12 +31,20 @@ final class ChatSocket: ObservableObject {
     @Published var config = ChatConfig()
 
     private var task: URLSessionWebSocketTask?
-    private let session = URLSession(configuration: .default)
+    private let session = NetworkSession.make(.default)
     /// Set while the user is deliberately closing, so the receive loop's
     /// failure is not reported as a connection problem.
     private var closing = false
 
     // MARK: - Connection
+
+    /// Shown when the socket could not even be opened (no ticket, no network)
+    /// — the same banner with a Reconnect button as a dropped connection.
+    func fail(_ message: String) {
+        task = nil
+        running = false
+        status = .failed(message)
+    }
 
     func connect(to url: URL, chatID: String) {
         disconnect()

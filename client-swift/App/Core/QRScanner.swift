@@ -2,32 +2,8 @@ import AudioToolbox
 import AVFoundation
 import SwiftUI
 
-/// The payload a signed-in device encodes is `<its own origin>/pair?code=<code>`,
-/// so one scan yields *both* the server address and the credential — which is
-/// why pairing, not the password, is the good first-run path.
-struct PairingPayload {
-    let serverURL: URL
-    let code: String
-
-    init?(scanned raw: String) {
-        guard let comps = URLComponents(string: raw),
-              let scheme = comps.scheme, scheme.hasPrefix("http"),
-              let host = comps.host,
-              let code = comps.queryItems?.first(where: { $0.name == "code" })?.value,
-              !code.isEmpty
-        else { return nil }
-
-        // Rebuild the origin only — the /pair path is the web UI's route and
-        // means nothing to the API client.
-        var origin = URLComponents()
-        origin.scheme = scheme
-        origin.host = host
-        origin.port = comps.port
-        guard let url = origin.url else { return nil }
-        self.serverURL = url
-        self.code = code
-    }
-}
+// The QR's meaning lives in PairingPayload.swift (Foundation only, so the
+// Linux harness can test every encoding); this file is just the camera.
 
 /// A live camera preview that reports QR payloads. AVFoundation directly —
 /// a scanner is about 60 lines and does not justify a dependency.

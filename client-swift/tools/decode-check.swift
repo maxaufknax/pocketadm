@@ -222,17 +222,45 @@ expect("rewind carries the ordinal",
 print("WebSocket URLs:")
 
 let httpsClient = APIClient(baseURL: URL(string: "https://pocket.example.com")!, token: "t")
-let wss = httpsClient.webSocketURL(path: "/ws/chat", token: "abc")
+let wss = httpsClient.webSocketURL(path: "/ws/chat",
+                                   credential: URLQueryItem(name: "ticket", value: "abc"))
 expect("https becomes wss", wss?.scheme == "wss")
-expect("token rides as a query item",
-       wss?.absoluteString.contains("token=abc") == true)
+expect("the single-use ticket rides as a query item",
+       wss?.absoluteString.contains("ticket=abc") == true)
+expect("the long-lived token is not in a ticket URL",
+       wss?.absoluteString.contains("token=") == false)
 
 let httpClient = APIClient(baseURL: URL(string: "http://192.168.1.10:8090")!, token: "t")
-let ws = httpClient.webSocketURL(path: "/ws/terminal", token: "abc",
+let ws = httpClient.webSocketURL(path: "/ws/terminal",
+                                 credential: URLQueryItem(name: "ticket", value: "abc"),
                                  extra: [URLQueryItem(name: "session", value: "s1")])
 expect("http becomes ws", ws?.scheme == "ws")
 expect("the port survives", ws?.port == 8090)
 expect("extra query items survive", ws?.absoluteString.contains("session=s1") == true)
+
+// Pairing QR codes: every encoding any PocketADM client or installer prints.
+print("Pairing payloads:")
+let installer = PairingPayload(scanned: "https://203.0.113.10:8443/?pair=C0DE&fp=KEYfp_-")
+expect("installer link: server", installer?.serverURL.absoluteString == "https://203.0.113.10:8443")
+expect("installer link: code", installer?.code == "C0DE")
+expect("installer link: fingerprint", installer?.fingerprint == "KEYfp_-")
+let oldApp = PairingPayload(scanned: "https://box.example.com/pair?code=C0DE")
+expect("pre-2.0 app link", oldApp?.code == "C0DE" && oldApp?.fingerprint == nil
+       && oldApp?.serverURL.absoluteString == "https://box.example.com")
+let json = PairingPayload(scanned: #"{"h":"pair","u":"https://box.example.com:8090/x","c":"C0DE"}"#)
+expect("pre-0.23 web JSON", json?.code == "C0DE"
+       && json?.serverURL.absoluteString == "https://box.example.com:8090")
+let handoff = PairingPayload(scanned: "https://box.example.com/?pair=C0DE&c=chat-1")
+expect("handoff link pairs too", handoff?.code == "C0DE")
+expect("a fingerprint on plain http is ignored",
+       PairingPayload(scanned: "http://192.168.1.10:8090/?pair=C&fp=K")?.fingerprint == nil)
+expect("foreign QR codes are refused", PairingPayload(scanned: "https://example.com/?x=1") == nil)
+expect("other schemes are refused", PairingPayload(scanned: "ftp://box/?pair=C") == nil)
+expect("plain text is refused", PairingPayload(scanned: "hello") == nil)
+let link = PairingPayload.link(serverURL: URL(string: "https://203.0.113.10:8443")!,
+                               code: "C0DE", fingerprint: "KEY")
+expect("this app prints the shared format", link == "https://203.0.113.10:8443/?pair=C0DE&fp=KEY")
+expect("what it prints, it reads", PairingPayload(scanned: link)?.fingerprint == "KEY")
 
 // Address normalisation from the Connect screen.
 print("Address normalisation:")

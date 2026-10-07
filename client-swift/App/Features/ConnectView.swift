@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// First run. PocketADM is self-hosted, so there is no server to assume — the
 /// app has to be told where to look, and then prove it found the right thing.
@@ -10,6 +11,7 @@ struct ConnectView: View {
     @State private var error: String?
     @State private var showScanner = false
     @State private var claiming = false
+    @State private var openingDemo = false
     @FocusState private var addressFocused: Bool
 
     var body: some View {
@@ -26,7 +28,7 @@ struct ConnectView: View {
                     }
                     .buttonStyle(PrimaryButtonStyle())
 
-                    Text("On a device that is already signed in, open Settings → Pair a device.")
+                    Text("Scan the QR your server's installer printed — or, on a device that is already signed in, open Settings → Pair another device.")
                         .font(.footnote)
                         .foregroundStyle(Theme.muted)
                         .multilineTextAlignment(.center)
@@ -44,6 +46,10 @@ struct ConnectView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                demoEntry
+
+                installHint
             }
             .padding(20)
         }
@@ -115,7 +121,63 @@ struct ConnectView: View {
         .card(padding: 18)
     }
 
+    /// The one path on this screen that needs nothing but the internet: a real,
+    /// running server with sample data. Someone evaluating the app — App Review
+    /// included — otherwise meets only buttons that demand a server they lack.
+    private var demoEntry: some View {
+        VStack(spacing: 8) {
+            Button {
+                Task { await openDemo() }
+            } label: {
+                if openingDemo {
+                    ProgressView().tint(Theme.accent)
+                } else {
+                    Label("Try the live demo", systemImage: "play.circle")
+                }
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(openingDemo)
+
+            Text("A real PocketADM server, read-only. No signup, nothing to install.")
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.top, 4)
+    }
+
+    private var installHint: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No server yet?")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.text)
+            Text("Run this on any Linux server. It installs Docker if needed, starts PocketADM over HTTPS and ends with a QR code to scan here.")
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+            Text("curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .card(padding: 16)
+    }
+
     // MARK: - Actions
+
+    private func openDemo() async {
+        openingDemo = true
+        error = nil
+        defer { openingDemo = false }
+        do {
+            try await app.openDemo()
+        } catch let failure {
+            // the button stays usable: a flaky network deserves a second tap
+            error = "The demo server did not answer (\(failure.localizedDescription)). Try again in a moment."
+        }
+    }
 
     /// Walks the candidate URLs and keeps the first that answers /api/info as a
     /// real PocketADM. Probing *before* asking for a password means a typo
@@ -148,6 +210,11 @@ struct ConnectView: View {
     private func claim(_ payload: PairingPayload) async {
         claiming = true
         defer { claiming = false }
+        // The QR is the trust decision: pin the key it names *before* the first
+        // request, so even the claim only ever talks to that exact server.
+        if let fingerprint = payload.fingerprint {
+            TrustStore.setPin(fingerprint, for: payload.serverURL)
+        }
         do {
             let client = APIClient(baseURL: payload.serverURL)
             // Identify the server first so its name and 2FA status are known
@@ -209,6 +276,17 @@ struct PairScanSheet: View {
                     Button("Cancel") { dismiss() }
                         .tint(Theme.accent)
                 }
+                // The installer also prints the link as text: copied from an SSH
+                // session (Universal Clipboard, a message to yourself) it pairs
+                // without a camera.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        pasteLink()
+                    } label: {
+                        Label("Paste pairing link", systemImage: "doc.on.clipboard")
+                    }
+                    .tint(Theme.accent)
+                }
             }
             .toolbarBackground(Theme.bg2, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -221,6 +299,16 @@ struct PairScanSheet: View {
         }
     }
 
+    private func pasteLink() {
+        guard let text = UIPasteboard.general.string,
+              let payload = PairingPayload(scanned: text) else {
+            problem = "The clipboard holds no PocketADM pairing link. The installer prints one "
+                + "after \u{201C}PAIRING_LINK:\u{201D}."
+            return
+        }
+        onPayload(payload)
+    }
+
     private var viewfinder: some View {
         VStack {
             Spacer()
@@ -228,7 +316,7 @@ struct PairScanSheet: View {
                 .stroke(Theme.accent, lineWidth: 3)
                 .frame(width: 230, height: 230)
             Spacer()
-            Text("Point the camera at the QR code shown on your signed-in device.")
+            Text("Point the camera at the QR code from your server's installer, or the one a signed-in device shows.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
                 .multilineTextAlignment(.center)

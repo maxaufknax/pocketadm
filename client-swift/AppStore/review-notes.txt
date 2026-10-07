@@ -1,0 +1,14 @@
+PocketADM is a client for server software that users run on their own Linux server. It has no backend of ours and no account of its own. Version 2.0 is a native SwiftUI rebuild of the app.
+
+FASTEST ROUTE (no typing, no server needed):
+On the first screen, tap "Try the live demo". It signs the app in to a real, running, read-only PocketADM server with sample data and opens the full interface: Dashboard, Containers, Terminal, Assistant and More.
+
+Equivalent manual route: type the address demo.pocketadm.com, tap Continue, and use the password: demo
+
+CAMERA: used only to scan the pairing QR code a PocketADM server prints at the end of its installer, or that a signed-in device shows. "Scan pairing code" asks for camera permission and opens the scanner. The read-only demo cannot create pairing codes, so there is nothing to scan during review; close the scanner with Cancel. "Paste pairing link" accepts the same link as text.
+
+ASSISTANT: an AI agent that works on the user's own server with the user's own API key or coding-agent subscription (Claude Code, Codex). The demo is read-only, so its Assistant tab shows a recorded sample session; sending a message there explains that the demo cannot run the agent.
+
+APP TRANSPORT SECURITY: arbitrary loads are allowed because PocketADM connects only to servers the user adds, which are often local addresses (192.168.x.x, .local hosts) or VPN addresses. New servers use HTTPS with their own certificate; the app trusts such a certificate only when its key matches the fingerprint in the pairing QR code the user scanned. No traffic goes anywhere other than the servers the user adds.
+
+The app collects no personal data.

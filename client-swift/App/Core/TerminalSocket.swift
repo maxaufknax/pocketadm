@@ -24,7 +24,13 @@ final class TerminalSocket: ObservableObject {
     var onOutput: ((String) -> Void)?
 
     private var task: URLSessionWebSocketTask?
-    private let session = URLSession(configuration: .default)
+    private let session = NetworkSession.make(.default)
+
+    /// The socket could not be opened at all (no ticket, no network).
+    func fail(_ message: String) {
+        task = nil
+        status = .closed(message)
+    }
 
     func connect(to url: URL) {
         disconnect()

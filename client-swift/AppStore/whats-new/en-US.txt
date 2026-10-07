@@ -1,0 +1,9 @@
+PocketADM 2.0 is a new app: rebuilt from the ground up as a native iPhone app.
+
+• Native from end to end: faster screens, a real terminal emulator, live charts.
+• Pair in seconds: the server installer now ends with a QR code. Scan it and you are signed in, over HTTPS from the first minute, with no domain needed.
+• Coding agents on your server: run Claude Code or Codex from the Assistant tab with your own subscription. Every step is shown, and the risky ones wait for your tap.
+• Sign in with Authentik, Authelia, Keycloak or any OpenID Connect provider, next to password and 2FA.
+• A more careful agent: anything that would talk to the internet asks first, and background monitors can only look.
+
+Coming from 1.x? Sign in to your server once more, or scan its pairing QR. The newest features need PocketADM 0.23 on the server: run the installer again to update it.

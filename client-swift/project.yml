@@ -1,13 +1,18 @@
 # XcodeGen description — produces PocketADMNative.xcodeproj so no binary project
 # file lives in the repo:  xcodegen generate
 #
-# This is the *native SwiftUI client* of PocketADM. It is deliberately a
-# separate app from the Capacitor client in ../client: different bundle id,
-# different App Store Connect record, different Codemagic workflow. Nothing
-# here can touch the release that is sitting in App Review.
+# The native SwiftUI client of PocketADM — since 2.0 *the* App Store app
+# (de.maxaufknax.pocketadm), replacing the Capacitor shell in ../client.
+#
+# The bundle id is not set here but in the generated Config/Build.xcconfig,
+# next to the build number: the release workflow writes the App Store id, the
+# preview workflow its separate TestFlight-only id (…pocketadm.native). A
+# target-level setting in this file would override the xcconfig, so one
+# project could not serve both.
 name: PocketADMNative
 options:
-  bundleIdPrefix: de.maxaufknax
+  # No bundleIdPrefix: XcodeGen would invent a target-level bundle id from it,
+  # and a target-level setting beats Config/Build.xcconfig.
   deploymentTarget:
     # 17.0 buys Swift Charts' modern API and Observation-era SwiftUI while
     # still covering every phone that can run the Capacitor build.
@@ -34,7 +39,7 @@ settings:
     # SWIFT_VERSION only knows language modes (5.0 / 6.0), not point releases.
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.2.1"
+    MARKETING_VERSION: "2.0.0"
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -46,11 +51,19 @@ targets:
     platform: iOS
     sources:
       - path: App
+        excludes:
+          - "Resources/PrivacyInfo.xcprivacy"
+      # Required since 2024 for apps that touch "required reason" APIs
+      # (UserDefaults, file timestamps via SwiftTerm). Listed on its own so it
+      # lands in the resources phase whatever XcodeGen infers from the suffix.
+      - path: App/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: SwiftTerm
-    # Carries CURRENT_PROJECT_VERSION, written by the Codemagic workflow (and by
-    # tools/bootstrap-config.sh for local generation). Kept out of the repo so
-    # the build number is never a committed, stale value.
+    # Carries CURRENT_PROJECT_VERSION and PRODUCT_BUNDLE_IDENTIFIER, written by
+    # the Codemagic workflow (and by tools/bootstrap-config.sh for local
+    # generation). Kept out of the repo so the build number is never a
+    # committed, stale value.
     #
     # Must be `configFiles`. Written under `settings.configs.<name>.xcconfig` —
     # which looks right — XcodeGen silently creates a build setting literally
@@ -85,8 +98,9 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         # Pairing is the primary onboarding path and it scans a QR code.
         NSCameraUsageDescription: >-
-          PocketADM uses the camera to scan the pairing QR code shown by a
-          server you are already signed in to.
+          PocketADM uses the camera to scan the pairing QR code your server
+          shows — at the end of its installer, or on a device that is already
+          signed in.
         # A self-hosted server usually lives on the LAN. Without this, iOS
         # silently drops the very first request to 192.168.x.x / *.local and
         # the Connect screen just says "cannot reach server".
@@ -94,16 +108,16 @@ targets:
           PocketADM connects to your own server, which is often on the same
           local network as this device.
         NSAppTransportSecurity:
-          # PocketADM is self-hosted: people legitimately point it at
-          # http://192.168.1.10:8090 or a box with a private CA. ATS cannot
-          # know those are trusted, so it has to be relaxed here. See NOTES.md
-          # — this is the one thing to tighten before any public release.
+          # PocketADM is self-hosted: older installs answer on plain
+          # http://192.168.1.10:8090 inside a LAN or a VPN (Tailscale, WireGuard),
+          # and ATS cannot know those are the user's own machines. New installs
+          # are HTTPS from the start, with the server's own certificate pinned
+          # through the pairing QR (TrustStore.swift) — that trust decision
+          # replaces ATS's CA check rather than skipping it.
           NSAllowsArbitraryLoads: true
           NSAllowsLocalNetworking: true
     settings:
       base:
-        # Deliberately NOT de.maxaufknax.pocketadm — that id belongs to the
-        # Capacitor app currently in App Review.
-        PRODUCT_BUNDLE_IDENTIFIER: de.maxaufknax.pocketadm.native
+        # PRODUCT_BUNDLE_IDENTIFIER comes from Config/Build.xcconfig (see top).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

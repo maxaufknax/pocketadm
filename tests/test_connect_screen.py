@@ -64,3 +64,26 @@ def test_install_command_is_copyable():
     that stops someone standing up their first server."""
     assert "wireCopyableCommands" in APP_JS
     assert ".install-hint pre" in APP_JS, "the copy helper no longer matches the installer blocks"
+
+
+# ------------------------------------------------------------------ iOS app (2.0+)
+
+NATIVE_STATE = (ROOT / "client-swift" / "App" / "Core" / "AppState.swift").read_text()
+NATIVE_CONNECT = (ROOT / "client-swift" / "App" / "Features" / "ConnectView.swift").read_text()
+REVIEW_NOTES = (ROOT / "client-swift" / "AppStore" / "review-notes.txt").read_text()
+
+
+def test_native_app_offers_the_demo_on_its_connect_screen():
+    assert 'Label("Try the live demo"' in NATIVE_CONNECT
+    assert "app.openDemo()" in NATIVE_CONNECT
+
+
+def test_native_demo_server_is_the_one_in_the_review_notes():
+    """The release workflow writes review-notes.txt into App Store Connect; the
+    button has to dial exactly that server, or App Review meets a dead end."""
+    m = re.search(r'static let demoServer = URL\(string: "([^"]+)"\)', NATIVE_STATE)
+    assert m, "AppState.swift no longer defines demoServer"
+    host = m.group(1).removeprefix("https://")
+    assert m.group(1).startswith("https://")
+    assert host in REVIEW_NOTES
+    assert DEMO_SERVER.group(1) == m.group(1), "web and iOS app must use the same demo server"

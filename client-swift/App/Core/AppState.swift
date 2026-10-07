@@ -41,7 +41,32 @@ final class AppState: ObservableObject {
 
     var currentToken: String? { token }
 
-    init() { restore() }
+    /// A real PocketADM server with sample data, read-only, password "demo".
+    /// App Review uses it, and so does anyone without a server of their own —
+    /// tests/test_connect_screen.py checks it matches the App Review notes.
+    static let demoServer = URL(string: "https://demo.pocketadm.com")!
+
+    /// Screenshot runs (the release workflow drives the simulator):
+    /// `-PocketADMScreenshotTab assistant` opens the demo on that tab, with no
+    /// stored server involved.
+    static let screenshotTab: String? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-PocketADMScreenshotTab"), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }()
+
+    init() {
+        if Self.screenshotTab == nil { restore() }
+    }
+
+    /// Signs in to the public demo server.
+    func openDemo() async throws {
+        let client = APIClient(baseURL: Self.demoServer)
+        let info = try await client.info()
+        let result = try await client.login(password: "demo")
+        adopt(url: Self.demoServer, info: info)
+        signIn(token: result.token, serverName: result.serverName ?? info.serverName)
+    }
 
     // MARK: - Persistence
 
@@ -118,8 +143,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Forgets the server entirely — back to the Connect screen.
+    /// Forgets the server entirely — back to the Connect screen. Its TLS pin
+    /// goes too: re-adding it takes a fresh pairing QR, which re-pins it.
     func forgetServer() {
+        if let serverURL { TrustStore.setPin(nil, for: serverURL) }
         token = nil
         KeychainStore.set(nil, for: Self.tokenAccount)
         me = nil

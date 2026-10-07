@@ -18,9 +18,16 @@ struct ServerInfo: Decodable, Equatable {
     let serverName: String
     let demo: Bool
     let totpRequired: Bool
+    /// Set when the server offers "Sign in with …" (OpenID Connect, 0.22+);
+    /// absent or null otherwise, and on older servers.
+    let sso: SSOInfo?
+
+    struct SSOInfo: Decodable, Equatable {
+        let label: String
+    }
 
     enum CodingKeys: String, CodingKey {
-        case helmsman, version, demo
+        case helmsman, version, demo, sso
         case serverName = "server_name"
         case totpRequired = "totp_required"
     }
@@ -109,10 +116,14 @@ struct PairCode: Decodable {
     let code: String
     let ttl: Int
     let serverName: String?
+    /// The server's own TLS key fingerprint (0.23+), empty without HTTPS. It
+    /// goes into the QR so the new device can pin a self-signed server.
+    let tlsFingerprint: String?
 
     enum CodingKeys: String, CodingKey {
         case code, ttl
         case serverName = "server_name"
+        case tlsFingerprint = "tls_fingerprint"
     }
 }
 

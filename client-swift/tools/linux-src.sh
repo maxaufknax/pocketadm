@@ -21,7 +21,19 @@ cat > "$dest/prelude.swift" <<'PRELUDE'
 #endif
 PRELUDE
 
-for file in Models Models+Ops ChatProtocol Formatting ServerURL APIClient APIClient+Ops; do
+# TrustStore.swift needs the Security framework, which Linux has no
+# counterpart for: give APIClient a NetworkSession that just makes sessions.
+cat > "$dest/NetworkSession.swift" <<'STUB'
+import Foundation
+enum NetworkSession {
+    static let shared = URLSession(configuration: .default)
+    static func make(_ configuration: URLSessionConfiguration) -> URLSession {
+        URLSession(configuration: configuration)
+    }
+}
+STUB
+
+for file in Models Models+Ops ChatProtocol Formatting ServerURL PairingPayload APIClient APIClient+Ops; do
   sed 's|^\( *\)cfg.waitsForConnectivity = false|\1// (dropped for the Linux harness — Darwin default is already false)|' \
     "$src/App/Core/$file.swift" > "$dest/$file.swift"
 done

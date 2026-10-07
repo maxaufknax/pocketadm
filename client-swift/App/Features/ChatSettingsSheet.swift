@@ -89,10 +89,14 @@ struct ChatSettingsSheet: View {
                                 }
                             } label: {
                                 HStack {
-                                    Text(entry.provider.capitalized)
+                                    Text(entry.displayName)
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(Theme.text)
-                                    if entry.local {
+                                    if entry.agent {
+                                        // runs the CLI's own agent with its
+                                        // own login — no API key involved
+                                        StatusPill(text: "your subscription", tint: Theme.accent)
+                                    } else if entry.local {
                                         StatusPill(text: "local", tint: Theme.accent2)
                                     }
                                 }

@@ -2,3 +2,4 @@
 # Install both:  pip install -r requirements.txt -r requirements-dev.txt
 -r requirements.txt
 pytest>=8.0
+pillow>=10           # tests/test_asc_release.py renders the store images

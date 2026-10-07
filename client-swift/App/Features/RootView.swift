@@ -18,6 +18,11 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: app.phase)
         .task {
+            // A screenshot run (release workflow) opens the demo on its own.
+            if AppState.screenshotTab != nil, app.phase == .connect {
+                try? await app.openDemo()
+                return
+            }
             // A server restored from the keychain has no ServerInfo yet, so the
             // login screen would not know whether to show the 2FA field.
             await app.refreshServerInfo()
@@ -25,28 +30,40 @@ struct RootView: View {
     }
 }
 
+/// The five tabs. Raw values double as the screenshot workflow's
+/// `-PocketADMScreenshotTab` argument.
+enum MainTab: String, Hashable {
+    case dashboard, containers, terminal, assistant, more
+}
+
 struct MainTabs: View {
     @EnvironmentObject private var app: AppState
+    @State private var tab: MainTab = AppState.screenshotTab.flatMap(MainTab.init(rawValue:)) ?? .dashboard
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent") }
+                .tag(MainTab.dashboard)
 
             ContainersView()
                 .tabItem { Label("Containers", systemImage: "shippingbox") }
+                .tag(MainTab.containers)
 
             TerminalHomeView()
                 .tabItem { Label("Terminal", systemImage: "terminal") }
+                .tag(MainTab.terminal)
 
             ChatView()
                 .tabItem { Label("Assistant", systemImage: "sparkles") }
+                .tag(MainTab.assistant)
 
             MoreView()
                 .tabItem { Label("More", systemImage: "ellipsis.circle") }
                 // One badge for everything behind the hub: without it an alert
                 // raised while you are on another tab is invisible.
                 .badge(app.unseenAlerts)
+                .tag(MainTab.more)
         }
         .tint(Theme.accent)
         .task {

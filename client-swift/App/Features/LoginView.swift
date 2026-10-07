@@ -12,7 +12,9 @@ struct LoginView: View {
     /// seeds it so the field is already there on a known-2FA server.
     @State private var needsTOTP = false
     @State private var busy = false
+    @State private var ssoBusy = false
     @State private var error: String?
+    @State private var sso = SSOSignIn()
 
     @FocusState private var focus: Field?
     private enum Field { case password, totp }
@@ -52,6 +54,22 @@ struct LoginView: View {
                     }
                     .buttonStyle(PrimaryButtonStyle(enabled: canSubmit))
                     .disabled(!canSubmit)
+
+                    if let provider = info.sso {
+                        // An extra way in, never the only one: the password
+                        // and 2FA above keep working if the provider is down.
+                        Button {
+                            Task { await signInWithProvider() }
+                        } label: {
+                            if ssoBusy {
+                                ProgressView().tint(Theme.accent)
+                            } else {
+                                Label("Sign in with \(provider.label)", systemImage: "person.badge.key")
+                            }
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(ssoBusy || busy)
+                    }
                 }
                 .card(padding: 18)
 
@@ -98,6 +116,23 @@ struct LoginView: View {
 
     private var canSubmit: Bool {
         !busy && !password.isEmpty && (!needsTOTP || totp.count >= 6)
+    }
+
+    private func signInWithProvider() async {
+        guard let serverURL = app.serverURL else { return }
+        let client = APIClient(baseURL: serverURL)
+        guard let start = client.ssoStartURL() else { return }
+        focus = nil
+        ssoBusy = true
+        error = nil
+        defer { ssoBusy = false }
+        do {
+            let code = try await sso.run(startURL: start)
+            let result = try await client.ssoClaim(code: code)
+            app.signIn(token: result.token, serverName: result.serverName ?? info.serverName)
+        } catch let failure {
+            error = failure.localizedDescription
+        }
     }
 
     private func signIn() async {
