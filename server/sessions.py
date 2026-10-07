@@ -30,7 +30,8 @@ import json
 import os
 import time
 
-from . import agents, ai, audit, chats, cmdpolicy, config, discovery, permissions, servermap
+from . import (agents, ai, audit, chats, cmdpolicy, config, discovery, engines, permissions,
+               servermap)
 
 # events that make up the replayable in-flight turn (see Session.live_events)
 _LIVE_KINDS = {"text", "thinking", "thinking_block", "tool_request",
@@ -69,6 +70,14 @@ class Session:
         self.mode = "agent"
         self.provider = default["provider"]
         self.model = default["model"]
+        # A coding-agent CLI (Claude Code, Codex) can be the default too, and is
+        # the natural one on a server that has a CLI login but no API key.
+        stored = (config.settings.get("ai_default") or {}).get("provider", "")
+        if stored in engines.ENGINES and engines.installed(stored):
+            self.provider = stored
+            self.model = (config.settings.get("ai_default") or {}).get("model", "") or "default"
+        elif not self.provider and engines.installed_engines():
+            self.provider, self.model = engines.installed_engines()[0], "default"
         self.workdir = config.get_default_workspace() or ai.DEFAULT_WORKDIR
         self.thinking = "off"   # "off" | "low" | "medium" | "high" (effort tier)
 
@@ -133,10 +142,13 @@ class Session:
         changed = False
         if msg.get("mode") in ai.MODE_TOOLS and msg["mode"] != self.mode:
             self.mode, changed = msg["mode"], True
-        if msg.get("provider") in ai.CHAT_PROVIDERS and msg["provider"] != self.provider:
-            self.provider, changed = msg["provider"], True
+        provider = msg.get("provider")
+        if (provider in ai.CHAT_PROVIDERS or engines.installed(provider or "")) \
+                and provider != self.provider:
+            self.provider, changed = provider, True
         if "model" in msg:
-            model = msg["model"] or config.DEFAULT_MODELS.get(self.provider, "")
+            model = msg["model"] or config.DEFAULT_MODELS.get(self.provider, "") \
+                or ("default" if self.provider in engines.ENGINES else "")
             if model != self.model:
                 self.model, changed = model, True
         if msg.get("workdir"):
@@ -259,6 +271,9 @@ class Session:
         """One user turn: model + tools until the model stops calling tools.
         Mirrors the old ChatSession.run_turn but streams via broadcast and can
         pick up steering messages between tool iterations."""
+        if self.provider in engines.ENGINES:
+            await self._engine_cycle()
+            return
         cfg = ai._cfg_for(self.provider, self.model)
         smap = await servermap.get() if config.get_servermap_enabled() else ""
         sysprompt = ai.system_prompt(self.workdir, self.mode, server_map=smap)
@@ -382,6 +397,40 @@ class Session:
         output = await self._check_permission(tc, output)
         await self.broadcast(type="tool_result", id=tc["id"], output=output, diff=diff)
         return output
+
+    async def _engine_cycle(self) -> None:
+        """One user turn through a coding-agent CLI (engines.py). The CLI runs
+        its own loop; this keeps the chat, the plan panel, the approval cards and
+        the usage numbers exactly as they are for the built-in agent."""
+        self._mutated = False
+        self.live_events = []
+        before_ids = await discovery.snapshot_ids()
+        usage = await engines.run_turn(self)
+        total_in = usage["input"] + usage["cache_read"] + usage["cache_write"]
+        self.session_usage["input"] += total_in
+        self.session_usage["output"] += usage["output"]
+        self.session_usage["turns"] += 1
+        self._persist()
+        await self._safe_broadcast(type="chat_meta", id=self.chat_id,
+                                   title=self.chat["title"], live=False)
+        # the CLI bills the user's own subscription: tokens are real, a price is not
+        await self._safe_broadcast(
+            type="usage", live=False,
+            turn={**usage, "input": total_in, "cost": None,
+                  "model": f"{engines.ENGINES[self.provider]['label']} · {self.model or 'default'}"},
+            session=self.session_usage)
+        if self._mutated:
+            await self._report_new_services(before_ids)
+
+    async def apply_engine_plan(self, steps: list[dict]) -> None:
+        """A CLI's own to-do list (Claude's TodoWrite, Codex's plan) in the plan panel."""
+        status = {"completed": "done", "done": "done", "in_progress": "in_progress",
+                  "inProgress": "in_progress"}
+        self.plan = [{"title": str(s.get("title", "")).strip()[:200],
+                      "status": status.get(s.get("status"), "pending")}
+                     for s in steps if str(s.get("title", "")).strip()][:12]
+        self._persist()
+        await self.broadcast(type="plan", items=self.plan, live=False)
 
     async def _apply_plan(self, tc: dict) -> str:
         """update_plan is display-only: store the plan on the session, push it to

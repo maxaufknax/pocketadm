@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
-               clis, config, demodata, dockerapi, hostuser, integrations, jobs,
+               clis, config, demodata, dockerapi, engines, hostuser, integrations, jobs,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
                sessions, skills, snapshots, sysinfo, terminal, termsessions,
                tls, updates)
@@ -239,7 +239,7 @@ async def me(request: Request):
         "hostname": sysinfo.hostname(),
         "server_name": config.get_server_name() or sysinfo.hostname(),
         "onboarded": config.get_onboarded(),
-        "ai_configured": bool(default["provider"]),
+        "ai_configured": bool(default["provider"]) or bool(engines.installed_engines()),
         "ai_default": default,
         "ai_providers": config.configured_providers(),
         "workspaces": config.get_workspaces(),
@@ -729,7 +729,10 @@ async def uninstall_app(app_id: str, remove_data: bool = False):
 
 @app.get("/api/ai/models", dependencies=[authed])
 async def ai_models():
-    return {"providers": await ai.list_models(), "default": config.get_ai_default()}
+    # API providers, then the coding-agent CLIs installed on this server
+    # (Claude Code, Codex), which run on their own login — see engines.py
+    return {"providers": await ai.list_models() + engines.providers(),
+            "default": config.get_ai_default()}
 
 
 # --------------------------------------------------------------- local AI
@@ -821,7 +824,9 @@ async def set_ai(body: AIConfigBody):
             raise HTTPException(400, f"unknown provider {prov}")
     config.set_keys(body.keys)
     if body.default_provider:
-        if body.default_provider not in config.PROVIDERS:
+        # an installed coding-agent CLI can be the default for new chats too
+        if body.default_provider not in config.PROVIDERS \
+                and not engines.installed(body.default_provider):
             raise HTTPException(400, "unknown provider")
         config.set_ai_default(body.default_provider, body.default_model)
     ai._model_cache["time"] = 0
@@ -905,9 +910,19 @@ async def revoke_sessions():
 
 # ------------------------------------------------------- single sign-on
 
-def _sso_back(code: str = "", error: str = "") -> RedirectResponse:
+APP_SSO_CALLBACK = "pocketadm://sso"
+
+
+def _sso_back(code: str = "", error: str = "", app: bool = False) -> RedirectResponse:
     """Back to the app after a sign-in attempt. The browser-binding cookie is
-    spent either way."""
+    spent either way. The iOS app signs in through ASWebAuthenticationSession,
+    which catches the pocketadm:// redirect itself — no other app can receive
+    it, and the one-time code still has to be claimed within 60 seconds."""
+    if app:
+        query = urlencode({"code": code} if code else {"error": error[:300]})
+        resp = RedirectResponse(APP_SSO_CALLBACK + "?" + query, status_code=302)
+        resp.delete_cookie(oidc.COOKIE, path="/api/auth/oidc")
+        return resp
     query = urlencode({"sso": code} if code else {"sso_error": error[:300]})
     resp = RedirectResponse("/?" + query, status_code=302)
     resp.delete_cookie(oidc.COOKIE, path="/api/auth/oidc")
@@ -915,14 +930,15 @@ def _sso_back(code: str = "", error: str = "") -> RedirectResponse:
 
 
 @app.get("/api/auth/oidc/start")
-async def oidc_start():
+async def oidc_start(client: str = ""):
     cfg = oidc.get_config()
     if not cfg:
         raise HTTPException(404, "Single sign-on is not set up")
+    app_flow = client == "app"
     try:
-        url, browser = await oidc.begin()
+        url, browser = await oidc.begin(app=app_flow)
     except oidc.SSOError as e:
-        return _sso_back(error=str(e))
+        return _sso_back(error=str(e), app=app_flow)
     resp = RedirectResponse(url, status_code=302)
     resp.set_cookie(oidc.COOKIE, browser, max_age=oidc.FLOW_TTL, path="/api/auth/oidc",
                     httponly=True, samesite="lax",
@@ -937,16 +953,17 @@ async def oidc_callback(request: Request, state: str = "", code: str = "",
     # reverse proxy every client shares one address, so a few aborted SSO
     # attempts would otherwise lock the password login too.
     ip = request.client.host if request.client else "?"
+    app_flow = oidc.flow_is_app(state)
     if error:
         msg = (error_description or error)[:160]
         audit.record("login_failed", target=ip, status="warn", detail=f"SSO: {msg}")
-        return _sso_back(error=f"The provider stopped the sign-in: {msg}")
+        return _sso_back(error=f"The provider stopped the sign-in: {msg}", app=app_flow)
     try:
         who = await oidc.complete(state, code, request.cookies.get(oidc.COOKIE, ""))
     except oidc.SSOError as e:
         audit.record("login_failed", target=ip, status="warn", detail=f"SSO: {e}")
-        return _sso_back(error=str(e))
-    return _sso_back(code=oidc.new_login_code(who))
+        return _sso_back(error=str(e), app=app_flow)
+    return _sso_back(code=oidc.new_login_code(who), app=app_flow)
 
 
 class SSOClaimBody(BaseModel):

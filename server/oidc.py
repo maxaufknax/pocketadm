@@ -186,8 +186,11 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-async def begin() -> tuple[str, str]:
-    """Start a sign-in. Returns (provider URL to redirect to, browser cookie)."""
+async def begin(app: bool = False) -> tuple[str, str]:
+    """Start a sign-in. Returns (provider URL to redirect to, browser cookie).
+
+    `app`: started by the iOS app in an ASWebAuthenticationSession, which
+    expects the result at pocketadm://sso instead of the web app's /?sso=."""
     cfg = get_config()
     if not cfg:
         raise SSOError("Single sign-on is not set up")
@@ -197,7 +200,7 @@ async def begin() -> tuple[str, str]:
         _pending.pop(min(_pending, key=lambda k: _pending[k]["exp"]), None)
     state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     verifier, browser = secrets.token_urlsafe(48), secrets.token_urlsafe(24)
-    _pending[state] = {"nonce": nonce, "verifier": verifier,
+    _pending[state] = {"nonce": nonce, "verifier": verifier, "app": bool(app),
                        "browser": _digest(browser), "exp": time.time() + FLOW_TTL}
     scopes = ["openid", "profile", "email"]
     if "groups" in (doc.get("scopes_supported") or []):
@@ -318,6 +321,13 @@ async def complete(state: str, code: str, browser: str) -> dict:
         raise SSOError(f"{who} is not allowed to sign in here — "
                        "add the user or one of their groups to the allow-list")
     return {"user": who, "matched": matched}
+
+
+def flow_is_app(state: str) -> bool:
+    """Whether a pending sign-in was started by the iOS app — looked up before
+    complete() consumes the attempt, so even a refusal goes back to the app."""
+    flow = _pending.get(state or "")
+    return bool(flow and flow.get("app"))
 
 
 def new_login_code(identity: dict) -> str:

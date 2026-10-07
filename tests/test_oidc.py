@@ -389,3 +389,40 @@ def test_settings_remove(idp, client):
     assert client.delete("/api/settings/sso", headers=_authed()).status_code == 200
     assert oidc.get_config() is None
     assert client.get("/api/info").json()["sso"] is None
+
+
+# ------------------------------------------------------------ the iOS app
+
+def test_app_sign_in_returns_to_the_app(idp, client):
+    """The iOS app starts with ?client=app inside an ASWebAuthenticationSession;
+    the result comes back at pocketadm://sso, where the session catches it."""
+    _configure()
+    r = client.get("/api/auth/oidc/start?client=app", follow_redirects=False)
+    assert r.status_code == 302
+    params = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
+    idp.nonce = params["nonce"]
+    back = client.get("/api/auth/oidc/callback", params={"state": params["state"], "code": "c-1"},
+                      follow_redirects=False)
+    loc = back.headers["location"]
+    assert loc.startswith("pocketadm://sso?code=")
+    code = parse_qs(urlsplit(loc).query)["code"][0]
+    token = client.post("/api/auth/oidc/claim", json={"code": code}).json()["token"]
+    assert auth.check_token(token)
+
+
+def test_app_refusal_also_returns_to_the_app(idp, client):
+    _configure(allowed=["somebody-else"])
+    r = client.get("/api/auth/oidc/start?client=app", follow_redirects=False)
+    params = {k: v[0] for k, v in parse_qs(urlsplit(r.headers["location"]).query).items()}
+    idp.nonce = params["nonce"]
+    loc = client.get("/api/auth/oidc/callback", params={"state": params["state"], "code": "c-1"},
+                     follow_redirects=False).headers["location"]
+    assert loc.startswith("pocketadm://sso?error=")
+    assert "not allowed" in parse_qs(urlsplit(loc).query)["error"][0]
+
+
+def test_browser_sign_in_never_goes_to_the_app_scheme(idp, client):
+    _configure()
+    params = _start(client, idp)
+    back = _callback(client, state=params["state"], code="c-1")
+    assert "sso" in back
