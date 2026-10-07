@@ -61,23 +61,101 @@ def load(chat_id: str) -> dict | None:
         return None
 
 
-def list_chats() -> list[dict]:
+def _summary(c: dict, fallback_id: str = "") -> dict:
+    messages = c.get("messages", [])
+    first = next((m["content"] for m in messages
+                  if m.get("role") == "user" and isinstance(m.get("content"), str)
+                  and m["content"].strip()), "")
+    last = next((m["content"] for m in reversed(messages)
+                 if m.get("role") == "assistant" and m.get("content")), "")
+    return {
+        "id": c.get("id", fallback_id),
+        "title": c.get("title", DEFAULT_TITLE),
+        "created": c.get("created", 0),
+        "updated": c.get("updated", 0),
+        "archived": bool(c.get("archived")),
+        "pinned": bool(c.get("pinned")),
+        "message_count": sum(1 for m in messages if m.get("role") in ("user", "assistant")),
+        "tool_count": sum(len(m.get("tool_calls") or []) for m in messages
+                          if m.get("role") == "assistant"),
+        "preview": " ".join((last or first).split())[:140],
+    }
+
+
+def list_chats(query: str = "") -> list[dict]:
+    """Every chat, pinned first, then newest. With a query, only chats whose
+    title or messages contain it, each with the matching passage."""
+    needle = query.strip().lower()
     out = []
     for f in CHATS_DIR.glob("*.json"):
         try:
             c = json.loads(f.read_text())
         except Exception:
             continue
-        out.append({
-            "id": c.get("id", f.stem),
-            "title": c.get("title", DEFAULT_TITLE),
-            "created": c.get("created", 0),
-            "updated": c.get("updated", 0),
-            "archived": bool(c.get("archived")),
-            "message_count": sum(1 for m in c.get("messages", [])
-                                 if m.get("role") in ("user", "assistant")),
-        })
-    return sorted(out, key=lambda c: -c["updated"])
+        row = _summary(c, f.stem)
+        if needle:
+            hit = _find(c, needle)
+            if hit is None:
+                continue
+            row["snippet"] = hit
+        out.append(row)
+    return sorted(out, key=lambda c: (not c["pinned"], -c["updated"]))
+
+
+def _find(chat: dict, needle: str) -> str | None:
+    if needle in (chat.get("title") or "").lower():
+        return ""
+    for m in chat.get("messages", []):
+        text = m.get("content")
+        if m.get("role") not in ("user", "assistant") or not isinstance(text, str):
+            continue
+        i = text.lower().find(needle)
+        if i >= 0:
+            start = max(0, i - 50)
+            return ("…" if start else "") + " ".join(text[start:i + len(needle) + 70].split())
+    return None
+
+
+def set_pinned(chat_id: str, pinned: bool) -> bool:
+    c = load(chat_id)
+    if not c:
+        return False
+    c["pinned"] = pinned
+    _save_quiet(c)
+    return True
+
+
+def _save_quiet(chat: dict) -> None:
+    """Save without moving the chat to the top: pinning is not a new message."""
+    if config.DEMO:
+        return
+    _path(chat["id"]).write_text(json.dumps(chat))
+
+
+def export_markdown(chat_id: str) -> str | None:
+    """The conversation as Markdown, for the share sheet."""
+    c = load(chat_id)
+    if not c:
+        return None
+    lines = [f"# {c.get('title') or DEFAULT_TITLE}", ""]
+    outputs = {m.get("tool_call_id"): m.get("content", "")
+               for m in c.get("messages", []) if m.get("role") == "tool"}
+    for m in c.get("messages", []):
+        role = m.get("role")
+        if role == "user" and isinstance(m.get("content"), str) and m["content"].strip():
+            lines += ["**You:**", "", m["content"].strip(), ""]
+        elif role == "assistant":
+            if m.get("content"):
+                lines += ["**Assistant:**", "", m["content"].strip(), ""]
+            for tc in m.get("tool_calls") or []:
+                args = tc.get("args") or {}
+                what = args.get("command") or args.get("path") or args.get("url") or ""
+                lines.append(f"> `{tc.get('name', 'tool')}` {what}".rstrip())
+                out = (outputs.get(tc.get("id"), "") or "").strip()
+                if out:
+                    lines += ["", "```", out[:1500], "```"]
+                lines.append("")
+    return "\n".join(lines).strip() + "\n"
 
 
 def delete(chat_id: str) -> None:
@@ -101,7 +179,7 @@ def rename(chat_id: str, title: str) -> bool:
     if not c:
         return False
     c["title"] = title.strip()[:80] or DEFAULT_TITLE
-    save(c)
+    _save_quiet(c)
     return True
 
 

@@ -11,7 +11,7 @@ import re
 import time
 from pathlib import Path
 
-from . import agents, ai, config, dockerapi, permissions, sysinfo, updates
+from . import ai, config, dockerapi, permissions, sysinfo, updates
 
 REPORTS_DIR = config.DATA_DIR / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
@@ -205,12 +205,18 @@ async def check_updates_pending() -> list[dict]:
         n = sum(1 for u in docker_ups if u["update_available"] and not u["ignored"])
         high = sum(1 for u in docker_ups
                    if u["update_available"] and not u["ignored"] and u.get("priority") == "high")
-        status = "ok" if n == 0 else "warn" if high == 0 else "crit"
+        # a pending update is a to-do; it becomes critical when a security-relevant
+        # image has been left behind for two months
+        stale = sum(1 for u in docker_ups
+                    if u["update_available"] and not u["ignored"] and u.get("priority") == "high"
+                    and (u.get("age_days") or 0) > 60)
+        status = "ok" if n == 0 else "crit" if stale else "warn"
         summary = "everything up to date" if n == 0 else \
             f"{n} image update{'s' if n != 1 else ''} pending" + \
             (f" ({high} security-relevant)" if high else "")
         out.append(_check("docker-updates", "Docker image updates", "⬆️", status, summary,
-                          recommendation="Apply them in the Health → Updates tab." if n else None))
+                          recommendation="Review them under Updates — each one shows what "
+                                         "changes, and a snapshot makes it undoable." if n else None))
     except Exception as e:
         out.append(_check("docker-updates", "Docker image updates", "⬆️", "info", str(e)[:100]))
     try:
@@ -293,8 +299,34 @@ async def check_app_security() -> list[dict]:
     return out
 
 
+def _backup_timers(host: str = HOST) -> list[dict]:
+    """Backup jobs scheduled as systemd timers: name, enabled, last run.
+
+    Only units the admin wrote (/etc/systemd/system) count — the distro's own
+    dpkg-db-backup lives in /usr/lib and is not a backup of anything you own.
+    A persistent timer leaves a stamp file whose age is its last run."""
+    tools = ("restic", "borg", "borgmatic", "duplicati", "duplicacy", "kopia",
+             "rsnapshot", "backrest", "urbackup", "rclone", "backup")
+    units = Path(host + "/etc/systemd/system")
+    out = []
+    try:
+        timers = sorted(p for p in units.glob("*.timer") if any(t in p.name.lower() for t in tools))
+    except OSError:
+        return out
+    for timer in timers:
+        stamp = Path(host + "/var/lib/systemd/timers/stamp-" + timer.name)
+        try:
+            last = stamp.stat().st_mtime if stamp.exists() else None
+        except OSError:
+            last = None
+        out.append({"name": timer.name.removesuffix(".timer"),
+                    "enabled": (units / "timers.target.wants" / timer.name).exists(),
+                    "last_run": last})
+    return out
+
+
 async def check_backups() -> list[dict]:
-    """Is any recognizable backup tooling in place? (Best-effort detection.)"""
+    """Is any recognizable backup tooling in place, and has it run lately?"""
     tools = ("restic", "borg", "borgmatic", "duplicati", "duplicacy", "kopia",
              "rsnapshot", "backrest", "urbackup", "velero")
     found = []
@@ -316,44 +348,64 @@ async def check_backups() -> list[dict]:
                         found.append(f"{d}/{f.name}")
             except OSError:
                 pass
+    timers = [t for t in _backup_timers() if t["enabled"]]
+    found += [f"{t['name']} (systemd timer)" for t in timers]
+    stamps = [t["last_run"] for t in timers if t["last_run"]]
     if found:
-        return [_check("backups", "Backups", "💾", "ok",
-                       "backup tooling detected: " + ", ".join(sorted(set(found))[:6]))]
+        summary = "backups set up: " + ", ".join(sorted(set(found))[:6])
+        status = "ok"
+        recommendation = None
+        if stamps:
+            age_h = (time.time() - max(stamps)) / 3600
+            summary += f" · last run {_ago(age_h)}"
+            if age_h > 72:
+                status = "warn"
+                recommendation = ("The newest scheduled backup ran more than three days ago. "
+                                  "Check that the timer still fires and the target disk is attached.")
+        return [_check("backups", "Backups", "💾", status, summary,
+                       recommendation=recommendation)]
     return [_check("backups", "Backups", "💾", "warn", "no backup tooling detected",
                    recommendation="Volumes and configs are one disk failure away from gone. "
-                                  "Ask the Vibe agent to set up restic or borgmatic to an "
+                                  "Ask the assistant to set up restic or borgmatic to an "
                                   "external target — and export a PocketADM settings backup "
                                   "under More → Backup.")]
 
 
+def _ago(hours: float) -> str:
+    if hours < 1:
+        return "less than an hour ago"
+    if hours < 48:
+        return f"{int(hours)} h ago"
+    return f"{int(hours // 24)} days ago"
+
+
 async def check_agent_tasks() -> list[dict]:
-    """Things the agent (or a Sentinel loop) flagged and that wait for the user:
-    permission requests it ran into mid-session, and unresolved warn/crit
-    findings from background agents. Shown here so they aren't forgotten."""
+    """Permission requests the assistant ran into and that wait for the user.
+
+    Only recent ones, one row per kind of request: five identical "needs root"
+    rows from last month's chats are noise, not tasks. Alerts from the
+    background watch live on the Alerts screen, not here."""
     out = []
     try:
-        open_reqs = [p for p in permissions.list_all() if p.get("status") == "open"]
-        for p in open_reqs[:6]:
-            out.append(_check("perm-" + p["id"], p.get("title", "Permission needed"), "🔐",
-                              "warn", p.get("explanation") or p.get("detail", ""),
-                              recommendation=(p.get("fix") or "") +
-                              " Resolve or dismiss it under More → Tasks & permissions."))
-        if not open_reqs:
-            out.append(_check("perms", "Agent permission requests", "🔐", "ok",
-                              "nothing waiting for you"))
-    except Exception:
-        pass
-    try:
-        notifs = agents.notifications(limit=30).get("items", [])
-        flagged = [n for n in notifs if n.get("status") in ("warn", "crit")][:5]
-        for n in flagged:
-            out.append(_check("sentinel-" + str(n.get("id", "")),
-                              n.get("title", "Background agent finding"), "🤖",
-                              n.get("status", "warn"),
-                              (n.get("body") or "")[:300] +
-                              (f" (seen {n['count']}×)" if n.get("count", 1) > 1 else ""),
-                              recommendation="Reported by a background agent — open the bell "
-                                             "in the top bar for details, or fix it with AI."))
+        permissions.expire_stale()
+        cutoff = time.time() - 3 * 86400
+        fresh = [p for p in permissions.list_all()
+                 if p.get("status") == "open" and p.get("last_seen", p.get("time", 0)) >= cutoff]
+        by_title: dict[str, dict] = {}
+        for p in fresh:
+            key = p.get("title", "")
+            if key in by_title:
+                by_title[key]["count"] = by_title[key].get("count", 1) + p.get("count", 1)
+                by_title[key].setdefault("ids", []).append(p["id"])
+            else:
+                by_title[key] = {**p, "ids": [p["id"]]}
+        for p in list(by_title.values())[:4]:
+            c = _check("perm-" + p["id"], p.get("title", "Permission needed"), "🔐",
+                       "warn", (p.get("explanation") or p.get("detail", ""))
+                       + (f" (asked {p['count']}×)" if p.get("count", 1) > 1 else ""),
+                       recommendation=(p.get("fix") or "") or None)
+            c["permission_ids"] = p["ids"]
+            out.append(c)
     except Exception:
         pass
     return out
@@ -372,6 +424,162 @@ CHECK_GROUPS = [
     ("Backups", check_backups),
     ("Updates", check_updates_pending),
 ]
+
+# The five areas the app groups findings in.
+CATEGORY = {
+    "Agent tasks": "Assistant", "Resources": "Stability", "Containers": "Stability",
+    "Storage": "Storage", "Network": "Security", "SSH": "Security", "Logins": "Security",
+    "Protection": "Security", "App security": "Security", "Backups": "Backups",
+    "Updates": "Updates",
+}
+
+# What a finding means, in words for someone who is not a sysadmin.
+EXPLAIN = {
+    "disk": "How full the server's main disk is. Above ~85 % databases and logs start failing in "
+            "odd ways, and a full disk can stop every service at once.",
+    "memory": "How much RAM is in use. When it runs out, Linux kills the biggest process — often a "
+              "database — without asking.",
+    "load": "How busy the processor is compared to its cores. Sustained overload makes everything slow.",
+    "containers": "How many of your services are running.",
+    "unhealthy": "These containers report that their own health check fails: they run, but do not "
+                 "work as they should.",
+    "restart-loop": "These containers crash and restart over and over — usually a config error or a "
+                    "missing dependency.",
+    "restarts": "These containers restarted several times recently; something makes them crash.",
+    "privileged": "These containers can control Docker itself, which is as powerful as root on the "
+                  "server. That is normal for management tools — make sure you trust each one.",
+    "ports": "Ports published on all interfaces are reachable from your network, and from the "
+             "internet if your router forwards them. Internal services are safer behind the reverse proxy.",
+    "ssh-root": "Whether someone can log in as root over SSH. Attackers try root first; turning it "
+                "off removes the most guessed account.",
+    "ssh-pw": "Whether SSH accepts passwords. Passwords can be guessed; keys cannot. Bots try "
+              "thousands of passwords a day on every public server.",
+    "authlog": "Failed SSH logins in the recent log. Thousands mean bots are knocking — harmless "
+               "with keys-only login, dangerous with weak passwords.",
+    "fail2ban": "fail2ban blocks addresses that keep failing to log in, which turns brute-force "
+                "attempts into a few tries.",
+    "app-2fa": "Whether PocketADM itself asks for a second factor. It can control the whole server, "
+               "so its login deserves the strongest protection.",
+    "app-logins": "Failed sign-ins to PocketADM in the last day.",
+    "docker-images": "Old image versions that no container uses any more. They only take disk "
+                     "space and can be removed safely.",
+    "docker-volumes": "Docker volumes no container uses. They may hold old data — look before "
+                      "deleting.",
+    "backups": "Whether this server's data is copied somewhere else on a schedule. Without "
+               "backups, one failed disk loses everything.",
+    "docker-updates": "Newer versions of the images your services run. Updates fix bugs and "
+                      "security holes; a snapshot is taken first so each can be rolled back.",
+    "apt": "Updates for the server's operating system packages.",
+    "reboot": "The operating system installed an update (kernel or core libraries) that only takes "
+              "effect after a restart.",
+}
+
+
+def _actions(check: dict) -> list[dict]:
+    """What the user can do about a finding, in the app, in one tap."""
+    cid, status = check["id"], check["status"]
+    if status == "ok":
+        return []
+    acts: list[dict] = []
+    summary = check.get("summary", "")
+    if cid == "disk":
+        acts += [{"kind": "open", "target": "storage", "label": "See what uses the space"},
+                 {"kind": "job", "job": "prune_images", "label": "Remove unused images"}]
+    elif cid in ("unhealthy", "restart-loop", "restarts", "load"):
+        acts.append({"kind": "open", "target": "containers", "label": "Open containers"})
+    elif cid == "ssh-root":
+        acts.append({"kind": "copy", "label": "Copy the fix",
+                     "command": "sudo sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin no/' "
+                                "/etc/ssh/sshd_config && sudo systemctl reload ssh"})
+    elif cid == "ssh-pw":
+        acts.append({"kind": "copy", "label": "Copy the fix (check your SSH key first)",
+                     "command": "sudo sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication no/' "
+                                "/etc/ssh/sshd_config && sudo systemctl reload ssh"})
+    elif cid == "docker-images":
+        acts.append({"kind": "job", "job": "prune_images", "label": "Remove unused images"})
+    elif cid in ("app-2fa",):
+        acts.append({"kind": "open", "target": "security", "label": "Turn on 2FA"})
+    elif cid == "app-logins":
+        acts.append({"kind": "open", "target": "activity", "label": "See the sign-ins"})
+    elif cid == "docker-updates":
+        acts.append({"kind": "open", "target": "updates", "label": "Review updates"})
+    elif cid == "apt":
+        acts.append({"kind": "copy", "label": "Copy the command",
+                     "command": "sudo apt update && sudo apt upgrade"})
+    elif cid.startswith("perm-"):
+        acts.append({"kind": "dismiss", "label": "Dismiss",
+                     "ids": check.get("permission_ids") or [cid[5:]]})
+    prompts = {
+        "disk": "The server disk is getting full ({s}). Find what takes the most space and suggest "
+                "safe cleanups — do not delete anything without asking.",
+        "memory": "Memory use is high ({s}). Which containers use the most memory, and what can I do?",
+        "unhealthy": "These containers are unhealthy: {s}. Check their logs and health checks and "
+                     "tell me what is wrong.",
+        "restart-loop": "These containers keep restarting: {s}. Find out why from their logs.",
+        "restarts": "These containers restarted several times: {s}. Find out why.",
+        "ports": "Review the ports published on all interfaces ({s}) and tell me which should be "
+                 "bound to 127.0.0.1 behind the reverse proxy.",
+        "ssh-root": "Help me turn off SSH root login safely on this server.",
+        "ssh-pw": "Help me switch SSH to keys only without locking myself out.",
+        "authlog": "Look at the failed SSH logins ({s}) and tell me whether anything got in.",
+        "fail2ban": "Set up fail2ban for SSH on this server.",
+        "backups": "This server has no backup set up. Suggest a simple, reliable backup for its "
+                   "Docker volumes and configs to an external disk or another server.",
+        "docker-volumes": "List the orphaned Docker volumes, what they likely contained and which "
+                          "are safe to remove. Do not remove anything.",
+        "reboot": "The host wants a reboot. What will be unavailable while it restarts, and does "
+                  "everything come back on its own?",
+        "privileged": "Review the containers with Docker socket access ({s}) — is each one expected?",
+    }
+    if cid in prompts:
+        acts.append({"kind": "assistant", "label": "Ask the assistant",
+                     "prompt": prompts[cid].format(s=summary[:300])})
+    if not cid.startswith("perm-"):
+        acts.append({"kind": "mute", "label": "Accept this"})
+    return acts
+
+
+def _score(counts: dict) -> int:
+    return max(0, 100 - 20 * counts.get("crit", 0) - 8 * counts.get("warn", 0)
+               - 1 * counts.get("info", 0))
+
+
+def decorate(report: dict) -> dict:
+    """The report as the app shows it: categories, explanations, actions, the
+    user's accepted findings, and a 0–100 score. Applied when a report is
+    read, so accepting a finding takes effect without a new run."""
+    muted = config.settings.get("report_muted") or {}
+    for c in report.get("checks", []):
+        c["category"] = CATEGORY.get(c.get("group", ""), "Other")
+        c["explain"] = EXPLAIN.get(c["id"], "")
+        status = c.get("original_status") or c["status"]
+        if c["id"] in muted and status in ("warn", "crit", "info"):
+            c["original_status"] = status
+            c["status"] = "info"
+            c["muted"] = True
+            c["muted_note"] = (muted[c["id"]] or {}).get("note", "")
+        else:
+            c.pop("muted", None)
+        c["actions"] = _actions({**c, "status": status if c.get("muted") else c["status"]})
+        if c.get("muted"):
+            c["actions"] = [{"kind": "unmute", "label": "Watch this again"}]
+    counts = {s: sum(1 for c in report.get("checks", []) if c["status"] == s)
+              for s in ("ok", "info", "warn", "crit")}
+    report["counts"] = counts
+    report["score"] = "crit" if counts["crit"] else "warn" if counts["warn"] else "ok"
+    report["points"] = _score(counts)
+    report["muted_count"] = sum(1 for c in report.get("checks", []) if c.get("muted"))
+    return report
+
+
+def set_muted(check_id: str, muted: bool, note: str = "") -> None:
+    entries = dict(config.settings.get("report_muted") or {})
+    if muted:
+        entries[check_id] = {"note": note.strip()[:200], "time": time.time()}
+    else:
+        entries.pop(check_id, None)
+    config.settings["report_muted"] = entries
+    config.save_settings(config.settings)
 
 
 async def run_report(trigger: str = "manual") -> dict:
@@ -397,7 +605,7 @@ async def run_report(trigger: str = "manual") -> dict:
     fname = time.strftime("%Y%m%d-%H%M%S", time.localtime(started)) + ".json"
     (REPORTS_DIR / fname).write_text(json.dumps(report))
     _prune_history()
-    return report
+    return decorate(report)
 
 
 def _prune_history(keep: int = 60) -> None:
@@ -410,9 +618,10 @@ def list_reports(limit: int = 30) -> list[dict]:
     out = []
     for f in sorted(REPORTS_DIR.glob("*.json"), reverse=True)[:limit]:
         try:
-            r = json.loads(f.read_text())
+            r = decorate(json.loads(f.read_text()))
             out.append({"file": f.stem, "time": r["time"], "score": r["score"],
-                        "counts": r["counts"], "trigger": r.get("trigger", "?")})
+                        "counts": r["counts"], "points": r["points"],
+                        "trigger": r.get("trigger", "?")})
         except Exception:
             pass
     return out
@@ -424,30 +633,33 @@ def get_report(name: str) -> dict | None:
     path = REPORTS_DIR / (name + ".json")
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    return decorate(json.loads(path.read_text()))
 
 
 def latest_report() -> dict | None:
     files = sorted(REPORTS_DIR.glob("*.json"), reverse=True)
-    return json.loads(files[0].read_text()) if files else None
+    return decorate(json.loads(files[0].read_text())) if files else None
 
 
 ANALYZE_SYSTEM = (
-    "You are the security & operations analyst of Helmsman, a self-hosted server manager. "
+    "You are the security & operations analyst of PocketADM, a self-hosted server manager. "
     "You get a JSON health report of the user's server. Write a short, friendly analysis for "
     "a self-hoster who is not a sysadmin: 1) one-line overall verdict, 2) the issues that "
     "actually matter, ordered by importance, each with a concrete next step, 3) anything "
-    "surprisingly good. Be honest, avoid alarmism, max ~250 words. Use markdown headings/lists.")
+    "surprisingly good. Be honest, avoid alarmism, max ~200 words. Use short paragraphs or a "
+    "simple list, no headings.")
 
 
 async def analyze_report(report: dict, lang: str = "") -> str:
     slim = {"score": report["score"], "counts": report["counts"],
-            "checks": [{k: c.get(k) for k in ("group", "title", "status", "summary", "recommendation")}
+            "checks": [{k: c.get(k) for k in ("group", "title", "status", "summary",
+                                              "recommendation", "muted", "muted_note")}
                        for c in report["checks"]]}
-    prompt = "Server health report:\n" + json.dumps(slim, indent=1)
+    prompt = ("Server health report (findings marked muted were accepted by the user on "
+              "purpose — mention them only if they are dangerous):\n" + json.dumps(slim, indent=1))
     if lang:
         prompt += f"\n\nAnswer in language: {lang}"
-    return await ai.one_shot(prompt, ANALYZE_SYSTEM)
+    return await ai.one_shot(prompt, ANALYZE_SYSTEM, feature="insights")
 
 
 # ----------------------------------------------------------- scheduler

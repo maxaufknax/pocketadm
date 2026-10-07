@@ -85,3 +85,35 @@ def set_status(req_id: str, status: str) -> bool:
     if hit:
         _save(items)
     return hit
+
+
+STALE_AFTER = 7 * 86400
+
+
+def expire_stale(max_age: float = STALE_AFTER) -> int:
+    """Close requests nobody has run into for a week. The wall they describe
+    has usually been removed (the /host mount became writable in 0.19, yet its
+    "read-only" request lingered in every report since)."""
+    items = _load()
+    now = time.time()
+    n = 0
+    for p in items:
+        if p.get("status") == "open" and now - p.get("last_seen", p.get("time", now)) > max_age:
+            p["status"] = "expired"
+            n += 1
+    if n:
+        _save(items)
+    return n
+
+
+def set_status_many(ids: list[str], status: str) -> int:
+    items = _load()
+    wanted = set(ids)
+    n = 0
+    for p in items:
+        if p["id"] in wanted and p.get("status") == "open":
+            p["status"] = status
+            n += 1
+    if n:
+        _save(items)
+    return n

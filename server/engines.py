@@ -1,4 +1,5 @@
-"""Coding agents as chat engines: Claude Code and Codex, on your own login.
+"""Coding agents as chat engines: Claude Code, Codex and Mistral Vibe, on your
+own login.
 
 The built-in agent talks to model APIs with a key. Many people already pay for
 a Claude or ChatGPT subscription and use Claude Code or Codex in a terminal;
@@ -16,6 +17,11 @@ apps already render, and puts every permission question on the phone.
     (or thread/resume) → turn/start. Approvals arrive as server requests
     (item/commandExecution/requestApproval, item/fileChange/requestApproval)
     and are answered with {decision: accept | decline}.
+  * Mistral Vibe — `vibe-acp`, the Agent Client Protocol (JSON-RPC over stdio,
+    as editors such as Zed speak it): initialize → session/new (or
+    session/load) → session/prompt. Work streams in as session/update
+    notifications; permission questions arrive as session/request_permission
+    and are answered with the option the user's tap chose.
 
 PocketADM's own rules still apply on top of the CLI's: in Agent mode a shell
 command runs without a tap only if cmdpolicy calls it read-only (which means it
@@ -49,16 +55,23 @@ ENGINES = {
             {"id": "sonnet", "name": "Sonnet"},
             {"id": "haiku", "name": "Haiku"},
         ],
-        "login_hint": ("Claude Code is not signed in on this server yet. Open the Terminal "
-                       "(\"This app\") and run `claude` once to sign in with your Claude "
-                       "subscription or an Anthropic API key."),
+        "login_hint": ("Claude Code is not signed in on this server yet. Connect your Claude "
+                       "subscription in the app under More → AI accounts, or run `claude` once "
+                       "in the Terminal."),
     },
     "codex": {
         "label": "Codex", "cli": "codex", "vendor": "OpenAI",
         "models": [{"id": "default", "name": "Default (your Codex setting)"}],
-        "login_hint": ("Codex is not signed in on this server yet. Open the Terminal "
-                       "(\"This app\") and run `codex login` once with your ChatGPT plan "
-                       "or an OpenAI API key."),
+        "login_hint": ("Codex is not signed in on this server yet. Connect your ChatGPT plan "
+                       "in the app under More → AI accounts, or run `codex login` in the "
+                       "Terminal."),
+    },
+    "mistral-vibe": {
+        "label": "Mistral Vibe", "cli": "vibe-acp", "vendor": "Mistral AI",
+        "models": [{"id": "default", "name": "Default (your Vibe setting)"}],
+        "login_hint": ("Mistral Vibe is not signed in on this server yet. Connect your Mistral "
+                       "account in the app under More → AI accounts, or run `vibe` once in the "
+                       "Terminal."),
     },
 }
 
@@ -90,11 +103,29 @@ def installed_engines() -> list[str]:
     return [e for e in ENGINES if installed(e)]
 
 
+def signed_in(engine: str) -> bool:
+    """A cheap guess (files, no process) whether an engine has a login —
+    the model menu shows it; accounts.engine_status asks the CLI itself."""
+    home = clis.terminal.PERSIST_HOME
+    if engine == "claude-code":
+        return bool(config.get_engine_token(engine)) or (home / ".claude" / ".credentials.json").exists()
+    if engine == "codex":
+        return (home / ".codex" / "auth.json").exists()
+    if engine == "mistral-vibe":
+        try:
+            return any(line.startswith("MISTRAL_API_KEY=") and len(line) > 17
+                       for line in (home / ".vibe" / ".env").read_text().splitlines())
+        except OSError:
+            return False
+    return False
+
+
 def providers() -> list[dict]:
     """Entries for /api/ai/models, next to the API providers. `agent` tells the
     apps this is a CLI with its own login rather than a model API."""
     return [{"provider": e, "label": ENGINES[e]["label"], "models": ENGINES[e]["models"],
-             "local": False, "agent": True} for e in installed_engines()]
+             "local": False, "agent": True, "signed_in": signed_in(e)}
+            for e in installed_engines()]
 
 
 # ------------------------------------------------------------------ display
@@ -211,6 +242,10 @@ def _env() -> dict:
     # never inherit a nested agent's session markers
     for k in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"):
         env.pop(k, None)
+    # the long-lived login made under More → AI accounts (claude setup-token)
+    token = config.get_engine_token("claude-code")
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     return env
 
 
@@ -321,6 +356,8 @@ async def _claude_turn(session, prompt: str, turn: _Turn) -> None:
         argv += ["--model", session.model]
     if resume:
         argv += ["--resume", resume]
+    if getattr(session, "ephemeral", False):
+        argv += ["--no-session-persistence"]
     proc = await _spawn(argv, session.workdir)
     pending_tools: dict[str, dict] = {}     # tool_use id -> {name, args} from the assistant message
     streamed_text = False                   # partial deltas already showed this message's text
@@ -500,10 +537,11 @@ class _RPC:
     """Just enough JSON-RPC for codex app-server: requests we send, responses
     we await, notifications and server requests we hand to a callback."""
 
-    def __init__(self, proc):
+    def __init__(self, proc, jsonrpc: bool = False):
         self.proc = proc
         self.next_id = 0
         self.waiting: dict[int, asyncio.Future] = {}
+        self.jsonrpc = jsonrpc          # ACP wants the "jsonrpc": "2.0" member, Codex does not care
 
     async def send(self, obj: dict) -> None:
         self.proc.stdin.write((json.dumps(obj) + "\n").encode())
@@ -513,7 +551,10 @@ class _RPC:
         self.next_id += 1
         fut = asyncio.get_running_loop().create_future()
         self.waiting[self.next_id] = fut
-        await self.send({"id": self.next_id, "method": method, "params": params})
+        msg = {"id": self.next_id, "method": method, "params": params}
+        if self.jsonrpc:
+            msg["jsonrpc"] = "2.0"
+        await self.send(msg)
         return fut
 
     def resolve(self, msg: dict) -> bool:
@@ -716,6 +757,293 @@ async def _codex_turn(session, prompt: str, turn: _Turn) -> None:
                            else f"Codex stopped: {reason}")
 
 
+
+# ------------------------------------------------------------------ Mistral Vibe
+
+def _acp_display(update: dict) -> tuple[str, dict]:
+    """An ACP tool call as the cards the apps already know."""
+    kind = update.get("kind") or ""
+    raw = update.get("rawInput")
+    raw = raw if isinstance(raw, dict) else ({"input": raw} if raw else {})
+    title = update.get("title") or ""
+    locations = update.get("locations") or []
+    path = raw.get("path") or raw.get("file_path") or raw.get("filePath") \
+        or (locations[0].get("path", "") if locations and isinstance(locations[0], dict) else "")
+    if kind == "execute":
+        return "run_command", {"command": raw.get("command") or raw.get("cmd") or title}
+    if kind == "read":
+        return "read_file", {"path": path or title}
+    if kind in ("edit", "delete", "move"):
+        return "edit_file", {"path": path or title}
+    if kind == "search":
+        return "search_files", {"pattern": raw.get("pattern") or raw.get("query") or title,
+                                "path": path}
+    if kind == "fetch":
+        return "fetch_url", {"url": raw.get("url") or title}
+    return (title or kind or "tool")[:60], raw
+
+
+def _acp_option(options: list, wanted: str) -> str:
+    """The optionId of the first option of a kind (allow_once / reject_once),
+    falling back to its "always" variant."""
+    for kind in (wanted, wanted.replace("_once", "_always")):
+        for opt in options or []:
+            if isinstance(opt, dict) and opt.get("kind") == kind:
+                return opt.get("optionId", "")
+    return ""
+
+
+def _acp_text(content) -> str:
+    """Text out of ACP tool-call content blocks."""
+    parts = []
+    for block in content or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "content":
+            inner = block.get("content") or {}
+            if isinstance(inner, dict) and inner.get("type") == "text":
+                parts.append(inner.get("text", ""))
+        elif block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "".join(parts)
+
+
+def _acp_diff(content) -> dict | None:
+    for block in content or []:
+        if isinstance(block, dict) and block.get("type") == "diff":
+            return _snippet_diff(block.get("path", ""), block.get("oldText") or "",
+                                 block.get("newText") or "")
+    return None
+
+
+VIBE_MODES = {"chat": "plan", "plan": "plan", "agent": "ask", "auto": "auto-approve"}
+
+
+async def _vibe_turn(session, prompt: str, turn: _Turn) -> None:
+    engine = "mistral-vibe"
+    saved = (session.chat.get("engine_sessions") or {}).get(engine, "")
+    proc = await _spawn([binary(engine)], session.workdir)
+    rpc = _RPC(proc, jsonrpc=True)
+    approvals: set[asyncio.Task] = set()
+    calls: dict[str, dict] = {}            # toolCallId -> {name, args, out: [], hidden}
+    state = {"loading": False, "session": saved}
+
+    async def permission(msg: dict) -> None:
+        params = msg.get("params") or {}
+        tc = params.get("toolCall") or {}
+        call_id = tc.get("toolCallId") or ("perm-" + secrets.token_hex(6))
+        known = calls.get(call_id)
+        name, args = (known["name"], known["args"]) if known and known.get("name") \
+            else _acp_display(tc)
+        decision = needs_approval(session.mode, name, args)
+        if decision is None:
+            allowed, shown = False, f"[not in {session.mode} mode]"
+        elif decision:
+            allowed, shown = await _ask(session, call_id, name, args), "[denied]"
+        else:
+            allowed, shown = True, ""
+        if allowed:
+            await turn.tool_started(call_id, name, args, auto="" if decision else "read-only")
+            audit.record("agent_tool", target=name, source="auto" if session.mode == "auto" else "agent",
+                         detail="Mistral Vibe: " + (args.get("command") or args.get("path") or "")[:180])
+            option = _acp_option(params.get("options"), "allow_once")
+        else:
+            await turn.tool_refused(call_id, name, args, shown)
+            option = _acp_option(params.get("options"), "reject_once")
+        outcome = {"outcome": "selected", "optionId": option} if option else {"outcome": "cancelled"}
+        await rpc.send({"jsonrpc": "2.0", "id": msg.get("id"), "result": {"outcome": outcome}})
+
+    async def on_update(update: dict) -> None:
+        if state["loading"]:
+            return                          # history replay of a resumed session
+        kind = update.get("sessionUpdate")
+        if kind == "agent_message_chunk":
+            content = update.get("content") or {}
+            if content.get("type") == "text":
+                await turn.text_delta(content.get("text", ""))
+        elif kind == "agent_thought_chunk":
+            content = update.get("content") or {}
+            if content.get("type") == "text":
+                await turn.thinking_delta(content.get("text", ""))
+        elif kind == "plan":
+            await session.apply_engine_plan([
+                {"title": e.get("content", ""), "status": e.get("status", "pending")}
+                for e in update.get("entries") or [] if isinstance(e, dict)])
+        elif kind in ("tool_call", "tool_call_update"):
+            call_id = update.get("toolCallId", "")
+            call = calls.setdefault(call_id, {"name": "", "args": {}, "out": [], "hidden": False})
+            if update.get("rawInput") is not None or kind == "tool_call":
+                name, args = _acp_display(update)
+                if isinstance(update.get("rawInput"), dict) and "todos" in update["rawInput"]:
+                    call["hidden"] = True       # the to-do list shows as the plan instead
+                if name:
+                    call["name"], call["args"] = name, args
+            text = _acp_text(update.get("content"))
+            if text:
+                call["out"].append(text)
+            status = update.get("status") or ""
+            if call["hidden"] or call_id in turn.settled or call_id in session.pending:
+                return
+            if status in ("in_progress", "completed", "failed"):
+                await turn.tool_started(call_id, call["name"] or "tool", call["args"])
+            if status in ("completed", "failed"):
+                output = "".join(call["out"])
+                raw_out = update.get("rawOutput")
+                if not output and raw_out is not None:
+                    output = raw_out if isinstance(raw_out, str) else json.dumps(raw_out)[:20000]
+                if status == "failed" and not output.startswith("Error"):
+                    output = "Error: " + (output or "the tool failed")
+                await turn.tool_finished(call_id, output or "[no output]",
+                                         _acp_diff(update.get("content")))
+
+    async def reader() -> None:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if rpc.resolve(msg):
+                continue
+            method, params = msg.get("method", ""), msg.get("params") or {}
+            if "id" in msg and method:
+                if method == "session/request_permission":
+                    task = asyncio.ensure_future(permission(msg))
+                    approvals.add(task)
+                    task.add_done_callback(approvals.discard)
+                else:                       # files, terminals, questions: not offered
+                    await rpc.send({"jsonrpc": "2.0", "id": msg.get("id"), "error": {
+                        "code": -32601, "message": "not supported by PocketADM"}})
+            elif method == "session/update":
+                await on_update(params.get("update") or {})
+
+    read_task = asyncio.ensure_future(reader())
+    usage: dict = {}
+    try:
+        init = await rpc.request("initialize", {
+            "protocolVersion": 1,
+            "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False},
+                                   "terminal": False},
+            "clientInfo": {"name": "pocketadm", "title": "PocketADM", "version": config.VERSION}})
+        await asyncio.wait_for(init, 60)
+        modes: dict = {}
+        if saved:
+            state["loading"] = True
+            try:
+                fut = await rpc.request("session/load", {"sessionId": saved, "cwd": session.workdir,
+                                                         "mcpServers": []})
+                loaded = await asyncio.wait_for(fut, 120)
+                modes = (loaded or {}).get("modes") or {}
+            except RuntimeError:
+                session.chat.get("engine_sessions", {}).pop(engine, None)
+                raise _Restart()
+            finally:
+                state["loading"] = False
+        else:
+            fut = await rpc.request("session/new", {"cwd": session.workdir, "mcpServers": []})
+            created = await asyncio.wait_for(fut, 120)
+            state["session"] = (created or {}).get("sessionId", "")
+            modes = (created or {}).get("modes") or {}
+            session.chat.setdefault("engine_sessions", {})[engine] = state["session"]
+        wanted = VIBE_MODES.get(session.mode, "")
+        available = {m.get("id") for m in (modes.get("availableModes") or []) if isinstance(m, dict)}
+        if wanted in available and wanted != modes.get("currentModeId"):
+            fut = await rpc.request("session/set_mode", {"sessionId": state["session"],
+                                                         "modeId": wanted})
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(fut, 30)
+        text = prompt if saved else f"{SERVER_CONTEXT}\n\n{prompt}"
+        fut = await rpc.request("session/prompt", {"sessionId": state["session"],
+                                                   "prompt": [{"type": "text", "text": text}]})
+        result = await asyncio.wait_for(fut, TURN_TIMEOUT)
+        usage = (result or {}).get("usage") or {}
+    except asyncio.CancelledError:
+        if state["session"]:
+            with contextlib.suppress(Exception):
+                await rpc.send({"jsonrpc": "2.0", "method": "session/cancel",
+                                "params": {"sessionId": state["session"]}})
+                await asyncio.sleep(0.3)
+        raise
+    except asyncio.TimeoutError:
+        raise RuntimeError("Mistral Vibe did not answer in time.") from None
+    except RuntimeError as e:
+        stderr = await _stop(proc)
+        read_task.cancel()
+        reason = str(e) + " " + stderr
+        if _looks_logged_out(reason) or "api key" in reason.lower() or "mistral_api_key" in reason.lower():
+            raise RuntimeError(ENGINES[engine]["login_hint"]) from None
+        raise RuntimeError(f"Mistral Vibe stopped: {str(e)[:400]}") from None
+    finally:
+        for task in list(approvals):
+            task.cancel()
+        if not read_task.done():
+            await _stop(proc)
+            read_task.cancel()
+    for key, field in (("input", ("inputTokens", "input_tokens", "promptTokens")),
+                       ("output", ("outputTokens", "output_tokens", "completionTokens"))):
+        for name in field:
+            if isinstance(usage.get(name), (int, float)):
+                turn.usage[key] += int(usage[name])
+                break
+
+
+# ------------------------------------------------------------------ headless runs
+
+class _Headless:
+    """Just enough of a chat session for an engine to run one prompt in the
+    background — the watch, the explainers — with no device attached. Plan
+    mode: the engine may look, never change (needs_approval refuses writes
+    before anyone could be asked)."""
+
+    def __init__(self, engine: str, model: str, workdir: str, mode: str = "plan"):
+        self.provider = engine
+        self.model = model or "default"
+        self.mode = mode
+        self.workdir = workdir
+        self.chat = {"id": "headless", "title": "", "engine_sessions": {}}
+        self.messages: list[dict] = []
+        self.pending: dict = {}
+        self.plan: list = []
+        self.ephemeral = True
+        self._mutated = False
+        self.text: list[str] = []
+        self.steps: list[dict] = []
+
+    async def broadcast(self, live: bool = True, **event) -> None:
+        if event.get("type") == "text":
+            self.text.append(event.get("delta", ""))
+        elif event.get("type") == "tool_start":
+            args = event.get("args") or {}
+            self.steps.append({"tool": event.get("name", ""),
+                               "detail": str(args.get("command") or args.get("path")
+                                             or args.get("url") or "")[:200], "output": ""})
+        elif event.get("type") == "tool_result" and self.steps:
+            self.steps[-1]["output"] = str(event.get("output", ""))[:400]
+
+    async def apply_engine_plan(self, steps: list[dict]) -> None:
+        self.plan = steps
+
+    def _persist(self) -> None:
+        pass
+
+
+async def run_headless(engine: str, prompt: str, model: str = "", workdir: str = "",
+                       mode: str = "plan", timeout: float = 600) -> dict:
+    """One prompt through an engine without a chat: {"text", "steps", "usage"}."""
+    if not installed(engine):
+        raise RuntimeError(f"{ENGINES[engine]['label']} is not installed on this server.")
+    from . import ai as _ai
+    session = _Headless(engine, model, workdir or _ai.DEFAULT_WORKDIR, mode)
+    session.messages.append({"role": "user", "content": prompt})
+    usage = await asyncio.wait_for(run_turn(session), timeout)
+    # everything the engine said in this turn — a tool call in between splits
+    # it into several assistant messages, the answer is all of them
+    text = "".join(session.text).strip() or "\n\n".join(
+        m["content"] for m in session.messages if m.get("role") == "assistant" and m.get("content"))
+    return {"text": text, "steps": session.steps, "usage": usage}
+
 # ------------------------------------------------------------------ entry point
 
 def _prompt_for(session, engine: str) -> str:
@@ -741,8 +1069,9 @@ async def run_turn(session) -> dict:
     engine = session.provider
     if not installed(engine):
         raise RuntimeError(f"{ENGINES[engine]['label']} is not installed on this server. "
-                           "Install it under More → Coding agents.")
-    run = _claude_turn if engine == "claude-code" else _codex_turn
+                           "Connect it under More → AI accounts.")
+    run = {"claude-code": _claude_turn, "codex": _codex_turn,
+           "mistral-vibe": _vibe_turn}[engine]
     turn = _Turn(session)
     started = time.time()
     try:

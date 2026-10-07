@@ -4,7 +4,7 @@ import json
 import os
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,8 +13,9 @@ from pydantic import BaseModel
 from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                clis, config, demodata, dockerapi, engines, hostuser, integrations, jobs,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
-               sessions, skills, snapshots, sysinfo, terminal, termsessions,
+               servicegroups, sessions, skills, snapshots, sysinfo, terminal, termsessions,
                tls, updates)
+from . import accounts, activity, files, signin, watch
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -77,10 +78,13 @@ async def _startup():
     metrics.start()
     if config.DEMO:
         demodata.seed()
+        demodata.start_activity()
     else:
+        activity.start()
         skills.seed_defaults()
         reports.start_scheduler()
         agents.start_scheduler()
+        watch.start()
         asyncio.ensure_future(appstore.remote_refresher())
         asyncio.ensure_future(localai.reconnect_on_startup())
 
@@ -227,6 +231,10 @@ async def ws_ticket():
     return {"ticket": auth.issue_ws_ticket(), "ttl": auth.WS_TICKET_TTL}
 
 
+FEATURES = ["services", "container_live", "activity", "storage", "files_v2", "watch",
+            "accounts", "routes", "chat_manage", "health_v2", "update_details_v2"]
+
+
 @app.get("/api/me", dependencies=[authed])
 async def me(request: Request):
     default = config.get_ai_default()
@@ -250,6 +258,10 @@ async def me(request: Request):
         "public_exposure": exposed,
         # once the user has explicitly chosen to run exposed without 2FA, stop nagging
         "exposure_ack": config.get_exposure_ack(),
+        # what this server can do, so a newer app can fall back on an older server
+        "features": FEATURES,
+        "watch_enabled": bool((config.settings.get("watch") or {}).get("enabled"))
+                         or config.DEMO,
     }
 
 
@@ -264,24 +276,104 @@ async def system():
     return data
 
 
+_image_refs: dict = {}   # container id -> the image it was created from (servicegroups)
+
+
+async def _annotated_containers() -> tuple[list[dict], list[dict]]:
+    result = await dockerapi.list_containers()
+    await servicegroups.resolve_images(result, _image_refs)
+    groups = servicegroups.annotate(result)
+    return result, groups
+
+
 @app.get("/api/containers", dependencies=[authed])
 async def containers():
-    result = await dockerapi.list_containers()
-    for c in result:
-        # untagged image IDs carry no service info — fall back to the name
-        ref = c["name"] if appstore._is_image_id(c["image"]) else c["image"]
-        c["service"] = updates.service_meta(ref)
+    # each container carries its app (group_id/group_name), its role in it and
+    # a display name that is unique on this server — see servicegroups.py
+    result, _ = await _annotated_containers()
     return result
 
 
+@app.get("/api/services", dependencies=[authed])
+async def services():
+    """The containers grouped into apps (Nextcloud = app + database + cache +
+    cron), problems first. The iOS app's Containers tab shows these."""
+    _, groups = await _annotated_containers()
+    return {"groups": groups}
+
+
+class GroupActionBody(BaseModel):
+    action: str
+
+
+@app.post("/api/services/{group_id}/action", dependencies=[authed])
+async def service_action(group_id: str, body: GroupActionBody):
+    """Start, stop or restart every container of one app, in an order that
+    works: databases and caches first on the way up, last on the way down."""
+    if body.action not in ("start", "stop", "restart"):
+        raise HTTPException(400, "bad action")
+    _, groups = await _annotated_containers()
+    group = next((g for g in groups if g["id"] == group_id), None)
+    if not group:
+        raise HTTPException(404, "no such app")
+    own = localai.own_container_name()
+    members = [c for c in group["containers"]
+               if c["name"] != "helmsman" and not c["id"].startswith(own or "\0")]
+    support_first = sorted(members, key=lambda c: not servicegroups.is_support(c))
+    order = support_first if body.action == "start" else list(reversed(support_first))
+    done, failed = [], []
+    for c in order:
+        if body.action == "start" and c["state"] == "running":
+            continue
+        if body.action == "stop" and c["state"] != "running":
+            continue
+        try:
+            await dockerapi.container_action(c["id"], body.action)
+            done.append(c["name"])
+        except Exception as e:  # keep going: one stuck container must not strand the rest
+            failed.append(f"{c['name']}: {str(e)[:120]}")
+    audit.record("container_action", target=group["name"],
+                 detail=f"{body.action} app ({len(done)} containers)"
+                        + (f", {len(failed)} failed" if failed else ""),
+                 status="warn" if failed else "ok")
+    return {"ok": not failed, "done": done, "failed": failed}
+
+
 @app.get("/api/containers/{cid}/logs", dependencies=[authed])
-async def container_logs(cid: str, tail: int = 200):
-    return {"logs": await dockerapi.container_logs(cid, min(tail, 2000))}
+async def container_logs(cid: str, tail: int = 200, since: int = 0, timestamps: bool = False):
+    return {"logs": await dockerapi.container_logs(cid, min(tail, 5000), max(0, since), timestamps)}
+
+
+@app.get("/api/containers/{cid}/logs/stream", dependencies=[authed])
+async def container_logs_stream(cid: str, tail: int = 50):
+    """The live tail: new log lines as plain text while the connection lasts."""
+    return StreamingResponse(dockerapi.follow_logs(cid, min(max(tail, 0), 500)),
+                             media_type="text/plain",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/containers/{cid}/stats", dependencies=[authed])
-async def container_stats(cid: str):
-    return await dockerapi.container_stats(cid)
+async def container_stats(cid: str, live: bool = False):
+    try:
+        return await dockerapi.container_stats(cid, live)
+    except Exception as e:
+        raise HTTPException(404, f"stats unavailable: {str(e)[:120]}")
+
+
+@app.get("/api/containers/{cid}/top", dependencies=[authed])
+async def container_top(cid: str):
+    try:
+        return await dockerapi.container_top(cid)
+    except Exception as e:
+        raise HTTPException(404, f"top failed: {str(e)[:120]}")
+
+
+@app.get("/api/containers/{cid}/events", dependencies=[authed])
+async def container_events(cid: str, hours: int = 72):
+    try:
+        return {"events": await dockerapi.container_events(cid, hours)}
+    except Exception:
+        return {"events": []}
 
 
 @app.get("/api/containers/{cid}/detail", dependencies=[authed])
@@ -351,13 +443,41 @@ async def container_describe_stream(cid: str, lang: str = ""):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+class RestartPolicyBody(BaseModel):
+    policy: str
+
+
+@app.post("/api/containers/{cid}/restart-policy", dependencies=[authed])
+async def container_restart_policy(cid: str, body: RestartPolicyBody):
+    try:
+        await dockerapi.set_restart_policy(cid, body.policy)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    audit.record("container_action", target=cid, detail=f"restart policy → {body.policy}")
+    return {"ok": True, "policy": body.policy}
+
+
 # NOTE: registered AFTER the specific POST routes above — FastAPI matches routes
 # in registration order, so this catch-all must not shadow e.g. …/describe.
 @app.post("/api/containers/{cid}/{action}", dependencies=[authed])
 async def container_action(cid: str, action: str):
-    if action not in ("start", "stop", "restart"):
+    if action not in ("start", "stop", "restart", "pause", "unpause", "kill"):
         raise HTTPException(400, "bad action")
-    await dockerapi.container_action(cid, action)
+    if action in ("stop", "kill", "pause"):
+        own = localai.own_container_name()
+        try:
+            info = await dockerapi.inspect_container(cid)
+            name = (info.get("Name") or "").lstrip("/")
+        except Exception:
+            name = ""
+        if name == "helmsman" or (own and (cid.startswith(own) or name == own)):
+            raise HTTPException(400, "PocketADM will not stop itself — use the host's shell for that")
+    try:
+        await dockerapi.container_action(cid, action)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)[:300])
     audit.record("container_action", target=cid, detail=action)
     return {"ok": True}
 
@@ -426,108 +546,73 @@ async def metrics_context(t: float, window: int = 240):
 
 
 # ---------------------------------------------------------- fs browser
-
-def _fs_roots() -> list[str]:
-    roots: list[str] = []
-    for r in config.get_workspaces() + [ai.DEFAULT_WORKDIR]:
-        rp = os.path.realpath(r)
-        if os.path.isdir(rp) and rp not in roots:
-            roots.append(rp)
-    return roots
-
-
-def _within_roots(resolved: str, roots: list[str]) -> bool:
-    return any(resolved == r or resolved.startswith(r + os.sep) for r in roots)
-
-
-# file kinds we can safely preview as text in the Explorer
-_TEXT_EXT = {".txt", ".md", ".markdown", ".log", ".conf", ".cfg", ".ini", ".env",
-             ".yml", ".yaml", ".json", ".toml", ".xml", ".html", ".htm", ".css",
-             ".js", ".ts", ".jsx", ".tsx", ".py", ".sh", ".bash", ".zsh", ".rb",
-             ".go", ".rs", ".c", ".h", ".cpp", ".java", ".php", ".sql", ".csv",
-             ".service", ".gitignore", ".dockerignore", ".properties"}
-_TEXT_NAMES = {"Dockerfile", "docker-compose.yml", "Makefile", "LICENSE",
-               "README", ".env", ".gitignore", "requirements.txt"}
-
-
-def _looks_text(name: str) -> bool:
-    ext = os.path.splitext(name)[1].lower()
-    return ext in _TEXT_EXT or name in _TEXT_NAMES or "." not in name
-
+# Read-only on purpose (see files.py): browse, preview, download, measure.
 
 @app.get("/api/fs", dependencies=[authed])
-async def fs_list(path: str = "", files: int = 0):
-    """Directory browser — restricted to the configured workspace roots (plus
-    the default workdir). With ?files=1 it also returns file entries (name,
-    path, size, whether previewable as text) so it can back the Explorer."""
-    roots = _fs_roots()
-    if not path:
-        return {"path": "", "parent": None,
-                "dirs": [{"name": r, "path": r} for r in roots],
-                "file_entries": [], "files": 0, "roots": roots}
-    resolved = os.path.realpath(path)
-    if not _within_roots(resolved, roots):
-        raise HTTPException(403, "outside allowed workspaces")
-    if not os.path.isdir(resolved):
-        raise HTTPException(404, "not a directory")
-    dirs, file_entries, file_count = [], [], 0
+async def fs_list(path: str = "", want_files: int = Query(0, alias="files"), hidden: int = 0):
+    """Directory browser over the configured workspaces (by default the whole
+    host). ?files=1 also returns file entries, ?hidden=1 includes dotfiles."""
     try:
-        with os.scandir(resolved) as it:
-            for e in sorted(it, key=lambda e: e.name.lower()):
-                if e.name.startswith(".") and e.name not in (".config", ".env"):
-                    continue
-                try:
-                    if e.is_dir(follow_symlinks=False):
-                        dirs.append({"name": e.name, "path": os.path.join(resolved, e.name)})
-                    else:
-                        file_count += 1
-                        if files:
-                            try:
-                                size = e.stat(follow_symlinks=False).st_size
-                            except OSError:
-                                size = 0
-                            file_entries.append({
-                                "name": e.name, "path": os.path.join(resolved, e.name),
-                                "size": size, "text": _looks_text(e.name)})
-                except OSError:
-                    pass
-    except PermissionError:
-        raise HTTPException(403, "permission denied")
-    parent = os.path.dirname(resolved)
-    if not _within_roots(parent, roots):
-        parent = ""
-    return {"path": resolved, "parent": parent, "dirs": dirs[:600],
-            "file_entries": file_entries[:600], "files": file_count, "roots": roots}
+        return await asyncio.to_thread(files.listing, path, bool(want_files), bool(hidden))
+    except PermissionError as e:
+        raise HTTPException(403, str(e) or "permission denied")
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.get("/api/fs/read", dependencies=[authed])
 async def fs_read(path: str):
     """Preview a text file inside the allowed roots (size-capped)."""
-    roots = _fs_roots()
-    resolved = os.path.realpath(path)
-    if not _within_roots(resolved, roots):
-        raise HTTPException(403, "outside allowed workspaces")
-    if not os.path.isfile(resolved):
+    try:
+        return await asyncio.to_thread(files.read_text, path)
+    except PermissionError as e:
+        raise HTTPException(403, str(e) or "permission denied")
+    except (FileNotFoundError, OSError):
+        raise HTTPException(404, "not readable")
+
+
+@app.get("/api/fs/raw", dependencies=[authed])
+async def fs_raw(path: str, download: bool = False):
+    """The file itself, for a preview (images, PDFs, video) or to save it on
+    the phone. Range requests work, so large media can be scrubbed."""
+    try:
+        resolved = await asyncio.to_thread(files.raw_path, path)
+    except PermissionError as e:
+        raise HTTPException(403, str(e) or "permission denied")
+    except FileNotFoundError:
         raise HTTPException(404, "not a file")
+    audit.record("file_download", target=files.display(resolved),
+                 detail="download" if download else "preview")
+    return FileResponse(resolved, filename=os.path.basename(resolved),
+                        content_disposition_type="attachment" if download else "inline")
+
+
+@app.get("/api/fs/usage", dependencies=[authed])
+async def fs_usage(path: str):
+    """What fills a folder: the size of everything directly inside it."""
     try:
-        size = os.path.getsize(resolved)
-    except OSError:
-        raise HTTPException(404, "not readable")
-    cap = 512 * 1024
+        return await files.usage(path)
+    except PermissionError as e:
+        raise HTTPException(403, str(e) or "permission denied")
+
+
+@app.get("/api/fs/search", dependencies=[authed])
+async def fs_search(path: str, q: str):
     try:
-        with open(resolved, "rb") as fh:
-            raw = fh.read(cap + 1)
-    except PermissionError:
-        raise HTTPException(403, "permission denied")
-    except OSError:
-        raise HTTPException(404, "not readable")
-    truncated = len(raw) > cap
-    raw = raw[:cap]
-    if b"\x00" in raw[:4096]:
-        return {"path": resolved, "size": size, "binary": True, "content": "",
-                "truncated": truncated}
-    return {"path": resolved, "size": size, "binary": False, "truncated": truncated,
-            "content": raw.decode("utf-8", "replace")}
+        return await asyncio.to_thread(files.search, path, q)
+    except PermissionError as e:
+        raise HTTPException(403, str(e) or "permission denied")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/storage", dependencies=[authed])
+async def storage():
+    """The server's drives — system disk, data disks, USB drives, network
+    shares — with how full each one is."""
+    if config.DEMO:
+        return demodata.storage()
+    return await asyncio.to_thread(files.storage)
 
 
 # ----------------------------------------------------- SSH bootstrap (fleet)
@@ -726,6 +811,90 @@ async def uninstall_app(app_id: str, remove_data: bool = False):
 
 
 # ------------------------------------------------------------- ai / settings
+
+@app.get("/api/ai/accounts", dependencies=[authed])
+async def ai_accounts():
+    """Every AI account — Claude, ChatGPT, Mistral, OpenRouter, local — with
+    how it is connected (subscription and/or API key) and what uses it."""
+    return await accounts.overview()
+
+
+@app.post("/api/ai/accounts/{engine}/signin", dependencies=[authed])
+async def ai_signin_start(engine: str):
+    """Connect a subscription through its coding CLI, from the phone: installs
+    the CLI when it is missing and returns the sign-in flow to poll."""
+    if engine not in signin.CLI_FOR:
+        raise HTTPException(404, "unknown account")
+    flow = await signin.start(engine)
+    return {"flow": flow.as_dict()}
+
+
+@app.get("/api/ai/signin/{flow_id}", dependencies=[authed])
+async def ai_signin_poll(flow_id: str):
+    flow = signin.get(flow_id)
+    if not flow:
+        raise HTTPException(404, "this sign-in is over — start it again")
+    return {"flow": flow.as_dict()}
+
+
+class SignInCodeBody(BaseModel):
+    code: str
+
+
+@app.post("/api/ai/signin/{flow_id}/code", dependencies=[authed])
+async def ai_signin_code(flow_id: str, body: SignInCodeBody):
+    if not body.code.strip():
+        raise HTTPException(400, "paste the code from the sign-in page")
+    try:
+        flow = await signin.submit_code(flow_id, body.code[:500])
+    except KeyError:
+        raise HTTPException(404, "this sign-in is over — start it again")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"flow": flow.as_dict()}
+
+
+@app.delete("/api/ai/signin/{flow_id}", dependencies=[authed])
+async def ai_signin_cancel(flow_id: str):
+    await signin.cancel(flow_id)
+    return {"ok": True}
+
+
+@app.post("/api/ai/accounts/{engine}/signout", dependencies=[authed])
+async def ai_signout(engine: str):
+    if engine not in signin.CLI_FOR:
+        raise HTTPException(404, "unknown account")
+    await signin.sign_out(engine)
+    return await accounts.overview()
+
+
+@app.get("/api/ai/routes", dependencies=[authed])
+async def ai_routes():
+    return {"routes": accounts.routes()}
+
+
+class RouteBody(BaseModel):
+    feature: str
+    provider: str = ""        # "" = same as the assistant (not for the assistant itself)
+    model: str = ""
+
+
+@app.post("/api/ai/routes", dependencies=[authed])
+async def ai_set_route(body: RouteBody):
+    if body.feature not in config.AI_FEATURES:
+        raise HTTPException(400, "unknown feature")
+    if body.provider and not accounts.usable(body.provider):
+        raise HTTPException(400, f"{accounts.provider_label(body.provider)} is not connected")
+    if body.feature == "assistant" and not body.provider:
+        raise HTTPException(400, "the assistant needs a provider")
+    model = body.model or ("default" if body.provider in engines.ENGINES
+                           else config.DEFAULT_MODELS.get(body.provider, ""))
+    config.set_ai_route(body.feature, body.provider, model if body.provider else "")
+    ai._model_cache["time"] = 0
+    audit.record("settings", target="AI for " + accounts.FEATURE_LABELS[body.feature],
+                 detail=accounts.provider_label(body.provider) or "same as the assistant")
+    return {"routes": accounts.routes()}
+
 
 @app.get("/api/ai/models", dependencies=[authed])
 async def ai_models():
@@ -1045,6 +1214,23 @@ async def audit_log(limit: int = 80, action: str = "", source: str = "", before:
     return audit.recent(min(limit, 300), action, source, before)
 
 
+@app.get("/api/activity", dependencies=[authed])
+async def activity_feed(limit: int = 100, before: float = 0, category: str = ""):
+    """Everything that happened on the server — Docker, SSH, sudo, apt, the
+    kernel, systemd, the internet connection and PocketADM itself — newest
+    first, paginated with `before`."""
+    cats = [c for c in category.split(",") if c]
+    return activity.recent(min(max(limit, 1), 300), before, cats)
+
+
+@app.get("/api/activity/stream", dependencies=[authed])
+async def activity_stream(category: str = ""):
+    """The same feed, live (Server-Sent Events)."""
+    cats = [c for c in category.split(",") if c]
+    return StreamingResponse(activity.stream(cats), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 class ServerBody(BaseModel):
     name: str = ""
 
@@ -1142,8 +1328,40 @@ async def set_onboarded():
 # ---------------------------------------------------------------- chats
 
 @app.get("/api/chats", dependencies=[authed])
-async def chats_index():
-    return {"chats": chats.list_chats()}
+async def chats_index(q: str = ""):
+    return {"chats": chats.list_chats(q)}
+
+
+class PinBody(BaseModel):
+    pinned: bool = True
+
+
+@app.post("/api/chats/{chat_id}/pin", dependencies=[authed])
+async def chat_pin(chat_id: str, body: PinBody):
+    if not chats.set_pinned(chat_id, body.pinned):
+        raise HTTPException(404, "no such chat")
+    return {"ok": True}
+
+
+class ChatIdsBody(BaseModel):
+    ids: list[str]
+
+
+@app.post("/api/chats/delete", dependencies=[authed])
+async def chats_delete_many(body: ChatIdsBody):
+    for chat_id in body.ids[:200]:
+        if sessions.manager.get(chat_id) and sessions.manager.get(chat_id).running:
+            continue            # a chat that is working right now is not deleted under it
+        chats.delete(chat_id)
+    return {"ok": True}
+
+
+@app.get("/api/chats/{chat_id}/export", dependencies=[authed])
+async def chat_export(chat_id: str):
+    text = chats.export_markdown(chat_id)
+    if text is None:
+        raise HTTPException(404, "no such chat")
+    return JSONResponse({"markdown": text})
 
 
 class ArchiveBody(BaseModel):
@@ -1191,6 +1409,102 @@ async def notifications_index():
 async def notifications_seen():
     agents.mark_seen()
     return {"ok": True}
+
+
+class FeedbackBody(BaseModel):
+    helpful: bool
+
+
+@app.post("/api/notifications/{notif_id}/feedback", dependencies=[authed])
+async def notification_feedback(notif_id: str, body: FeedbackBody):
+    """"Helpful" / "not helpful" on a watch message: the watch reads it next time."""
+    watch.feedback(notif_id, body.helpful)
+    return {"ok": True}
+
+
+@app.delete("/api/notifications/{notif_id}", dependencies=[authed])
+async def notification_delete(notif_id: str):
+    if not agents.delete_notification(notif_id):
+        raise HTTPException(404, "no such alert")
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ the watch
+
+@app.get("/api/watch", dependencies=[authed])
+async def watch_status():
+    """The background watch: its settings, which AI it runs on, what it did."""
+    if config.DEMO:
+        return demodata.watch_status()
+    return watch.status()
+
+
+class WatchBody(BaseModel):
+    changes: dict
+
+
+@app.post("/api/watch", dependencies=[authed])
+async def watch_save(body: WatchBody):
+    before = watch.settings()["enabled"]
+    watch.update_settings(body.changes)
+    after = watch.settings()["enabled"]
+    audit.record("watch_save", detail=("turned on" if after and not before else
+                                       "turned off" if before and not after else "settings"))
+    return watch.status()
+
+
+class WatchRunBody(BaseModel):
+    kind: str = "test"
+
+
+@app.post("/api/watch/run", dependencies=[authed])
+async def watch_run(body: WatchRunBody):
+    """Look now. Runs in the background; the app polls /api/watch and the
+    message arrives in the alerts."""
+    if body.kind not in ("test", "observe"):
+        raise HTTPException(400, "bad kind")
+    route = config.get_ai_route("watch")
+    if not route.get("provider") or not accounts.usable(route["provider"]):
+        raise HTTPException(400, "Connect an AI for the watch first (More → AI accounts).")
+    asyncio.ensure_future(watch.run(body.kind))
+    audit.record("watch_run", detail=body.kind)
+    return {"started": True}
+
+
+class WatchPauseBody(BaseModel):
+    minutes: int = 0
+
+
+@app.post("/api/watch/pause", dependencies=[authed])
+async def watch_pause(body: WatchPauseBody):
+    return watch.pause(min(max(body.minutes, 0), 60 * 24 * 14))
+
+
+class WatchMuteBody(BaseModel):
+    topic: str
+    hours: float = 24 * 7
+    note: str = ""
+
+
+@app.post("/api/watch/mute", dependencies=[authed])
+async def watch_mute(body: WatchMuteBody):
+    return watch.mute(body.topic, body.hours, body.note)
+
+
+@app.post("/api/watch/test-delivery", dependencies=[authed])
+async def watch_test_delivery():
+    """A test message to ntfy and Matrix, to see that the setup works."""
+    sent = await watch.push_external(watch.settings(), "Test message",
+                                     "This is a test from PocketADM's watch. If you can read this, "
+                                     "messages will reach you here.", "critical")
+    if not sent:
+        raise HTTPException(400, "Nothing is set up to receive messages yet, or it did not accept them.")
+    return {"sent": sent}
+
+
+@app.post("/api/watch/memory/clear", dependencies=[authed])
+async def watch_forget():
+    return watch.forget_memory()
 
 
 @app.get("/api/agents/loops", dependencies=[authed])
@@ -1406,6 +1720,19 @@ class PermActionBody(BaseModel):
     action: str   # "dismiss" | "resolve"
 
 
+class PermBulkBody(BaseModel):
+    ids: list[str]
+    action: str = "dismiss"
+
+
+@app.post("/api/permissions/bulk", dependencies=[authed])
+async def act_permissions_bulk(body: PermBulkBody):
+    status = "dismissed" if body.action == "dismiss" else "resolved"
+    n = permissions.set_status_many(body.ids[:50], status)
+    audit.record("permission_" + status, target=f"{n} requests")
+    return {"ok": True, "changed": n, "open": permissions.open_count()}
+
+
 @app.post("/api/permissions/{req_id}", dependencies=[authed])
 async def act_permission(req_id: str, body: PermActionBody):
     status = "dismissed" if body.action == "dismiss" else "resolved"
@@ -1489,6 +1816,45 @@ async def reports_analyze(body: AnalyzeBody):
         return {"analysis": await reports.analyze_report(report, body.lang)}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+class MuteBody(BaseModel):
+    muted: bool = True
+    note: str = ""
+
+
+@app.post("/api/reports/checks/{check_id}/mute", dependencies=[authed])
+async def reports_mute(check_id: str, body: MuteBody):
+    """Accept a finding on purpose ("password SSH is fine, it is LAN only"):
+    it stops counting against the score and moves to Accepted."""
+    if not check_id or len(check_id) > 80:
+        raise HTTPException(400, "bad check id")
+    reports.set_muted(check_id, body.muted, body.note)
+    audit.record("settings", target="health check " + check_id,
+                 detail="accepted" if body.muted else "watched again")
+    return reports.latest_report() or {"ok": True}
+
+
+@app.post("/api/maintenance/prune-images", dependencies=[authed])
+async def maintenance_prune_images():
+    """Remove images no container uses, as a job with a log. Images of
+    stopped containers stay: their container still refers to them."""
+    async def work(job: jobs.Job) -> None:
+        job.log("Looking for images no container uses …")
+        r = await dockerapi.client().post("/images/prune",
+                                          params={"filters": json.dumps({"dangling": ["false"]})},
+                                          timeout=600)
+        if r.status_code >= 400:
+            raise RuntimeError(r.text[:300])
+        data = r.json()
+        removed = len(data.get("ImagesDeleted") or [])
+        freed = data.get("SpaceReclaimed") or 0
+        job.log(f"Removed {removed} image layers, freed {freed / 1e9:.2f} GB.")
+        audit.record("maintenance", target="images", detail=f"freed {freed / 1e9:.2f} GB")
+        job.finish(True, "✓ Done")
+
+    job = jobs.start("Remove unused images", "maintenance", work)
+    return {"job_id": job.id}
 
 
 class ReportConfigBody(BaseModel):

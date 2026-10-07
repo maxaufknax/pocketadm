@@ -41,6 +41,20 @@ ACTIONS = {
     "agent_tool":       ("🤖", "AI action"),
     "terminal":         ("❯_", "Terminal session"),
     "settings":         ("⚙️", "Settings changed"),
+    "maintenance":      ("🧹", "Maintenance"),
+    "file_download":    ("📄", "File opened"),
+    "permission_dismissed": ("🔐", "Request dismissed"),
+    "permission_resolved":  ("🔐", "Request resolved"),
+    "watch_message":    ("🛰", "Watch message"),
+    "watch_run":        ("🛰", "Watch ran"),
+    "watch_save":       ("🛰", "Watch settings changed"),
+    "ai_signin":        ("✨", "AI account connected"),
+    "ai_signout":       ("✨", "AI account disconnected"),
+    "snapshot_rollback": ("⏪", "Update rolled back"),
+    "snapshot_delete":  ("🗑", "Snapshot deleted"),
+    "pair_new":         ("📱", "Pairing code created"),
+    "pair_claim":       ("📱", "Device paired"),
+    "exposure_ack":     ("⚠️", "Exposure accepted"),
 }
 
 
@@ -53,6 +67,11 @@ def record(action: str, target: str = "", source: str = "ui",
         with LOG_FILE.open("a") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         _maybe_trim()
+    except Exception:
+        pass
+    try:
+        from . import activity
+        activity.from_audit(entry)
     except Exception:
         pass
 

@@ -176,6 +176,25 @@ def add_notification(source: str, status: str, title: str, body: str,
     return notif
 
 
+def annotate_notification(notif_id: str, **fields) -> None:
+    """Extra fields on a stored notification (the watch's importance, topic,
+    links into the app, the user's feedback)."""
+    items = _load_notifications()
+    for n in items:
+        if n["id"] == notif_id:
+            n.update(fields)
+    NOTIF_FILE.write_text(json.dumps(items[:MAX_NOTIFICATIONS]))
+
+
+def delete_notification(notif_id: str) -> bool:
+    items = _load_notifications()
+    kept = [n for n in items if n["id"] != notif_id]
+    if len(kept) == len(items):
+        return False
+    NOTIF_FILE.write_text(json.dumps(kept))
+    return True
+
+
 def _mark_pushed(notif_id: str) -> None:
     items = _load_notifications()
     for n in items:

@@ -12,7 +12,7 @@ import json
 import time
 from collections import deque
 
-from . import config, sysinfo
+from . import activity, config, sysinfo
 
 INTERVAL = 10
 HISTORY = deque(maxlen=720)  # 720 × 10s = 2h
@@ -25,6 +25,7 @@ _bucket_start = 0.0
 
 _task: asyncio.Task | None = None
 _last_net: tuple[float, int, int] | None = None  # (time, rx_bytes, tx_bytes)
+_last_disk: tuple[float, int, int] | None = None  # (time, read_bytes, written_bytes)
 
 # latency probes: (host, port) — 443 is almost never blocked outbound
 PROBES = (("1.1.1.1", 443), ("8.8.8.8", 443), ("9.9.9.9", 443))
@@ -46,23 +47,38 @@ async def measure_latency() -> float | None:
     return round(best, 1) if best is not None else None
 
 
-def _net_rates() -> tuple[float, float]:
-    """Current rx/tx rate in bytes/s based on /proc/net/dev deltas."""
-    global _last_net
+def _rates(last, current: tuple[int, int]) -> tuple[tuple[float, int, int], float, float]:
+    """Per-second rates between two counter readings. A counter that went
+    backwards (an interface or disk disappeared) reads as zero, not negative."""
     now = time.monotonic()
-    rx, tx = sysinfo.net_counters()
-    if _last_net is None:
-        _last_net = (now, rx, tx)
-        return 0.0, 0.0
-    dt = now - _last_net[0]
-    rates = ((rx - _last_net[1]) / dt, (tx - _last_net[2]) / dt) if dt > 0 else (0.0, 0.0)
-    _last_net = (now, rx, tx)
-    return max(0.0, rates[0]), max(0.0, rates[1])
+    if last is None:
+        return (now, *current), 0.0, 0.0
+    dt = now - last[0]
+    if dt <= 0:
+        return (now, *current), 0.0, 0.0
+    a = (current[0] - last[1]) / dt
+    b = (current[1] - last[2]) / dt
+    return (now, *current), max(0.0, a), max(0.0, b)
+
+
+def _net_rates() -> tuple[float, float]:
+    """Current rx/tx rate in bytes/s of the host's physical interfaces."""
+    global _last_net
+    _last_net, rx, tx = _rates(_last_net, sysinfo.net_counters())
+    return rx, tx
+
+
+def _disk_rates() -> tuple[float, float]:
+    """Current read/write rate in bytes/s across the physical disks."""
+    global _last_disk
+    _last_disk, read, write = _rates(_last_disk, sysinfo.disk_io_counters())
+    return read, write
 
 
 async def _collect_once() -> dict:
     snap = await asyncio.to_thread(sysinfo.snapshot_light)
     rx, tx = _net_rates()
+    dr, dw = _disk_rates()
     ping = await measure_latency()
     return {
         "t": time.time(),
@@ -72,6 +88,8 @@ async def _collect_once() -> dict:
         "load": snap["load1"],
         "rx": round(rx),
         "tx": round(tx),
+        "dr": round(dr),
+        "dw": round(dw),
         "ping": ping,
     }
 
@@ -82,9 +100,13 @@ def _fold_bucket() -> None:
     if not _bucket:
         return
     point: dict = {"t": _bucket[-1]["t"]}
-    for key in ("cpu", "mem", "disk", "load", "rx", "tx", "ping"):
+    for key in ("cpu", "mem", "disk", "load", "rx", "tx", "dr", "dw", "ping"):
         vals = [p[key] for p in _bucket if p.get(key) is not None]
         point[key] = round(sum(vals) / len(vals), 1) if vals else None
+    # how much of the bucket the internet was unreachable, for the stability view
+    probes = [p for p in _bucket if "ping" in p]
+    point["loss"] = round(sum(1 for p in probes if p["ping"] is None) / len(probes), 2) \
+        if probes else None
     HISTORY_LONG.append(point)
     _bucket = []
     try:
@@ -108,6 +130,7 @@ async def _loop() -> None:
         try:
             point = await _collect_once()
             HISTORY.append(point)
+            activity.on_metrics(point)
             if point["t"] - _bucket_start >= LONG_BUCKET:
                 _fold_bucket()
                 _bucket_start = point["t"]

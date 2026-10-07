@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.23.0"
+VERSION = "0.24.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -367,3 +367,53 @@ DEFAULT_MODELS = {
     "openai": "gpt-5.2",
     "mistral": "mistral-large-latest",
 }
+
+
+# ---- AI accounts used across features (accounts.py, signin.py) ----
+
+def get_engine_token(engine: str) -> str:
+    """A long-lived login a coding CLI handed over at sign-in (Claude Code's
+    `setup-token`). Secret: never sent to a client."""
+    return (settings.get("engine_tokens") or {}).get(engine, "")
+
+
+def set_engine_token(engine: str, token: str) -> None:
+    tokens = dict(settings.get("engine_tokens") or {})
+    if token:
+        tokens[engine] = token
+    else:
+        tokens.pop(engine, None)
+    settings["engine_tokens"] = tokens
+    save_settings(settings)
+
+
+# Which model does what. "assistant" is the chat default (ai_default); the
+# others fall back to it when unset.
+AI_FEATURES = ("assistant", "watch", "insights")
+
+
+def get_ai_route(feature: str) -> dict:
+    if feature == "assistant":
+        stored = settings.get("ai_default") or {}
+        resolved = get_ai_default()
+        # an engine (Claude Code, Codex, Vibe) can be the assistant's default too
+        if stored.get("provider") and stored["provider"] not in PROVIDERS:
+            return {"provider": stored["provider"], "model": stored.get("model", "") or "default"}
+        return resolved
+    route = (settings.get("ai_routes") or {}).get(feature) or {}
+    if route.get("provider"):
+        return {"provider": route["provider"], "model": route.get("model", "")}
+    return get_ai_route("assistant")
+
+
+def set_ai_route(feature: str, provider: str, model: str) -> None:
+    if feature == "assistant":
+        set_ai_default(provider, model)
+        return
+    routes = dict(settings.get("ai_routes") or {})
+    if provider:
+        routes[feature] = {"provider": provider, "model": model}
+    else:
+        routes.pop(feature, None)        # back to "same as the assistant"
+    settings["ai_routes"] = routes
+    save_settings(settings)

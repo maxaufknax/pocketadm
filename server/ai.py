@@ -669,7 +669,8 @@ def is_protected_path(path) -> bool:
         p = Path(os.path.realpath(str(path)))
     except (OSError, ValueError):
         return False
-    if p.name == ".credentials.json" or (p.name == "auth.json" and p.parent.name == ".codex"):
+    if p.name == ".credentials.json" or (p.name == "auth.json" and p.parent.name == ".codex") \
+            or (p.name == ".env" and p.parent.name == ".vibe"):
         return True
     if p.name not in _DATA_SECRETS:
         return False
@@ -780,8 +781,12 @@ def _cfg_for(provider: str, model: str) -> dict:
             "base_url": config.get_base_url(provider)}
 
 
-def _filter_tools(tool_names: list[str]) -> list[dict]:
-    return [t for t in TOOLS if t["name"] in tool_names]
+def _filter_tools(tool_names: list) -> list[dict]:
+    """The built-in tools named in `tool_names`, plus any tool given as a full
+    spec ({"name", "description", "parameters"}) — the watch adds its own
+    decision tools that way."""
+    names = {n for n in tool_names if isinstance(n, str)}
+    return [t for t in TOOLS if t["name"] in names] + [t for t in tool_names if isinstance(t, dict)]
 
 
 async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
@@ -1229,12 +1234,25 @@ def usage_series(days: int = 30) -> dict:
             "priced": any(m["cost"] for m in model_list) or total["cost"] > 0}
 
 
-async def one_shot(prompt: str, system: str = "") -> str:
-    """Single non-streaming completion without tools (updates/reports helpers)."""
-    default = config.get_ai_default()
-    if not default["provider"]:
-        raise RuntimeError("No AI API key configured")
-    cfg = _cfg_for(default["provider"], default["model"])
+def _route(feature: str) -> dict:
+    route = config.get_ai_route(feature) if feature else config.get_ai_default()
+    if not route.get("provider"):
+        raise RuntimeError("No AI is connected yet. Connect an account under More → AI accounts.")
+    return route
+
+
+async def one_shot(prompt: str, system: str = "", feature: str = "insights") -> str:
+    """Single completion without tools (the explainers: containers, updates,
+    health). Runs on the model chosen for `feature` — an API provider, a local
+    model, or a subscription through its coding CLI."""
+    from . import engines
+    route = _route(feature)
+    if route["provider"] in engines.ENGINES:
+        result = await engines.run_headless(
+            route["provider"], (system + "\n\n" if system else "") + prompt,
+            model=route.get("model", ""), mode="chat", timeout=300)
+        return result["text"]
+    cfg = _cfg_for(route["provider"], route["model"])
     if cfg["provider"] == "anthropic":
         url = (cfg["base_url"] or "https://api.anthropic.com") + "/v1/messages"
         body = {"model": cfg["model"], "max_tokens": 2000,
@@ -1256,14 +1274,16 @@ async def one_shot(prompt: str, system: str = "") -> str:
         return r.json()["choices"][0]["message"]["content"]
 
 
-async def one_shot_stream(prompt: str, system: str = ""):
+async def one_shot_stream(prompt: str, system: str = "", feature: str = "insights"):
     """Streaming, tool-less completion — yields text deltas so callers (e.g. the
     "What is this?" explainer) can show the answer appearing live instead of a
     silent spinner. Falls back to a single yield if the provider can't stream."""
-    default = config.get_ai_default()
-    if not default["provider"]:
-        raise RuntimeError("No AI API key configured")
-    cfg = _cfg_for(default["provider"], default["model"])
+    from . import engines
+    route = _route(feature)
+    if route["provider"] in engines.ENGINES:
+        yield await one_shot(prompt, system, feature)
+        return
+    cfg = _cfg_for(route["provider"], route["model"])
     if cfg["provider"] == "anthropic":
         url = (cfg["base_url"] or "https://api.anthropic.com") + "/v1/messages"
         body = {"model": cfg["model"], "max_tokens": 2000, "stream": True,

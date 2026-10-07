@@ -79,16 +79,64 @@ def inspect_container(cid: str) -> dict:
 
 def container_detail(cid: str) -> dict:
     c = _by_id(cid) or list_containers()[0]
-    return {"id": c["id"], "name": c["name"], "image": c["image"],
+    env = [f"TZ=Europe/Berlin", "PUID=1000", "PGID=1000",
+           f"{c['compose_service'].upper()}_PASSWORD=never-shown"]
+    from . import dockerapi  # noqa: E402 — masking lives with the real data
+    healthy = c["health"] == "healthy"
+    return {"id": c["id"], "name": c["name"], "image": c["image"], "image_id": "d" * 12,
             "created": "2026-06-01T00:00:00Z", "started_at": "2026-07-01T00:00:00Z",
-            "state": c["state"], "health": c["health"], "restart_count": 0,
-            "restart_policy": "unless-stopped", "privileged": False,
-            "env_count": 6, "cmd": "",
-            "mounts": [{"source": f"/srv/{c['compose_project']}", "dest": "/data",
-                        "rw": True, "type": "bind"}],
-            "networks": ["bridge"],
+            "finished_at": "", "state": c["state"], "exit_code": 0, "oom_killed": False,
+            "error": "", "health": c["health"], "health_failing_streak": 0,
+            "health_log": [{"start": "2026-07-11T09:00:00", "end": "2026-07-11T09:00:01",
+                            "exit_code": 0, "output": "ok"}] if healthy else [],
+            "restart_count": 0, "restart_policy": "unless-stopped", "restart_max": 0,
+            "privileged": False, "env_count": len(env), "env": dockerapi.mask_env(env),
+            "cmd": "", "entrypoint": "/init", "working_dir": "/app", "user": "",
+            "hostname": c["name"],
+            "mounts": [{"source": f"/srv/{c['compose_project']}/data", "dest": "/data",
+                        "rw": True, "type": "bind", "name": ""}],
+            "networks": [c["compose_project"] + "_default"],
+            "network_details": [{"name": c["compose_project"] + "_default",
+                                 "ip": "172.18.0." + str(int(c["id"], 16) % 200 + 2),
+                                 "gateway": "172.18.0.1", "aliases": [c["compose_service"]]}],
+            "network_mode": "bridge",
+            "ports": [{"private": p["private"], "proto": "tcp", "public": p["public"],
+                       "ip": p["ip"]} for p in c["ports"]],
+            "resources": {"memory_limit": 0, "cpus": 0, "cpu_shares": 0, "pids_limit": 0},
+            "log_driver": "json-file",
+            "compose_dir": f"/srv/{c['compose_project']}",
+            "compose_files": f"/srv/{c['compose_project']}/docker-compose.yml",
             "labels": {"com.docker.compose.project": c["compose_project"],
                        "com.docker.compose.service": c["compose_service"]}}
+
+
+def container_top(cid: str) -> dict:
+    c = _by_id(cid) or list_containers()[0]
+    if c["state"] != "running":
+        return {"titles": [], "processes": [], "note": "The container is not running."}
+    rng = random.Random(cid)
+    procs = [["1", "root", "0.0", "0.1", "12-03:11:09", "/init"],
+             [str(rng.randint(80, 200)), "abc", f"{rng.uniform(0.2, 6):.1f}",
+              f"{rng.uniform(1, 9):.1f}", "12-03:10:58", c["compose_service"] + " --serve"]]
+    return {"titles": ["PID", "USER", "%CPU", "%MEM", "ELAPSED", "COMMAND"], "processes": procs}
+
+
+def container_events(cid: str) -> list[dict]:
+    base = _NOW
+    return [
+        {"t": base - 3600 * 5, "action": "start", "summary": "started", "severity": "ok"},
+        {"t": base - 3600 * 5 - 40, "action": "die", "summary": "exited (exit code 0)",
+         "severity": "ok"},
+        {"t": base - 86400 * 2, "action": "create", "summary": "was created", "severity": "ok"},
+    ]
+
+
+async def follow_logs(cid: str):
+    import asyncio
+    rng = random.Random(cid)
+    for i in range(30):
+        await asyncio.sleep(2)
+        yield f"2026-07-11T10:{i:02d}:00Z {rng.choice(_LOG_LINES)}\n"
 
 
 def container_logs(cid: str, tail: int = 200) -> str:
@@ -99,10 +147,14 @@ def container_logs(cid: str, tail: int = 200) -> str:
 
 
 def container_stats(cid: str) -> dict:
-    rng = random.Random(cid + str(int(_NOW // 30)))
-    return {"cpu_percent": round(rng.uniform(0.1, 8.0), 1),
+    rng = random.Random(cid + str(int(time.time() // 3)))
+    return {"cpu_percent": round(rng.uniform(0.1, 8.0), 1), "cpu_known": True,
             "mem_usage": rng.randint(40, 900) * 1024 * 1024,
-            "mem_limit": 8 * 1024 ** 3}
+            "mem_limit": 8 * 1024 ** 3,
+            "net_rx": rng.randint(10, 900) * 1024 ** 2, "net_tx": rng.randint(5, 300) * 1024 ** 2,
+            "blk_read": rng.randint(1, 900) * 1024 ** 2, "blk_write": rng.randint(1, 400) * 1024 ** 2,
+            "pids": rng.randint(4, 40),
+            "net_rx_rate": rng.uniform(200, 40000), "net_tx_rate": rng.uniform(100, 9000)}
 
 
 def inspect_image(name: str) -> dict:
@@ -115,6 +167,90 @@ def engine_info() -> dict:
     cs = list_containers()
     return {"containers": len(cs), "running": sum(c["state"] == "running" for c in cs),
             "images": len(cs) + 4, "version": "27.0 (demo)", "os": "Demo Linux"}
+
+
+def storage() -> dict:
+    gb = 1024 ** 3
+    rows = [
+        ("/", "/dev/nvme0n1p2", "ext4", "", "Samsung SSD 980", "nvme0n1", "nvme", False,
+         "system", 476 * gb, 296 * gb),
+        ("/mnt/backup", "/dev/sda1", "ext4", "Backup", "Portable SSD T7", "sda", "usb", False,
+         "external", 931 * gb, 402 * gb),
+        ("/boot/efi", "/dev/nvme0n1p1", "vfat", "", "Samsung SSD 980", "nvme0n1", "nvme", False,
+         "boot", 1 * gb, int(0.04 * gb)),
+    ]
+    return {"filesystems": [
+        {"mount": m, "path": m, "device": dev, "fstype": fs, "label": label, "model": model,
+         "disk": disk, "transport": tr, "removable": rem, "external": kind == "external",
+         "kind": kind, "total": total, "used": used, "free": total - used,
+         "percent": round(100 * used / total, 1), "browsable": False}
+        for m, dev, fs, label, model, disk, tr, rem, kind, total, used in rows]}
+
+
+_DEMO_FEED = [
+    ("containers", "docker.restart", "nextcloud restarted", "", "info", "nextcloud"),
+    ("security", "ssh.login", "admin logged in over SSH", "from 192.168.1.20 (publickey)", "info", "admin"),
+    ("containers", "docker.health", "vaultwarden is healthy again", "", "ok", "vaultwarden"),
+    ("updates", "docker.image.pull", "Image pulled: grafana/grafana:11.1.0", "", "ok", "grafana"),
+    ("security", "ssh.failed", "37 failed SSH logins from 203.0.113.9", "tried: root, admin, ubnt", "warn", "203.0.113.9"),
+    ("system", "systemd.finished", "Finished: Nightly volume backup", "", "ok", "backup"),
+    ("app", "pocketadm.agent_tool", "The assistant acted", "run_command · docker compose pull jellyfin", "info", ""),
+    ("network", "net.up", "Internet is back after about 2 min", "", "ok", ""),
+    ("security", "fail2ban.ban", "fail2ban banned 198.51.100.4", "jail sshd", "info", "198.51.100.4"),
+    ("updates", "apt.batch", "14 packages changed by apt", "openssl, libssl3, curl, git…", "info", ""),
+]
+
+
+def start_activity() -> None:
+    """A believable history, and now and then a new event — so the live feed
+    in the demo shows what it does."""
+    import asyncio
+    from . import activity
+    if not activity.EVENTS:
+        activity.load()
+    if not activity.EVENTS:
+        now = time.time()
+        for i, (cat, kind, title, detail, sev, target) in enumerate(_DEMO_FEED):
+            activity.push(cat, kind, title, detail=detail, severity=sev, target=target,
+                          source="demo", t=now - (len(_DEMO_FEED) - i) * 1900)
+
+    async def ticker():
+        rng = random.Random()
+        while True:
+            await asyncio.sleep(rng.uniform(25, 45))
+            cat, kind, title, detail, sev, target = rng.choice(_DEMO_FEED)
+            activity.push(cat, kind, title, detail=detail, severity=sev, target=target,
+                          source="demo")
+
+    asyncio.ensure_future(ticker())
+
+
+def accounts() -> dict:
+    def row(id_, name, vendor, engine, key_provider, subscription, brand, *, key=False,
+            signed=False, detail="", plan="", used=()):
+        return {"id": id_, "name": name, "vendor": vendor, "engine": engine,
+                "key_provider": key_provider, "subscription": subscription,
+                "key_hint": "", "brand": brand, "key_set": key, "can_subscribe": bool(engine),
+                "cli_installed": signed, "cli_version": "2.1.210" if signed else "",
+                "signed_in": signed, "detail": detail, "plan": plan,
+                "connected": key or signed, "used_for": list(used)}
+    return {"accounts": [
+        row("anthropic", "Claude", "Anthropic", "claude-code", "anthropic", "Claude Pro or Max",
+            "anthropic", signed=True, detail="Signed in with your Claude subscription",
+            plan="max", used=("Assistant",)),
+        row("openai", "ChatGPT", "OpenAI", "codex", "openai", "ChatGPT Plus or Pro", "openai"),
+        row("mistral", "Mistral", "Mistral AI", "mistral-vibe", "mistral",
+            "Le Chat Pro, with Mistral Vibe", "mistral", key=True, used=("Watch", "Explanations")),
+        row("openrouter", "OpenRouter", "OpenRouter", "", "openrouter", "", "openrouter"),
+    ], "local": {"running": False, "base": "", "models": 0, "used_for": []},
+        "routes": {
+            "assistant": {"label": "Assistant", "provider": "claude-code", "model": "default",
+                          "custom": True, "provider_label": "Claude Code"},
+            "watch": {"label": "Watch", "provider": "mistral", "model": "mistral-medium-latest",
+                      "custom": True, "provider_label": "Mistral API"},
+            "insights": {"label": "Explanations", "provider": "mistral",
+                         "model": "mistral-small-latest", "custom": True,
+                         "provider_label": "Mistral API"}}}
 
 
 # ============================================================ seed content
@@ -193,26 +329,61 @@ def _seed_report() -> dict:
 
 
 def _seed_notifications() -> list[dict]:
+    """Watch messages as the real watch writes them: prose, with links."""
     base = _NOW
     raw = [
-        ("update", "warn", "2 container updates available",
-         "nextcloud and vaultwarden have newer images. Review them in the Updates tab.", 3600),
-        ("security", "crit", "No recent backups",
-         "The 'cloud' and 'vault' stacks have not been backed up in 7 days.", 7200),
-        ("health", "ok", "Nightly health check passed",
-         "6 of 7 checks are green. One warning: disk at 78%.", 10800),
+        ("important", "warn", "backup", "No backup ran for the vault in a week",
+         "The nightly volume backup has not finished since last Tuesday — the backup container "
+         "exits right after starting because its target disk is not mounted. Plug the USB drive "
+         "back in and run `docker start backup-runner`, or ask the assistant to check the mount.",
+         2 * 3600, [{"kind": "container", "label": "Open backup-runner", "target": "backup-runner"},
+                    {"kind": "open", "label": "Health", "target": "checks"}]),
+        ("info", "info", "disk-trend", "The disk fills up in about six weeks",
+         "Root is at 78% and grew by 2.1 GB a day this week, mostly Jellyfin's transcode cache. "
+         "At this pace it is full in roughly six weeks; clearing the cache frees about 9 GB.",
+         20 * 3600, [{"kind": "open", "label": "Storage", "target": "storage"}]),
+        ("critical", "crit", "nextcloud-down", "Nextcloud was down for 4 minutes",
+         "Nextcloud stopped answering at 14:02 after its database ran out of connections; it "
+         "recovered on its own at 14:06 when the cron job finished. If it happens again, raise "
+         "max_connections in MariaDB.",
+         2 * 86400, [{"kind": "container", "label": "Open nextcloud", "target": "nextcloud"}]),
     ]
     out = []
-    for src, status, title, body, ago in raw:
-        import hashlib
-        import re
-        import secrets
-        fp = hashlib.sha1(f"{src}|{status}|{re.sub(r'[\\W\\d]+', ' ', title.lower()).strip()}"
-                          .encode()).hexdigest()[:16]
-        out.append({"id": secrets.token_hex(5), "time": base - ago, "source": src,
-                    "status": status, "title": title, "body": body, "fp": fp,
-                    "count": 1, "last_seen": base - ago})
+    import secrets
+    for importance, status, topic, title, body, ago, actions in raw:
+        out.append({"id": secrets.token_hex(5), "time": base - ago, "source": "watch",
+                    "status": status, "title": title, "body": body, "fp": topic,
+                    "count": 1, "last_seen": base - ago, "kind": "watch",
+                    "importance": importance, "topic": topic, "actions": actions + [
+                        {"kind": "assistant", "label": "Ask the assistant",
+                         "prompt": f"The watch wrote: \"{body}\" — what should I do?"}],
+                    "steps": [{"tool": "run_command", "detail": "docker ps -a --filter name=backup",
+                               "output": "backup-runner  Exited (1) 2 hours ago", "ms": 140}]})
     return out
+
+
+def watch_status() -> dict:
+    return {
+        "settings": {"enabled": True, "lang": "en", "timezone": "Europe/Berlin",
+                     "interval_min": 180, "quiet_start": "23:00", "quiet_end": "07:30",
+                     "info_per_day": 3, "important_per_day": 8, "weekly": True,
+                     "knowledge": "Jellyfin is only used in the evenings.", "budget_usd": 5.0,
+                     "push_min": "important", "ntfy_url": "", "matrix_homeserver": "",
+                     "matrix_room": "", "matrix_token_set": False, "paused_until": 0, "mutes": []},
+        "route": {"provider": "mistral", "model": "mistral-medium-latest",
+                  "label": "Mistral API", "usable": True},
+        "running": False, "paused": False, "quiet_now": False,
+        "last_round": _NOW - 3600, "next_round": _NOW + 7200,
+        "sent_today": {"critical": 0, "important": 1, "info": 0},
+        "spent_30d": 0.84, "budget_left": 4.16, "pending_events": 0,
+        "runs": [{"t": _NOW - 3600, "kind": "observe", "decision": "silent",
+                  "reason": "all quiet", "provider": "mistral", "model": "mistral-medium-latest",
+                  "cost": 0.03},
+                 {"t": _NOW - 2 * 3600, "kind": "incident", "decision": "notify",
+                  "importance": "important", "topic": "backup", "provider": "mistral",
+                  "model": "mistral-medium-latest", "cost": 0.05}],
+        "held": [], "memory": ["Disk / 78% on Monday", "Minecraft is stopped on purpose"],
+    }
 
 
 def seed() -> None:
@@ -239,8 +410,15 @@ def seed() -> None:
             fname = time.strftime("%Y%m%d-%H%M%S", time.localtime(rep["time"])) + ".json"
             (reports_dir / fname).write_text(json.dumps(rep))
 
+        # the watch's sample messages, refreshed when they have grown stale so a
+        # visitor never meets "3 weeks ago" on the first screen
         notif_file = config.DATA_DIR / "notifications.json"
-        if not notif_file.exists():
+        try:
+            existing = json.loads(notif_file.read_text()) if notif_file.exists() else []
+        except ValueError:
+            existing = []
+        newest = max((n.get("time", 0) for n in existing), default=0)
+        if not any(n.get("kind") == "watch" for n in existing) or time.time() - newest > 3 * 86400:
             notif_file.write_text(json.dumps(_seed_notifications()))
     except Exception:
         pass
