@@ -18,9 +18,14 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: app.phase)
         .task {
-            // A screenshot run (release workflow) opens the demo on its own.
-            if AppState.screenshotTab != nil, app.phase == .connect {
-                try? await app.openDemo()
+            // A screenshot run (release and preview workflows) opens the demo
+            // on its own — or stays on the screens before signing in.
+            if let shot = AppState.screenshotTab, app.phase == .connect {
+                switch shot {
+                case "connect": break
+                case "login":   try? await app.identifyDemo()
+                default:        try? await app.openDemo()
+                }
                 return
             }
             // A server restored from the keychain has no ServerInfo yet, so the

@@ -102,29 +102,43 @@ struct MarkdownText: View {
 
 // MARK: - Rows and headers
 
+/// A section title: the system's section-header look, in a list or above a card.
 struct SectionCaption: View {
     let text: String
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.caption2.weight(.semibold))
-            .tracking(0.6)
+        Text(text)
+            .font(.footnote.weight(.semibold))
             .foregroundStyle(Theme.muted)
     }
 }
 
-/// Label on the left, value on the right — the shape every facts card uses.
+private struct InFactsCardKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set by `FactsCard`: its rows pad themselves and draw separators, which
+    /// a List does on its own.
+    var inFactsCard: Bool {
+        get { self[InFactsCardKey.self] }
+        set { self[InFactsCardKey.self] = newValue }
+    }
+}
+
+/// Label on the left, value on the right — a list row's "Version  0.23.0".
 struct FactRow: View {
     let label: String
     let value: String
-    var tint: Color = Theme.text
+    var tint: Color = Theme.muted
     var selectable = false
 
+    @Environment(\.inFactsCard) private var inCard
+
     var body: some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.subheadline)
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(Theme.text)
             Spacer(minLength: 16)
             Group {
                 if selectable {
@@ -133,16 +147,17 @@ struct FactRow: View {
                     Text(value)
                 }
             }
-            .font(.subheadline)
             .foregroundStyle(tint)
             .multilineTextAlignment(.trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .font(inCard ? Font.subheadline : Font.body)
+        .padding(.horizontal, inCard ? 16 : 0)
+        .padding(.vertical, inCard ? 12 : 0)
     }
 }
 
-/// A stack of `FactRow`s with hairlines between them, as one card.
+/// A stack of `FactRow`s with inset separators between them, as one card —
+/// for screens that are not lists.
 struct FactsCard<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -150,53 +165,60 @@ struct FactsCard<Content: View>: View {
         VStack(spacing: 0) {
             content
         }
+        .environment(\.inFactsCard, true)
         .card(padding: 0)
     }
 }
 
+/// The separator between `FactRow`s in a `FactsCard`. Lists draw their own.
 struct HairlineDivider: View {
-    var body: some View { Divider().overlay(Theme.border) }
+    @Environment(\.inFactsCard) private var inCard
+
+    var body: some View {
+        if inCard {
+            Divider().padding(.leading, 16)
+        }
+    }
 }
 
-/// Navigation row used by the More hub and the settings screens.
+/// A navigation row the way Settings draws them: an icon tile, the title, an
+/// optional line under it, and a count badge.
 struct NavRow: View {
     let symbol: String
     let title: String
     var subtitle: String = ""
     var badge: String = ""
-    var badgeTint: Color = Theme.accent
+    var badgeTint: Color = Theme.danger
+    var tint: Color = Theme.accent
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 26)
+        HStack(spacing: 14) {
+            IconTile(symbol: symbol, color: tint)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(Theme.text)
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(Theme.muted)
                         .lineLimit(1)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if !badge.isEmpty {
                 Text(badge)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Theme.onAccent)
+                    .font(.footnote.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 2)
+                    .frame(minWidth: 22)
                     .background(badgeTint, in: Capsule())
             }
         }
-        .padding(.vertical, 3)
     }
 }
 
@@ -241,31 +263,31 @@ struct LogConsole: View {
 
 // MARK: - Controls
 
-/// Secondary action button: readable on the dark palette without competing with
-/// the accent-filled primary.
+/// Secondary action button: a grey capsule that does not compete with the
+/// accent-filled primary.
 struct SecondaryButtonStyle: ButtonStyle {
     var tint: Color = Theme.text
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.medium))
+            .font(.body.weight(.medium))
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 11)
-            .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.vertical, 13)
+            .background(Theme.bg3, in: Capsule())
             .foregroundStyle(tint)
-            .opacity(configuration.isPressed ? 0.75 : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
 
-/// A text field that matches the palette. SwiftUI's `.textFieldStyle(.roundedBorder)`
-/// paints a light chrome that is invisible against the dark background.
+/// A text field outside a list, filled like a search field.
 struct FieldBox<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         content
-            .padding(12)
-            .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .foregroundStyle(Theme.text)
     }
 }
@@ -279,28 +301,29 @@ struct WarningBanner: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline.weight(.semibold))
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
                 .foregroundStyle(tint)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .font(.caption.weight(.semibold))
-                    .tint(tint)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.text)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let actionTitle, let action {
+                    Button(actionTitle, action: action)
+                        .font(.footnote.weight(.semibold))
+                        .tint(tint)
+                        .padding(.top, 2)
+                }
             }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(tint.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                .stroke(tint.opacity(0.35), lineWidth: 1)
-        )
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 }
 
@@ -320,13 +343,13 @@ struct ToastOverlay: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottom) {
             if let toast {
-                Text(toast.text)
-                    .font(.footnote.weight(.medium))
+                Label(toast.text, systemImage: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(toast.isError ? Theme.danger : Theme.text)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Theme.bg3, in: Capsule())
-                    .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                     .padding(.bottom, 24)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .task(id: toast.id) {
@@ -335,7 +358,11 @@ struct ToastOverlay: ViewModifier {
                     }
             }
         }
-        .animation(.easeOut(duration: 0.2), value: toast)
+        .animation(.snappy, value: toast)
+        .sensoryFeedback(trigger: toast) { _, new in
+            guard let new else { return nil }
+            return new.isError ? .error : .success
+        }
     }
 }
 

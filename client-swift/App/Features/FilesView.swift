@@ -16,7 +16,7 @@ struct FilesView: View {
     var body: some View {
         Group {
             if loading && listing == nil {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let listing {
                 content(listing)
             } else {
@@ -50,7 +50,6 @@ struct FilesView: View {
                         .foregroundStyle(Theme.muted)
                         .textSelection(.enabled)
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             if !listing.parent.isEmpty {
@@ -62,7 +61,6 @@ struct FilesView: View {
                             .foregroundStyle(Theme.accent)
                     }
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             if !listing.dirs.isEmpty {
@@ -85,7 +83,6 @@ struct FilesView: View {
                             }
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: listing.path.isEmpty ? "Workspaces" : "Folders")
                 }
@@ -116,15 +113,12 @@ struct FilesView: View {
                         }
                         .disabled(!file.text)
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "\(listing.files) files")
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await load(path) }
     }
 
@@ -171,15 +165,12 @@ struct FilePreviewSheet: View {
                                  message: error,
                                  tint: Theme.danger)
                 } else {
-                    ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle(entry.name)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.tint(Theme.accent)

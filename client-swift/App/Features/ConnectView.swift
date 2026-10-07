@@ -12,7 +12,11 @@ struct ConnectView: View {
     @State private var showScanner = false
     @State private var claiming = false
     @State private var openingDemo = false
+    @State private var copied = false
     @FocusState private var addressFocused: Bool
+
+    private static let installCommand =
+        "curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash"
 
     var body: some View {
         ScrollView {
@@ -63,19 +67,18 @@ struct ConnectView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "server.rack")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(Theme.accent)
+        VStack(spacing: 12) {
+            ServiceIcon(names: ["pocketadm"], size: 92)
+                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
             Text("PocketADM")
-                .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                .font(.largeTitle.weight(.bold))
                 .foregroundStyle(Theme.text)
-            Text("Connect to your server")
-                .font(.subheadline)
+            Text("Your server, in your pocket.")
+                .font(.title3)
                 .foregroundStyle(Theme.muted)
         }
-        .padding(.top, 28)
-        .padding(.bottom, 4)
+        .padding(.top, 36)
+        .padding(.bottom, 8)
     }
 
     private var dividerRow: some View {
@@ -91,15 +94,16 @@ struct ConnectView: View {
 
     private var addressEntry: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("192.168.1.10:8090", text: $address)
+            TextField("192.168.1.10:8443", text: $address)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
                 .submitLabel(.go)
                 .focused($addressFocused)
                 .onSubmit { Task { await probe() } }
-                .padding(12)
-                .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+                .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .foregroundStyle(Theme.text)
 
             Button {
@@ -114,8 +118,8 @@ struct ConnectView: View {
             .buttonStyle(PrimaryButtonStyle(enabled: !address.isEmpty && !probing))
             .disabled(address.isEmpty || probing)
 
-            Text("Enter a hostname or IP. Without http:// or https://, both are tried.")
-                .font(.caption)
+            Text("A hostname or IP address. Without http:// or https://, both are tried.")
+                .font(.footnote)
                 .foregroundStyle(Theme.muted)
         }
         .card(padding: 18)
@@ -130,7 +134,7 @@ struct ConnectView: View {
                 Task { await openDemo() }
             } label: {
                 if openingDemo {
-                    ProgressView().tint(Theme.accent)
+                    ProgressView()
                 } else {
                     Label("Try the live demo", systemImage: "play.circle")
                 }
@@ -139,7 +143,7 @@ struct ConnectView: View {
             .disabled(openingDemo)
 
             Text("A real PocketADM server, read-only. No signup, nothing to install.")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
         }
@@ -152,15 +156,27 @@ struct ConnectView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.text)
             Text("Run this on any Linux server. It installs Docker if needed, starts PocketADM over HTTPS and ends with a QR code to scan here.")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(Theme.muted)
-            Text("curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.sh | bash")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Theme.text)
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            HStack(alignment: .top, spacing: 8) {
+                Text(Self.installCommand)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.termFg)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    UIPasteboard.general.string = Self.installCommand
+                    copied = true
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .foregroundStyle(copied ? Color.green : Theme.termFg.opacity(0.7))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .accessibilityLabel("Copy the install command")
+                .sensoryFeedback(.success, trigger: copied) { _, new in new }
+            }
+            .padding(12)
+            .background(Theme.termBg, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .card(padding: 16)
     }
@@ -271,6 +287,8 @@ struct PairScanSheet: View {
             }
             .navigationTitle("Scan to pair")
             .navigationBarTitleDisplayMode(.inline)
+            // a camera view is dark whatever the phone's appearance
+            .preferredColorScheme(.dark)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
@@ -288,9 +306,6 @@ struct PairScanSheet: View {
                     .tint(Theme.accent)
                 }
             }
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .alert("Cannot scan", isPresented: .constant(problem != nil)) {
                 Button("OK") { problem = nil }
             } message: {

@@ -65,13 +65,11 @@ struct DashboardView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var model = DashboardModel()
 
-    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
-
     var body: some View {
         NavigationStack {
             Group {
                 if !model.loaded {
-                    ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let system = model.system {
                     content(system)
                 } else {
@@ -82,7 +80,6 @@ struct DashboardView: View {
                         tint: Theme.danger,
                         retry: { Task { await model.refresh(app) } }
                     )
-                    .frame(maxHeight: .infinity)
                 }
             }
             .navigationTitle(app.serverName.isEmpty ? "Dashboard" : app.serverName)
@@ -93,8 +90,9 @@ struct DashboardView: View {
                     NavigationLink {
                         NotificationsView()
                     } label: {
-                        Image(systemName: app.unseenAlerts > 0 ? "bell.badge.fill" : "bell")
-                            .foregroundStyle(app.unseenAlerts > 0 ? Theme.warn : Theme.accent)
+                        Image(systemName: app.unseenAlerts > 0 ? "bell.badge" : "bell")
+                            .symbolRenderingMode(.hierarchical)
+                            .accessibilityLabel(alertsLabel)
                     }
                 }
             }
@@ -106,56 +104,49 @@ struct DashboardView: View {
         .onDisappear { model.stop() }
     }
 
+    private var alertsLabel: String {
+        app.unseenAlerts > 0 ? "Alerts, \(app.unseenAlerts) new" : "Alerts"
+    }
+
     private func content(_ system: SystemSnapshot) -> some View {
         ScrollView {
-            VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 22) {
                 if app.me?.shouldWarnAboutExposure == true { exposureWarning }
 
-                LazyVGrid(columns: columns, spacing: 12) {
-                    MetricTile(
-                        title: "CPU",
-                        value: Fmt.percent(system.cpuPercent),
-                        detail: "\(system.cpuCount) cores · load \(String(format: "%.2f", system.load.first ?? 0))",
-                        fraction: system.cpuPercent / 100,
-                        tint: tint(for: system.cpuPercent)
-                    )
-                    MetricTile(
-                        title: "Memory",
-                        value: Fmt.percent(system.memory.percent),
-                        detail: "\(Fmt.bytes(system.memory.used)) of \(Fmt.bytes(system.memory.total))",
-                        fraction: system.memory.percent / 100,
-                        tint: tint(for: system.memory.percent)
-                    )
-                    MetricTile(
-                        title: "Disk",
-                        value: Fmt.percent(system.disk.percent),
-                        detail: "\(Fmt.bytes(system.disk.spare)) free",
-                        fraction: system.disk.percent / 100,
-                        tint: tint(for: system.disk.percent)
-                    )
-                    MetricTile(
-                        title: "Network",
-                        value: networkValue(system.net),
-                        detail: networkDetail(system.net),
-                        // Network has no natural ceiling, so the bar would be
-                        // meaningless — it stays empty on purpose.
-                        fraction: 0,
-                        tint: Theme.accent2
-                    )
+                gauges(system)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("Status")
+                    statusCard(system)
                 }
 
-                glanceRow
+                if !model.history.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        sectionTitle("Last hour")
+                        historyChart
+                    }
+                }
 
-                if !model.history.isEmpty { historyChart }
-
-                hostCard(system)
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("System")
+                    hostCard(system)
+                }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 24)
         }
         .refreshable {
             await model.refresh(app)
             await model.refreshGlance(app)
         }
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(Theme.text)
+            .padding(.leading, 4)
     }
 
     private var exposureWarning: some View {
@@ -173,98 +164,156 @@ struct DashboardView: View {
         .buttonStyle(.plain)
     }
 
-    /// Two things you want to know without opening anything: is there work
-    /// waiting, and is the server healthy.
-    private var glanceRow: some View {
-        HStack(spacing: 12) {
+    // MARK: - Gauges
+
+    private func gauges(_ system: SystemSnapshot) -> some View {
+        VStack(spacing: 16) {
+            HStack(alignment: .top, spacing: 8) {
+                RingGauge(title: "CPU", value: Fmt.percent(system.cpuPercent),
+                          detail: "\(system.cpuCount) cores",
+                          fraction: system.cpuPercent / 100, tint: tint(for: system.cpuPercent))
+                RingGauge(title: "Memory", value: Fmt.percent(system.memory.percent),
+                          detail: "\(Fmt.bytes(system.memory.used)) of \(Fmt.bytes(system.memory.total))",
+                          fraction: system.memory.percent / 100, tint: tint(for: system.memory.percent))
+                RingGauge(title: "Disk", value: Fmt.percent(system.disk.percent),
+                          detail: "\(Fmt.bytes(system.disk.spare)) free",
+                          fraction: system.disk.percent / 100, tint: tint(for: system.disk.percent))
+            }
+
+            Divider()
+
+            HStack(spacing: 0) {
+                networkStat(symbol: "arrow.down", label: "Download", value: system.net.map { Fmt.rate($0.rx) } ?? "—")
+                networkStat(symbol: "arrow.up", label: "Upload", value: system.net.map { Fmt.rate($0.tx) } ?? "—")
+                networkStat(symbol: "dot.radiowaves.left.and.right", label: "Latency",
+                            value: system.net?.ping.map { String(format: "%.0f ms", $0) } ?? "—")
+            }
+        }
+        .card()
+    }
+
+    private func networkStat(symbol: String, label: String, value: String) -> some View {
+        VStack(spacing: 3) {
+            Label(label, systemImage: symbol)
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.text)
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Status
+
+    /// What needs you, one row each: alerts, updates, health, containers.
+    private func statusCard(_ system: SystemSnapshot) -> some View {
+        VStack(spacing: 0) {
+            NavigationLink {
+                NotificationsView()
+            } label: {
+                statusRow(symbol: "bell.fill", color: .red, title: "Alerts",
+                          value: app.unseenAlerts == 0 ? "None new" : "\(app.unseenAlerts) new",
+                          valueTint: app.unseenAlerts == 0 ? Theme.muted : Theme.danger)
+            }
+            Divider().padding(.leading, 60)
             NavigationLink {
                 UpdatesView()
             } label: {
-                glanceTile(
-                    symbol: "arrow.triangle.2.circlepath",
-                    title: "Updates",
-                    value: model.pendingUpdates == 0 ? "None" : String(model.pendingUpdates),
-                    tint: model.pendingUpdates == 0 ? Theme.accent2 : Theme.accent
-                )
+                statusRow(symbol: "arrow.triangle.2.circlepath", color: .orange, title: "Updates",
+                          value: model.pendingUpdates == 0 ? "Up to date" : "\(model.pendingUpdates) available",
+                          valueTint: model.pendingUpdates == 0 ? Theme.muted : Theme.warn)
             }
-            .buttonStyle(.plain)
-
+            Divider().padding(.leading, 60)
             NavigationLink {
                 ChecksView()
             } label: {
-                glanceTile(
-                    symbol: model.health?.symbol ?? "checkmark.shield",
-                    title: "Health",
-                    value: model.health?.label ?? "—",
-                    tint: model.health?.tint ?? Theme.muted
-                )
+                statusRow(symbol: "checkmark.shield.fill", color: .green, title: "Health",
+                          value: model.health?.label ?? "Not checked yet",
+                          valueTint: model.health.map { $0 == .ok ? Theme.muted : $0.tint } ?? Theme.muted)
             }
-            .buttonStyle(.plain)
+            if let docker = system.docker {
+                Divider().padding(.leading, 60)
+                statusRow(symbol: "shippingbox.fill", color: .brown, title: "Containers",
+                          value: "\(docker.running) of \(docker.containers) running",
+                          valueTint: Theme.muted, chevron: false)
+            }
         }
+        .buttonStyle(.plain)
+        .background(Theme.bg2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 
-    private func glanceTile(symbol: String, title: String, value: String, tint: Color) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 18))
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(Theme.muted)
-                Text(value)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.text)
+    private func statusRow(symbol: String, color: Color, title: String, value: String,
+                           valueTint: Color, chevron: Bool = true) -> some View {
+        HStack(spacing: 14) {
+            IconTile(symbol: symbol, color: color)
+            Text(title)
+                .foregroundStyle(Theme.text)
+            Spacer(minLength: 8)
+            Text(value)
+                .foregroundStyle(valueTint)
+                .lineLimit(1)
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card(padding: 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
     }
+
+    // MARK: - History
 
     private var historyChart: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionCaption(text: "Last hour")
-
+        VStack(alignment: .leading, spacing: 12) {
             Chart {
                 ForEach(model.history) { point in
                     AreaMark(x: .value("Time", point.date), y: .value("CPU", point.cpu))
                         .foregroundStyle(
                             .linearGradient(
-                                colors: [Theme.accent.opacity(0.35), Theme.accent.opacity(0.02)],
+                                colors: [Theme.accent.opacity(0.30), Theme.accent.opacity(0.0)],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
-                    LineMark(x: .value("Time", point.date), y: .value("CPU", point.cpu))
+                        .interpolationMethod(.monotone)
+                    LineMark(x: .value("Time", point.date), y: .value("CPU", point.cpu),
+                             series: .value("Series", "CPU"))
                         .foregroundStyle(Theme.accent)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
                         .interpolationMethod(.monotone)
                 }
                 ForEach(model.history) { point in
-                    LineMark(x: .value("Time", point.date), y: .value("Memory", point.mem))
-                        .foregroundStyle(Theme.accent2)
+                    LineMark(x: .value("Time", point.date), y: .value("Memory", point.mem),
+                             series: .value("Series", "Memory"))
+                        .foregroundStyle(Color.purple)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
                         .interpolationMethod(.monotone)
                 }
             }
             .chartYScale(domain: 0...100)
             .chartYAxis {
-                AxisMarks(values: [0.0, 50.0, 100.0]) {
-                    AxisGridLine().foregroundStyle(Theme.border)
-                    AxisValueLabel().foregroundStyle(Theme.muted)
+                AxisMarks(position: .leading, values: [0.0, 50.0, 100.0]) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        Text("\(Int(value.as(Double.self) ?? 0))%")
+                    }
                 }
             }
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 4)) {
-                    AxisGridLine().foregroundStyle(Theme.border.opacity(0.5))
+                    AxisGridLine()
                     AxisValueLabel(format: .dateTime.hour().minute())
-                        .foregroundStyle(Theme.muted)
                 }
             }
-            .frame(height: 160)
+            .frame(height: 170)
 
             HStack(spacing: 16) {
                 legend(color: Theme.accent, label: "CPU")
-                legend(color: Theme.accent2, label: "Memory")
+                legend(color: .purple, label: "Memory")
             }
         }
         .card()
@@ -272,10 +321,12 @@ struct DashboardView: View {
 
     private func legend(color: Color, label: String) -> some View {
         HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 7, height: 7)
+            Circle().fill(color).frame(width: 8, height: 8)
             Text(label).font(.caption).foregroundStyle(Theme.muted)
         }
     }
+
+    // MARK: - System
 
     private func hostCard(_ system: SystemSnapshot) -> some View {
         FactsCard {
@@ -289,9 +340,7 @@ struct DashboardView: View {
                         .joined(separator: "  "))
             if let docker = system.docker {
                 HairlineDivider()
-                FactRow(label: "Docker", value: "\(docker.running) of \(docker.containers) running")
-                HairlineDivider()
-                FactRow(label: "Engine", value: docker.version)
+                FactRow(label: "Docker", value: docker.version)
                 HairlineDivider()
                 FactRow(label: "Images", value: String(docker.images))
             }
@@ -308,18 +357,52 @@ struct DashboardView: View {
         default:     return Theme.danger
         }
     }
+}
 
-    private func networkValue(_ net: SystemSnapshot.NetRates?) -> String {
-        guard let net else { return "—" }
-        return Fmt.rate(net.rx)
-    }
+/// A ring that fills to `fraction`, the value in its middle — the Activity
+/// app's shape, for the three numbers that have a natural ceiling.
+struct RingGauge: View {
+    let title: String
+    let value: String
+    var detail: String = ""
+    let fraction: Double
+    let tint: Color
 
-    private func networkDetail(_ net: SystemSnapshot.NetRates?) -> String {
-        guard let net else { return "no samples yet" }
-        // ping is null whenever the latency probe failed; that must not blank
-        // the whole tile, so it degrades to just the transfer rates.
-        let up = "↑ \(Fmt.rate(net.tx))"
-        guard let ping = net.ping else { return up }
-        return "\(up) · \(String(format: "%.0f ms", ping))"
+    var body: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .stroke(tint.opacity(0.18), lineWidth: 9)
+                Circle()
+                    .trim(from: 0, to: max(0.002, min(1, fraction)))
+                    .stroke(tint.gradient, style: StrokeStyle(lineWidth: 9, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text(value)
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.text)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+            }
+            .frame(width: 78, height: 78)
+            .animation(.smooth, value: fraction)
+
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.text)
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }

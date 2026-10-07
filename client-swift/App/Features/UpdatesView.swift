@@ -56,7 +56,7 @@ struct UpdatesView: View {
     var body: some View {
         Group {
             if !model.loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let updates = model.updates {
                 content(updates)
             } else {
@@ -68,7 +68,7 @@ struct UpdatesView: View {
             }
         }
         .navigationTitle("Updates")
-        .screenBackground()
+        .navigationBarTitleDisplayMode(.large)
         .toast($toast)
         .task { if !model.loaded { await model.load(app) } }
         .sheet(item: $sheet) { which in
@@ -104,7 +104,6 @@ struct UpdatesView: View {
                 Section {
                     ForEach(updates.pending) { update in
                         Button { sheet = .detail(update) } label: { UpdateRow(update: update) }
-                            .listRowBackground(Theme.bg2)
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button {
                                     Task { await setIgnored(image: update.image, ignored: true) }
@@ -114,22 +113,28 @@ struct UpdatesView: View {
                     }
                 } header: {
                     HStack {
-                        SectionCaption(text: "\(updates.pending.count) available")
+                        Text("\(updates.pending.count) available")
                         Spacer()
                         if updates.pending.count > 1 {
                             Button("Update all") { confirmAll = true }
-                                .font(.caption.weight(.semibold))
-                                .tint(Theme.accent)
+                                .font(.footnote.weight(.semibold))
+                                .textCase(nil)
                         }
                     }
                 }
             } else {
                 Section {
-                    Label("Everything is up to date", systemImage: "checkmark.seal.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.accent2)
+                    HStack(spacing: 14) {
+                        IconTile(symbol: "checkmark", color: .green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Everything is up to date")
+                                .foregroundStyle(Theme.text)
+                            Text("Checked against each image's registry")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             if updates.apt.available && !updates.apt.packages.isEmpty {
@@ -140,11 +145,10 @@ struct UpdatesView: View {
                                 .font(.subheadline.weight(.medium))
                                 .foregroundStyle(Theme.text)
                             Text("\(package.current) → \(package.new)")
-                                .font(.caption)
+                                .font(.footnote)
                                 .foregroundStyle(Theme.muted)
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Host packages")
                 } footer: {
@@ -166,7 +170,6 @@ struct UpdatesView: View {
                             await deleteSnapshot(snapshot)
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Rollback points")
                 } footer: {
@@ -191,7 +194,6 @@ struct UpdatesView: View {
                             .tint(Theme.accent)
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Ignored")
                 }
@@ -201,41 +203,35 @@ struct UpdatesView: View {
                 Section {
                     DisclosureGroup {
                         ForEach(updates.upToDate) { update in
-                            HStack {
-                                Text(update.icon.isEmpty ? "📦" : update.icon)
+                            HStack(spacing: 12) {
+                                ServiceIcon(names: [update.label, update.image], category: update.category, size: 28)
                                 Text(update.displayName)
-                                    .font(.subheadline)
                                     .foregroundStyle(Theme.text)
                                 Spacer()
                                 Text(update.tag)
-                                    .font(.caption)
+                                    .font(.footnote)
                                     .foregroundStyle(Theme.muted)
                             }
                         }
                     } label: {
                         Text("\(updates.upToDate.count) images up to date")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.muted)
+                            .foregroundStyle(Theme.text)
                     }
                 }
-                .listRowBackground(Theme.bg2)
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await model.load(app, force: true) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if model.checking {
-                    ProgressView().tint(Theme.accent)
+                    ProgressView()
                 } else {
                     Button {
                         Task { await model.load(app, force: true) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .tint(Theme.accent)
+                    .accessibilityLabel("Check again")
                 }
             }
         }
@@ -299,15 +295,12 @@ struct UpdateRow: View {
     let update: DockerUpdate
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(update.icon.isEmpty ? "📦" : update.icon)
-                .font(.title3)
-                .frame(width: 30)
+        HStack(spacing: 14) {
+            ServiceIcon(names: [update.label, update.image], category: update.category)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(update.displayName)
-                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(Theme.text)
                     if update.security {
                         // The catalog flags images whose updates usually carry
@@ -316,18 +309,18 @@ struct UpdateRow: View {
                     }
                 }
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Theme.muted)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color(uiColor: .tertiaryLabel))
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
     }
 
     private var subtitle: String {
@@ -350,18 +343,19 @@ struct SnapshotRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(snapshot.image)
-                    .font(.subheadline)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text("\(Fmt.ago(snapshot.date)) · \(snapshot.imageID)")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(Theme.muted)
             }
             Spacer()
             Button("Roll back") { confirming = true }
-                .font(.caption.weight(.semibold))
-                .tint(Theme.warn)
+                .font(.footnote.weight(.semibold))
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .tint(.orange)
         }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
@@ -427,7 +421,7 @@ struct UpdateDetailSheet: View {
                         if applying {
                             ProgressView().tint(Theme.onAccent)
                         } else {
-                            Text("Update now")
+                            Label("Update now", systemImage: "arrow.down.circle.fill")
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle(enabled: !applying))
@@ -449,12 +443,9 @@ struct UpdateDetailSheet: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle(update.displayName)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }.tint(Theme.accent)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
             .task { await load() }
@@ -462,15 +453,15 @@ struct UpdateDetailSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Text(update.icon.isEmpty ? "📦" : update.icon).font(.largeTitle)
+        HStack(spacing: 14) {
+            ServiceIcon(names: [update.label, update.image], category: update.category, size: 56)
             VStack(alignment: .leading, spacing: 3) {
                 Text(update.displayName)
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(Theme.text)
                 if !update.category.isEmpty {
                     Text(update.category)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(Theme.muted)
                 }
             }

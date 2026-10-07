@@ -35,7 +35,7 @@ struct AppsView: View {
     var body: some View {
         Group {
             if !model.loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let response = model.response, !response.catalog.isEmpty {
                 content(response)
             } else {
@@ -47,7 +47,7 @@ struct AppsView: View {
             }
         }
         .navigationTitle("Apps")
-        .screenBackground()
+        .navigationBarTitleDisplayMode(.large)
         .toast($toast)
         .task { if !model.loaded { await model.load(app) } }
         .sheet(item: $selected) { entry in
@@ -67,7 +67,6 @@ struct AppsView: View {
                         Button { selected = entry } label: {
                             AppRow(entry: entry, installed: response.installed[entry.id])
                         }
-                        .listRowBackground(Theme.bg2)
                     }
                 } header: {
                     SectionCaption(text: "Running on this server")
@@ -79,21 +78,15 @@ struct AppsView: View {
                     Button { selected = entry } label: {
                         AppRow(entry: entry, installed: nil)
                     }
-                    .listRowBackground(Theme.bg2)
                 }
             } header: {
                 SectionCaption(text: category == "All" ? "Catalog" : category)
             } footer: {
                 if available(response).isEmpty {
                     Text("Nothing matches.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.muted)
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .searchable(text: $search, prompt: "Search apps")
         .refreshable { await model.load(app) }
         .toolbar {
@@ -109,8 +102,8 @@ struct AppsView: View {
                     Image(systemName: category == "All"
                           ? "line.3.horizontal.decrease.circle"
                           : "line.3.horizontal.decrease.circle.fill")
+                        .accessibilityLabel("Filter by category")
                 }
-                .tint(Theme.accent)
             }
         }
     }
@@ -141,33 +134,34 @@ struct AppRow: View {
     let installed: InstalledApp?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(entry.icon.isEmpty ? "📦" : entry.icon)
-                .font(.title3)
-                .frame(width: 30)
+        HStack(spacing: 14) {
+            ServiceIcon(names: [entry.name, entry.id], category: entry.category, size: 44)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name)
-                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(Theme.text)
                 Text(entry.tagline)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(Theme.muted)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if let installed {
-                StatusPill(text: installed.running ? "running" : "stopped",
-                           tint: installed.running ? Theme.accent2 : Theme.muted)
+                StatusDot(text: installed.running ? "Running" : "Stopped",
+                          tint: installed.running ? .green : Color(uiColor: .systemGray3))
             } else {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.muted)
+                // The App Store's "Get": the row opens the sheet that installs.
+                Text("Install")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 5)
+                    .background(Theme.bg3, in: Capsule())
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
     }
 }
 
@@ -240,12 +234,9 @@ struct AppDetailSheet: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle(entry.name)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }.tint(Theme.accent)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
             .onAppear {
@@ -271,17 +262,21 @@ struct AppDetailSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Text(entry.icon.isEmpty ? "📦" : entry.icon).font(.largeTitle)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(entry.tagline)
-                    .font(.subheadline.weight(.medium))
+        HStack(spacing: 16) {
+            ServiceIcon(names: [entry.name, entry.id], category: entry.category, size: 72)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.name)
+                    .font(.title2.weight(.bold))
                     .foregroundStyle(Theme.text)
-                Text(entry.category)
-                    .font(.caption)
+                Text(entry.tagline)
+                    .font(.subheadline)
                     .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(entry.category)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Theme.accent)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
     }
 
@@ -298,7 +293,7 @@ struct AppDetailSheet: View {
             ForEach(entry.fields) { field in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(field.label)
-                        .font(.caption)
+                        .font(.footnote.weight(.medium))
                         .foregroundStyle(Theme.muted)
                     FieldBox {
                         TextField(field.defaultValue,
@@ -317,7 +312,7 @@ struct AppDetailSheet: View {
                 if working {
                     ProgressView().tint(Theme.onAccent)
                 } else {
-                    Text("Install")
+                    Label("Install", systemImage: "arrow.down.circle.fill")
                 }
             }
             .buttonStyle(PrimaryButtonStyle(enabled: !working))
@@ -350,8 +345,8 @@ struct AppDetailSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             FactsCard {
                 FactRow(label: "Status",
-                        value: installed.running ? "running" : "stopped",
-                        tint: installed.running ? Theme.accent2 : Theme.muted)
+                        value: installed.running ? "Running" : "Stopped",
+                        tint: installed.running ? .green : Theme.muted)
                 if !installed.containers.isEmpty {
                     HairlineDivider()
                     FactRow(label: "Containers",
@@ -392,19 +387,20 @@ struct AppDetailSheet: View {
 
     @ViewBuilder
     private var links: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             if !entry.website.isEmpty, let url = URL(string: entry.website) {
-                Button("Website") { openURL(url) }
-                    .font(.caption)
-                    .tint(Theme.accent)
+                Button { openURL(url) } label: { Label("Website", systemImage: "safari") }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
             }
             if !entry.docs.isEmpty, let url = URL(string: entry.docs) {
-                Button("Docs") { openURL(url) }
-                    .font(.caption)
-                    .tint(Theme.accent)
+                Button { openURL(url) } label: { Label("Documentation", systemImage: "book") }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
             }
             Spacer()
         }
+        .font(.subheadline)
     }
 
     private func install() async {

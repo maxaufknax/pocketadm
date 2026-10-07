@@ -1,0 +1,37 @@
+# Every screen, both appearances — the ios-native-shots workflow, for checking
+# the UI without a phone.
+# name                   appearance tab        route
+dark-dashboard           dark  dashboard
+dark-containers          dark  containers
+dark-container-detail    dark  containers detail
+dark-terminal            dark  terminal
+dark-terminal-session    dark  terminal   session
+dark-assistant           dark  assistant
+dark-more                dark  more
+dark-server              dark  more       server
+dark-updates             dark  more       updates
+dark-apps                dark  more       apps
+dark-files               dark  more       files
+dark-users               dark  more       users
+dark-alerts              dark  more       alerts
+dark-checks              dark  more       checks
+dark-activity            dark  more       activity
+dark-ai                  dark  more       ai
+dark-agents              dark  more       agents
+dark-security            dark  more       security
+dark-about               dark  more       about
+dark-connect             dark  connect
+dark-login               dark  login
+light-dashboard          light dashboard
+light-containers         light containers
+light-container-detail   light containers detail
+light-terminal           light terminal
+light-assistant          light assistant
+light-more               light more
+light-updates            light more       updates
+light-apps               light more       apps
+light-checks             light more       checks
+light-security           light more       security
+light-ai                 light more       ai
+light-connect            light connect
+light-login              light login

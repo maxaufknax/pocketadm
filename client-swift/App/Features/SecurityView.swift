@@ -59,7 +59,7 @@ struct SecurityView: View {
                 } label: {
                     HStack {
                         Spacer()
-                        if changing { ProgressView().tint(Theme.accent) } else { Text("Change password") }
+                        if changing { ProgressView() } else { Text("Change password") }
                         Spacer()
                     }
                 }
@@ -72,7 +72,6 @@ struct SecurityView: View {
                     .font(.caption)
                     .foregroundStyle(passwordMismatch ? Theme.danger : Theme.muted)
             }
-            .listRowBackground(Theme.bg2)
 
             Section {
                 HStack {
@@ -97,7 +96,6 @@ struct SecurityView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
             }
-            .listRowBackground(Theme.bg2)
 
             Section {
                 Button("Sign out all other devices", role: .destructive) { confirmRevoke = true }
@@ -108,7 +106,6 @@ struct SecurityView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
             }
-            .listRowBackground(Theme.bg2)
 
             Section {
                 NavigationLink {
@@ -118,11 +115,8 @@ struct SecurityView: View {
                            subtitle: "Every action taken on this server")
                 }
             }
-            .listRowBackground(Theme.bg2)
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .navigationTitle("Security")
         .screenBackground()
         .toast($toast)
@@ -299,7 +293,7 @@ struct TOTPSetupSheet: View {
                                      tint: Theme.danger,
                                      retry: { Task { await load() } })
                     } else {
-                        ProgressView().tint(Theme.accent).padding(.top, 60)
+                        ProgressView().padding(.top, 60)
                     }
                 }
                 .padding(20)
@@ -307,9 +301,6 @@ struct TOTPSetupSheet: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle("Two-factor")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Cancel") { dismiss() }.tint(Theme.muted)

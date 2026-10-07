@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// A labelled statistic with a filled progress track — the dashboard's main
-/// unit. The bar is what makes "72%" legible at a glance.
+/// A labelled statistic with a capacity bar, for the few places that show
+/// one number on its own card (a container's CPU and memory).
 struct MetricTile: View {
     let title: String
     let value: String
@@ -10,10 +10,9 @@ struct MetricTile: View {
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .tracking(0.6)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.footnote.weight(.medium))
                 .foregroundStyle(Theme.muted)
 
             Text(value)
@@ -21,28 +20,22 @@ struct MetricTile: View {
                 .foregroundStyle(Theme.text)
                 .contentTransition(.numericText())
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.bg3)
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max(0, min(1, fraction)) * geo.size.width)
-                }
-            }
-            .frame(height: 5)
+            ProgressView(value: max(0, min(1, fraction)))
+                .tint(tint)
 
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(Theme.muted)
-                .lineLimit(1)
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .card(padding: 14)
     }
 }
 
-/// Pill used for container state. Colour carries the meaning, so the text
-/// stays short.
+/// A short tag ("security", "default", "rw"): tinted text on a faint capsule.
 struct StatusPill: View {
     let text: String
     let tint: Color
@@ -51,13 +44,29 @@ struct StatusPill: View {
         Text(text)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(tint.opacity(0.14), in: Capsule())
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(tint.opacity(0.15), in: Capsule())
     }
 }
 
-/// One consistent empty/error state instead of each screen inventing its own.
+/// A state ("Running", "Exited"): a coloured dot and the word, the way iOS
+/// shows connection states.
+struct StatusDot: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(tint).frame(width: 7, height: 7)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+        }
+    }
+}
+
+/// Empty and error states, as the system draws them.
 struct MessageState: View {
     let symbol: String
     let title: String
@@ -66,34 +75,28 @@ struct MessageState: View {
     var retry: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: 34))
-                .foregroundStyle(tint)
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(Theme.text)
-                .multilineTextAlignment(.center)
-            if let message {
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.muted)
-                    .multilineTextAlignment(.center)
+        ContentUnavailableView {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: symbol).foregroundStyle(tint)
             }
+        } description: {
+            if let message, !message.isEmpty {
+                Text(message)
+            }
+        } actions: {
             if let retry {
                 Button("Try again", action: retry)
                     .buttonStyle(.borderedProminent)
-                    .tint(Theme.accent)
-                    .foregroundStyle(Theme.onAccent)
+                    .buttonBorderShape(.capsule)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(28)
     }
 }
 
-/// The app's primary button. `.borderedProminent` alone would tint the label
-/// white, which is unreadable on the light-blue accent.
+/// The app's primary button: full width, filled with the accent, a capsule
+/// like the system's own prominent buttons.
 struct PrimaryButtonStyle: ButtonStyle {
     var enabled: Bool = true
 
@@ -101,24 +104,20 @@ struct PrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(enabled ? Theme.accent : Theme.bg3,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.vertical, 15)
+            .background(enabled ? Theme.accent : Theme.bg3, in: Capsule())
             .foregroundStyle(enabled ? Theme.onAccent : Theme.muted)
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
     }
 }
 
-/// Paints the palette's page colour edge to edge and keeps the status-bar text
-/// light. Applied once per screen root.
+/// The page colour behind screens that are not lists. Navigation bars are
+/// left to the system, which gives them the right material in every iOS.
 struct ScreenBackground: ViewModifier {
     func body(content: Content) -> some View {
-        content
-            .background(Theme.bg.ignoresSafeArea())
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+        content.background(Theme.bg.ignoresSafeArea())
     }
 }
 

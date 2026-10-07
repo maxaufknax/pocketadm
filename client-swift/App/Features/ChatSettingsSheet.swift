@@ -41,7 +41,6 @@ struct ChatSettingsSheet: View {
                             .padding(.vertical, 2)
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Mode")
                 } footer: {
@@ -102,7 +101,6 @@ struct ChatSettingsSheet: View {
                                 }
                             }
                         }
-                        .listRowBackground(Theme.bg2)
                     } header: {
                         SectionCaption(text: "Model")
                     } footer: {
@@ -122,7 +120,6 @@ struct ChatSettingsSheet: View {
                             }
                         }
                         .pickerStyle(.inline)
-                        .listRowBackground(Theme.bg2)
                     } header: {
                         SectionCaption(text: "Where it works")
                     } footer: {
@@ -135,7 +132,6 @@ struct ChatSettingsSheet: View {
                 Section {
                     Toggle("Extended thinking", isOn: $draft.thinking)
                         .tint(Theme.accent)
-                        .listRowBackground(Theme.bg2)
                 } footer: {
                     Text("Slower and more expensive, but better at multi-step reasoning. Only some models support it.")
                         .font(.caption)
@@ -143,13 +139,8 @@ struct ChatSettingsSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Theme.bg)
             .navigationTitle("Session")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }.tint(Theme.muted)
@@ -183,7 +174,7 @@ struct ChatHistorySheet: View {
         NavigationStack {
             Group {
                 if !loaded {
-                    ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if visible.isEmpty {
                     MessageState(symbol: "bubble.left",
                                  title: "No chats yet",
@@ -195,9 +186,6 @@ struct ChatHistorySheet: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle("Chats")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }.tint(Theme.muted)
@@ -233,7 +221,6 @@ struct ChatHistorySheet: View {
                             .foregroundStyle(Theme.muted)
                     }
                 }
-                .listRowBackground(Theme.bg2)
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button(role: .destructive) {
                         Task { await delete(chat) }
@@ -250,8 +237,6 @@ struct ChatHistorySheet: View {
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await load() }
     }
 

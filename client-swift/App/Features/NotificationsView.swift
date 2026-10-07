@@ -12,7 +12,7 @@ struct NotificationsView: View {
     var body: some View {
         Group {
             if !loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let feed, !feed.items.isEmpty {
                 list(feed)
             } else {
@@ -24,44 +24,41 @@ struct NotificationsView: View {
             }
         }
         .navigationTitle("Alerts")
-        .screenBackground()
+        .navigationBarTitleDisplayMode(.large)
         .task { await load() }
     }
 
     private func list(_ feed: NotificationFeed) -> some View {
         List {
             ForEach(feed.items) { item in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.status.symbol)
-                            .font(.caption)
-                            .foregroundStyle(item.status.tint)
-                        Text(item.title)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Theme.text)
-                        Spacer()
-                        if item.count > 1 {
-                            // The server de-duplicates by fingerprint, so a
-                            // recurring alert is one row with a count rather
-                            // than forty identical ones.
-                            StatusPill(text: "×\(item.count)", tint: Theme.muted)
+                HStack(alignment: .top, spacing: 14) {
+                    IconTile(symbol: item.status.symbol, color: item.status.tint)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(item.title)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(Theme.text)
+                            Spacer(minLength: 8)
+                            if item.count > 1 {
+                                // The server de-duplicates by fingerprint, so a
+                                // recurring alert is one row with a count rather
+                                // than forty identical ones.
+                                StatusPill(text: "×\(item.count)", tint: Theme.muted)
+                            }
                         }
+                        Text(item.body)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(item.source) · \(Fmt.ago(item.date))")
+                            .font(.caption)
+                            .foregroundStyle(Color(uiColor: .tertiaryLabel))
                     }
-                    Text(item.body)
-                        .font(.caption)
-                        .foregroundStyle(Theme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("\(item.source) · \(Fmt.ago(item.date))")
-                        .font(.caption2)
-                        .foregroundStyle(Theme.muted)
                 }
-                .padding(.vertical, 4)
-                .listRowBackground(Theme.bg2)
+                .padding(.vertical, 2)
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await load() }
     }
 

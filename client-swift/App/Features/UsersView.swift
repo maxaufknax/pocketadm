@@ -19,7 +19,7 @@ struct UsersView: View {
     var body: some View {
         Group {
             if !loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let data {
                 content(data)
             } else {
@@ -52,12 +52,9 @@ struct UsersView: View {
         List {
             Section {
                 FactRow(label: "Host", value: data.identity.hostname)
-                HairlineDivider()
                 FactRow(label: "System", value: data.identity.os)
-                HairlineDivider()
                 FactRow(label: "Kernel", value: "\(data.identity.kernel) · \(data.identity.arch)")
             }
-            .listRowBackground(Theme.bg2)
 
             if !data.canManage {
                 Section {
@@ -73,7 +70,6 @@ struct UsersView: View {
                 ForEach(humans(data)) { user in
                     Button { selected = user } label: { UserRow(user: user) }
                 }
-                .listRowBackground(Theme.bg2)
             } header: {
                 HStack {
                     SectionCaption(text: "People")
@@ -105,11 +101,8 @@ struct UsersView: View {
                         .foregroundStyle(Theme.muted)
                 }
             }
-            .listRowBackground(Theme.bg2)
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await load() }
     }
 
@@ -183,18 +176,13 @@ struct UserSheet: View {
             List {
                 Section {
                     FactRow(label: "User", value: user.name)
-                    HairlineDivider()
                     FactRow(label: "UID", value: String(user.uid))
-                    HairlineDivider()
                     FactRow(label: "Home", value: user.home, selectable: true)
-                    HairlineDivider()
                     FactRow(label: "Shell", value: user.shell)
                     if !user.groups.isEmpty {
-                        HairlineDivider()
                         FactRow(label: "Groups", value: user.groups.joined(separator: ", "))
                     }
                 }
-                .listRowBackground(Theme.bg2)
 
                 if canManage && !user.isRoot {
                     Section {
@@ -211,7 +199,6 @@ struct UserSheet: View {
                             .font(.caption)
                             .foregroundStyle(Theme.muted)
                     }
-                    .listRowBackground(Theme.bg2)
 
                     Section {
                         Button(user.locked ? "Unlock account" : "Lock account",
@@ -229,7 +216,6 @@ struct UserSheet: View {
                             .font(.caption)
                             .foregroundStyle(Theme.muted)
                     }
-                    .listRowBackground(Theme.bg2)
                 }
 
                 if let failure {
@@ -238,17 +224,11 @@ struct UserSheet: View {
                             .font(.caption)
                             .foregroundStyle(Theme.danger)
                     }
-                    .listRowBackground(Theme.bg2)
                 }
             }
             .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Theme.bg)
             .navigationTitle(user.name)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.tint(Theme.accent)
@@ -301,23 +281,16 @@ struct CreateUserSheet: View {
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
                 }
-                .listRowBackground(Theme.bg2)
 
                 if let failure {
                     Section {
                         Text(failure).font(.caption).foregroundStyle(Theme.danger)
                     }
-                    .listRowBackground(Theme.bg2)
                 }
             }
             .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Theme.bg)
             .navigationTitle("New user")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }.tint(Theme.muted)

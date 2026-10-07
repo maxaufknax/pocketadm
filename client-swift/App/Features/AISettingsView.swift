@@ -69,7 +69,6 @@ struct AISettingsView: View {
                     }
                     .padding(.vertical, 4)
                 }
-                .listRowBackground(Theme.bg2)
             } header: {
                 SectionCaption(text: "Providers")
             } footer: {
@@ -106,7 +105,6 @@ struct AISettingsView: View {
                                 .foregroundStyle(Theme.text)
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Default model")
                 } footer: {
@@ -121,14 +119,11 @@ struct AISettingsView: View {
                 Section {
                     FactRow(label: "Today",
                             value: "\(Fmt.money(usage.today.cost)) · \(usage.today.requests) requests")
-                    HairlineDivider()
                     FactRow(label: "This month",
                             value: "\(Fmt.money(usage.month.cost)) · \(usage.month.requests) requests")
-                    HairlineDivider()
                     FactRow(label: "Tokens this month",
                             value: "\(Fmt.count(usage.month.input)) in · \(Fmt.count(usage.month.output)) out")
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             Section {
@@ -138,7 +133,6 @@ struct AISettingsView: View {
                     NavRow(symbol: "cpu", title: "Local models",
                            subtitle: "Run a model on the server itself — no keys, no cost")
                 }
-                .listRowBackground(Theme.bg2)
 
                 NavigationLink {
                     AgentSettingsView()
@@ -146,7 +140,6 @@ struct AISettingsView: View {
                     NavRow(symbol: "wrench.and.screwdriver", title: "Agent behaviour",
                            subtitle: "Memory, instructions and which tools it may use")
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             Section {
@@ -155,18 +148,15 @@ struct AISettingsView: View {
                 } label: {
                     HStack {
                         Spacer()
-                        if saving { ProgressView().tint(Theme.accent) } else { Text("Save") }
+                        if saving { ProgressView() } else { Text("Save") }
                         Spacer()
                     }
                 }
                 .tint(Theme.accent)
                 .disabled(saving)
-                .listRowBackground(Theme.bg2)
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .navigationTitle("AI")
         .screenBackground()
         .toast($toast)

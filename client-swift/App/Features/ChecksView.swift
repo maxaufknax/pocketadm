@@ -66,7 +66,7 @@ struct ChecksView: View {
     var body: some View {
         Group {
             if !model.loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let report = model.report {
                 content(report)
             } else {
@@ -117,7 +117,7 @@ struct ChecksView: View {
 
                 if model.running {
                     HStack(spacing: 10) {
-                        ProgressView().tint(Theme.accent)
+                        ProgressView()
                         Text("Running checks…").font(.caption).foregroundStyle(Theme.muted)
                         Spacer()
                     }
@@ -345,7 +345,6 @@ struct ReportScheduleSheet: View {
                     Toggle("Run automatically", isOn: $auto)
                         .tint(Theme.accent)
                 }
-                .listRowBackground(Theme.bg2)
 
                 Section {
                     Picker("Interval", selection: $interval) {
@@ -362,16 +361,10 @@ struct ReportScheduleSheet: View {
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
                 }
-                .listRowBackground(Theme.bg2)
             }
             .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Theme.bg)
             .navigationTitle("Schedule")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }.tint(Theme.muted)

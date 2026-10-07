@@ -32,8 +32,9 @@ struct LoginView: View {
                         .onSubmit {
                             if needsTOTP { focus = .totp } else { Task { await signIn() } }
                         }
-                        .padding(12)
-                        .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 13)
+                        .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .foregroundStyle(Theme.text)
 
                     if needsTOTP {
@@ -41,8 +42,9 @@ struct LoginView: View {
                             .keyboardType(.numberPad)
                             .textContentType(.oneTimeCode)
                             .focused($focus, equals: .totp)
-                            .padding(12)
-                            .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 13)
+                            .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundStyle(Theme.text)
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
@@ -62,7 +64,7 @@ struct LoginView: View {
                             Task { await signInWithProvider() }
                         } label: {
                             if ssoBusy {
-                                ProgressView().tint(Theme.accent)
+                                ProgressView()
                             } else {
                                 Label("Sign in with \(provider.label)", systemImage: "person.badge.key")
                             }
@@ -81,14 +83,13 @@ struct LoginView: View {
                 }
 
                 Button("Use a different server") { app.forgetServer() }
-                    .font(.footnote)
-                    .tint(Theme.muted)
+                    .font(.subheadline)
             }
             .padding(20)
         }
         .background(Theme.bg.ignoresSafeArea())
         .scrollDismissesKeyboard(.interactively)
-        .animation(.easeOut(duration: 0.2), value: needsTOTP)
+        .animation(.snappy, value: needsTOTP)
         .onAppear {
             needsTOTP = info.totpRequired
             error = app.signOutReason
@@ -97,21 +98,22 @@ struct LoginView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "lock.shield")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(Theme.accent)
+        VStack(spacing: 10) {
+            ServiceIcon(names: ["pocketadm"], size: 76)
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
             Text(info.serverName)
-                .font(.system(.title2, design: .rounded).weight(.semibold))
+                .font(.title.weight(.bold))
                 .foregroundStyle(Theme.text)
+                .multilineTextAlignment(.center)
             Text("PocketADM \(info.version)")
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(Theme.muted)
             if info.demo {
-                StatusPill(text: "DEMO SERVER", tint: Theme.warn).padding(.top, 4)
+                StatusPill(text: "Demo server · password: demo", tint: .orange).padding(.top, 2)
             }
         }
-        .padding(.top, 32)
+        .padding(.top, 36)
+        .padding(.bottom, 6)
     }
 
     private var canSubmit: Bool {

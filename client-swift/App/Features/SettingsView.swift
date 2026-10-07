@@ -1,15 +1,15 @@
 import SwiftUI
 import UIKit
 
-/// Connection, identity and this device.
+/// The server this device is connected to: what it is, its name, the
+/// directories the agent may touch, and leaving it.
 ///
-/// Pushed from the More hub, so it deliberately has no `NavigationStack` of its
+/// Pushed from the More tab, so it deliberately has no `NavigationStack` of its
 /// own — nesting one inside another breaks the back button and the large-title
 /// collapse.
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
 
-    @State private var showPairSheet = false
     @State private var confirmForget = false
     @State private var editingName = false
     @State private var serverName = ""
@@ -17,61 +17,40 @@ struct SettingsView: View {
 
     var body: some View {
         List {
-            Section {
-                FactRow(label: "Server", value: app.serverName.isEmpty ? "—" : app.serverName)
-                HairlineDivider()
-                FactRow(label: "Address",
-                        value: app.serverURL?.absoluteString ?? "—",
-                        selectable: true)
+            Section("Connection") {
+                FactRow(label: "Name", value: app.serverName.isEmpty ? "—" : app.serverName)
+                FactRow(label: "Address", value: app.serverURL?.absoluteString ?? "—", selectable: true)
                 if let me = app.me {
-                    HairlineDivider()
                     FactRow(label: "Version", value: me.version)
-                    HairlineDivider()
                     FactRow(label: "Hostname", value: me.hostname)
                     if me.demo {
-                        HairlineDivider()
-                        FactRow(label: "Mode", value: "demo — data is simulated", tint: Theme.warn)
+                        FactRow(label: "Mode", value: "Demo with sample data", tint: .orange)
                     }
                 }
-            } header: {
-                SectionCaption(text: "Connection")
             }
-            .listRowBackground(Theme.bg2)
 
             Section {
                 Button {
                     serverName = app.serverName
                     editingName = true
                 } label: {
-                    NavRow(symbol: "tag", title: "Rename this server",
-                           subtitle: "Shown on every device that connects")
+                    Label("Rename server", systemImage: "pencil")
                 }
-
-                Button {
-                    showPairSheet = true
-                } label: {
-                    NavRow(symbol: "qrcode", title: "Pair another device",
-                           subtitle: app.me?.canPair == false
-                             ? "Disabled on this server"
-                             : "Sign in a second phone with no password")
-                }
-                .disabled(app.me?.canPair == false)
-            } header: {
-                SectionCaption(text: "Devices")
             } footer: {
-                Text("A pairing code works once and grants full access. Anyone who scans it is in.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.muted)
+                Text("The name every device shows for this server.")
             }
-            .listRowBackground(Theme.bg2)
 
             if let workspaces = app.me?.workspaces, !workspaces.isEmpty {
                 Section {
                     ForEach(workspaces, id: \.self) { path in
                         HStack {
-                            Text(path)
-                                .font(.system(size: 13, design: .monospaced))
-                                .foregroundStyle(Theme.text)
+                            Label {
+                                Text(path)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundStyle(Theme.text)
+                            } icon: {
+                                Image(systemName: "folder")
+                            }
                             Spacer()
                             if path == app.me?.defaultWorkspace {
                                 StatusPill(text: "default", tint: Theme.accent)
@@ -79,13 +58,10 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    SectionCaption(text: "Workspaces")
+                    Text("Workspaces")
                 } footer: {
                     Text("The only directories the agent's file tools and the file browser can reach.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.muted)
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             Section {
@@ -99,23 +75,13 @@ struct SettingsView: View {
                 } label: {
                     Label("Forget this server", systemImage: "trash")
                 }
+            } footer: {
+                Text("Signing out keeps the address for next time. Forgetting removes the server from this device.")
             }
-            .listRowBackground(Theme.bg2)
-
-            Section {
-                Text("PocketADM native · built with SwiftUI. The terminal is a real xterm emulator and the assistant runs on your server, not on this phone.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.muted)
-            }
-            .listRowBackground(Theme.bg)
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
-        .navigationTitle("Settings")
-        .screenBackground()
+        .navigationTitle("Server")
+        .navigationBarTitleDisplayMode(.inline)
         .toast($toast)
-        .sheet(isPresented: $showPairSheet) { PairCodeSheet() }
         .alert("Rename server", isPresented: $editingName) {
             TextField("Name", text: $serverName)
             Button("Save") { Task { await rename() } }
@@ -178,9 +144,10 @@ struct PairCodeSheet: View {
                         }
                     }
 
-                    Text("The code works once. Anyone who scans it gets full access to this server.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.warn)
+                    Label("The code works once. Anyone who scans it gets full access to this server.",
+                          systemImage: "exclamationmark.shield.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 30)
                 } else if let error {
@@ -190,19 +157,16 @@ struct PairCodeSheet: View {
                                  tint: Theme.danger,
                                  retry: { Task { await load() } })
                 } else {
-                    ProgressView().tint(Theme.accent)
+                    ProgressView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle("Pair a device")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.tint(Theme.accent)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
             .task { await load() }

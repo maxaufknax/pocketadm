@@ -21,24 +21,103 @@ struct ContainerDetailView: View {
     @State private var toast: Toast?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                actionBar
-                if let stats, container.isRunning { statsCard(stats) }
-                if describing || description != nil { descriptionCard }
-                factsCard
-                mountsCard
-                logsCard
-                dangerZone
+        List {
+            Section { header }
+                .listRowBackground(Color.clear)
+
+            if let stats, container.isRunning {
+                Section("Usage") {
+                    HStack(alignment: .top) {
+                        RingGauge(title: "CPU", value: Fmt.percent(stats.cpuPercent),
+                                  fraction: stats.cpuPercent / 100,
+                                  tint: stats.cpuPercent > 80 ? .orange : Theme.accent)
+                        RingGauge(title: "Memory", value: Fmt.bytes(stats.memUsage),
+                                  detail: stats.memLimit > 0 ? "of \(Fmt.bytes(stats.memLimit))" : "",
+                                  fraction: stats.memPercent / 100,
+                                  tint: stats.memPercent > 85 ? .orange : .purple)
+                    }
+                    .padding(.vertical, 8)
+                }
             }
-            .padding(16)
+
+            if describing || description != nil {
+                Section {
+                    if let description {
+                        MarkdownText(text: description)
+                    } else {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Reading the container's config and recent logs…")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+                } header: {
+                    Label("What this is", systemImage: "sparkles")
+                }
+            }
+
+            Section("Details") { facts }
+
+            if let mounts = detail?.mounts, !mounts.isEmpty {
+                Section("Mounts") {
+                    ForEach(Array(mounts.enumerated()), id: \.offset) { _, mount in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(mount.dest)
+                                    .font(.system(.subheadline, design: .monospaced))
+                                    .foregroundStyle(Theme.text)
+                                Spacer()
+                                StatusPill(text: mount.rw ? "read-write" : "read-only",
+                                           tint: mount.rw ? .orange : Theme.muted)
+                            }
+                            Text(mount.source)
+                                .font(.caption)
+                                .foregroundStyle(Theme.muted)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            Section {
+                logsContent
+            } header: {
+                HStack {
+                    Text("Logs · last \(logTail) lines")
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = logs
+                        toast = Toast(text: "Logs copied")
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .disabled(logs.isEmpty)
+                    .accessibilityLabel("Copy logs")
+                    Button {
+                        Task { await loadLogs() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Reload logs")
+                }
+                .textCase(nil)
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    confirmRemove = true
+                } label: {
+                    Label("Remove container", systemImage: "trash")
+                }
+            } footer: {
+                Text("Named volumes stay on disk, so the service's data survives.")
+            }
         }
-        .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(container.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Theme.bg2, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .toast($toast)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -53,18 +132,25 @@ struct ContainerDetailView: View {
                         toast = Toast(text: "Container id copied")
                     } label: { Label("Copy id", systemImage: "doc.on.doc") }
 
-                    Menu("Log lines") {
+                    Menu {
                         ForEach([100, 300, 1000, 2000], id: \.self) { count in
-                            Button("\(count)") {
+                            Button {
                                 logTail = count
                                 Task { await loadLogs() }
+                            } label: {
+                                if count == logTail {
+                                    Label("\(count) lines", systemImage: "checkmark")
+                                } else {
+                                    Text("\(count) lines")
+                                }
                             }
                         }
+                    } label: {
+                        Label("Log lines", systemImage: "text.alignleft")
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
-                .tint(Theme.accent)
             }
         }
         .task { await load() }
@@ -91,26 +177,50 @@ struct ContainerDetailView: View {
         }
     }
 
-    private var actionBar: some View {
-        HStack(spacing: 10) {
-            ForEach(available, id: \.self) { action in
-                Button {
-                    // Stopping something on a live server deserves a beat of
-                    // friction; starting does not.
-                    if action == .start {
-                        Task { await perform(action); await load() }
-                    } else {
-                        confirming = action
-                    }
-                } label: {
-                    Label(action.label, systemImage: action.symbol)
-                        .font(.subheadline.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                }
-                .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .foregroundStyle(action == .stop ? Theme.danger : Theme.text)
+    /// Icon, name, state and the actions that fit the state.
+    private var header: some View {
+        VStack(spacing: 10) {
+            ServiceIcon(names: [container.service?.label ?? "", container.name, container.image],
+                        category: container.service?.category ?? "", size: 68)
+            VStack(spacing: 4) {
+                Text(container.displayName)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                StatusDot(text: container.status.isEmpty ? container.state : container.status,
+                          tint: stateTint)
             }
+            HStack(spacing: 10) {
+                ForEach(available, id: \.self) { action in
+                    Button {
+                        // Stopping something on a live server deserves a beat of
+                        // friction; starting does not.
+                        if action == .start {
+                            Task { await perform(action); await load() }
+                        } else {
+                            confirming = action
+                        }
+                    } label: {
+                        Label(action.label, systemImage: action.symbol)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
+                    .tint(action == .stop ? .red : Theme.accent)
+                }
+            }
+            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var stateTint: Color {
+        switch container.state {
+        case "running":              return container.health == "unhealthy" ? .orange : .green
+        case "restarting", "paused": return .orange
+        default:                     return Color(uiColor: .systemGray3)
         }
     }
 
@@ -118,137 +228,43 @@ struct ContainerDetailView: View {
         container.isRunning ? [.restart, .stop] : [.start]
     }
 
-    /// A one-shot sample rather than a live graph: `docker stats` costs a full
-    /// second of CPU-delta sampling per call on the server, so polling it from
-    /// a detail screen would be a real cost for a number that barely moves.
-    private func statsCard(_ stats: ContainerStats) -> some View {
-        HStack(spacing: 12) {
-            miniTile(title: "CPU",
-                     value: Fmt.percent(stats.cpuPercent),
-                     tint: stats.cpuPercent > 80 ? Theme.warn : Theme.accent)
-            miniTile(title: "Memory",
-                     value: Fmt.bytes(stats.memUsage),
-                     detail: stats.memLimit > 0 ? "of \(Fmt.bytes(stats.memLimit))" : "",
-                     tint: stats.memPercent > 85 ? Theme.warn : Theme.accent2)
-        }
-    }
-
-    private func miniTile(title: String, value: String, detail: String = "",
-                          tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .tracking(0.6)
-                .foregroundStyle(Theme.muted)
-            Text(value)
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(tint)
-            if !detail.isEmpty {
-                Text(detail).font(.caption2).foregroundStyle(Theme.muted)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card(padding: 12)
-    }
-
-    private var descriptionCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SectionCaption(text: "What this is")
-                Spacer()
-                if describing { ProgressView().tint(Theme.muted).controlSize(.small) }
-            }
-            if let description {
-                MarkdownText(text: description)
-            } else {
-                Text("Reading the container's config and recent logs…")
-                    .font(.caption)
-                    .foregroundStyle(Theme.muted)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
-    }
-
-    private var factsCard: some View {
-        FactsCard {
-            FactRow(label: "Image", value: container.image, selectable: true)
-            HairlineDivider()
-            FactRow(label: "State", value: detail?.state ?? container.state)
-            if let health = detail?.health, !health.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Health", value: health,
-                        tint: health == "healthy" ? Theme.accent2 : Theme.warn)
-            }
-            if !container.composeProject.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Stack", value: container.composeProject)
-            }
-            if !container.composeService.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Service", value: container.composeService)
-            }
-            if let policy = detail?.restartPolicy, !policy.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Restart policy", value: policy)
-            }
-            if let count = detail?.restartCount {
-                HairlineDivider()
-                FactRow(label: "Restarts", value: String(count),
-                        tint: count > 5 ? Theme.warn : Theme.text)
-            }
-            if let started = detail?.startedAt, !started.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Started", value: String(started.prefix(19)))
-            }
-            if !container.ports.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Ports", value: portSummary)
-            }
-            if let networks = detail?.networks, !networks.isEmpty {
-                HairlineDivider()
-                FactRow(label: "Networks", value: networks.joined(separator: ", "))
-            }
-            if detail?.privileged == true {
-                HairlineDivider()
-                FactRow(label: "Privileged", value: "yes — unrestricted on the host",
-                        tint: Theme.danger)
-            }
-            if container.mountsDockerSock {
-                // Worth calling out: a container with the socket mounted is
-                // effectively root on the host.
-                HairlineDivider()
-                FactRow(label: "Docker socket", value: "mounted — full host control",
-                        tint: Theme.warn)
-            }
-        }
-    }
-
     @ViewBuilder
-    private var mountsCard: some View {
-        if let mounts = detail?.mounts, !mounts.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionCaption(text: "Mounts")
-                ForEach(Array(mounts.enumerated()), id: \.offset) { _, mount in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(mount.dest)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Theme.text)
-                        HStack(spacing: 6) {
-                            Text(mount.source)
-                                .font(.caption2)
-                                .foregroundStyle(Theme.muted)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            StatusPill(text: mount.rw ? "rw" : "ro",
-                                       tint: mount.rw ? Theme.warn : Theme.muted)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .card()
+    private var facts: some View {
+        FactRow(label: "Image", value: container.image, selectable: true)
+        FactRow(label: "State", value: detail?.state ?? container.state)
+        if let health = detail?.health, !health.isEmpty {
+            FactRow(label: "Health", value: health,
+                    tint: health == "healthy" ? .green : .orange)
+        }
+        if !container.composeProject.isEmpty {
+            FactRow(label: "Stack", value: container.composeProject)
+        }
+        if !container.composeService.isEmpty {
+            FactRow(label: "Service", value: container.composeService)
+        }
+        if let policy = detail?.restartPolicy, !policy.isEmpty {
+            FactRow(label: "Restart policy", value: policy)
+        }
+        if let count = detail?.restartCount {
+            FactRow(label: "Restarts", value: String(count),
+                    tint: count > 5 ? .orange : Theme.muted)
+        }
+        if let started = detail?.startedAt, !started.isEmpty {
+            FactRow(label: "Started", value: String(started.prefix(19)).replacingOccurrences(of: "T", with: " "))
+        }
+        if !container.ports.isEmpty {
+            FactRow(label: "Ports", value: portSummary)
+        }
+        if let networks = detail?.networks, !networks.isEmpty {
+            FactRow(label: "Networks", value: networks.joined(separator: ", "))
+        }
+        if detail?.privileged == true {
+            FactRow(label: "Privileged", value: "Unrestricted on the host", tint: .red)
+        }
+        if container.mountsDockerSock {
+            // Worth calling out: a container with the socket mounted is
+            // effectively root on the host.
+            FactRow(label: "Docker socket", value: "Full host control", tint: .orange)
         }
     }
 
@@ -260,52 +276,27 @@ struct ContainerDetailView: View {
         .joined(separator: ", ")
     }
 
-    private var logsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    @ViewBuilder
+    private var logsContent: some View {
+        if loadingLogs {
             HStack {
-                SectionCaption(text: "Logs · last \(logTail)")
                 Spacer()
-                Button {
-                    UIPasteboard.general.string = logs
-                    toast = Toast(text: "Logs copied")
-                } label: {
-                    Image(systemName: "doc.on.doc").font(.caption)
-                }
-                .tint(Theme.accent)
-                .disabled(logs.isEmpty)
-
-                Button {
-                    Task { await loadLogs() }
-                } label: {
-                    Image(systemName: "arrow.clockwise").font(.caption)
-                }
-                .tint(Theme.accent)
+                ProgressView()
+                Spacer()
             }
-
-            if loadingLogs {
-                ProgressView().tint(Theme.muted).frame(maxWidth: .infinity).padding(.vertical, 20)
-            } else if logs.isEmpty {
-                Text(error ?? "No log output.")
-                    .font(.caption)
-                    .foregroundStyle(error == nil ? Theme.muted : Theme.danger)
-                    .padding(.vertical, 10)
-            } else {
-                // Log lines are long and must not wrap into unreadable mush,
-                // so the console scrolls horizontally inside its own box.
-                LogConsole(lines: logs.components(separatedBy: .newlines),
-                           height: 300, follow: false)
-            }
+            .padding(.vertical, 20)
+        } else if logs.isEmpty {
+            Text(error ?? "No log output.")
+                .font(.footnote)
+                .foregroundStyle(error == nil ? Theme.muted : Theme.danger)
+        } else {
+            // Log lines are long and must not wrap into unreadable mush,
+            // so the console scrolls horizontally inside its own box.
+            LogConsole(lines: logs.components(separatedBy: .newlines),
+                       height: 320, follow: false)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Theme.termBg)
         }
-        .card()
-    }
-
-    private var dangerZone: some View {
-        Button(role: .destructive) {
-            confirmRemove = true
-        } label: {
-            Label("Remove container", systemImage: "trash")
-        }
-        .buttonStyle(SecondaryButtonStyle(tint: Theme.danger))
     }
 
     // MARK: - Loading

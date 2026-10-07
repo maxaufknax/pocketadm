@@ -15,7 +15,7 @@ struct LocalAIView: View {
     var body: some View {
         Group {
             if !loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let status {
                 content(status)
             } else {
@@ -55,18 +55,14 @@ struct LocalAIView: View {
                         value: status.running ? "running" : "not running",
                         tint: status.running ? Theme.accent2 : Theme.muted)
                 if !status.version.isEmpty {
-                    HairlineDivider()
                     FactRow(label: "Version", value: status.version)
                 }
                 if !status.base.isEmpty {
-                    HairlineDivider()
                     FactRow(label: "Address", value: status.base, selectable: true)
                 }
-                HairlineDivider()
                 FactRow(label: "Hardware",
                         value: String(format: "%.0f GB RAM · %d cores", status.ramGB, status.cpuCount))
             }
-            .listRowBackground(Theme.bg2)
 
             if !status.running {
                 Section {
@@ -84,7 +80,6 @@ struct LocalAIView: View {
                         Label("Connect to an existing Ollama", systemImage: "link")
                             .foregroundStyle(Theme.accent)
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Set up")
                 } footer: {
@@ -94,7 +89,6 @@ struct LocalAIView: View {
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
                 }
-                .listRowBackground(Theme.bg2)
             }
 
             if !status.installed.isEmpty {
@@ -119,7 +113,6 @@ struct LocalAIView: View {
                             } label: { Label("Delete", systemImage: "trash") }
                         }
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Installed")
                 }
@@ -130,7 +123,6 @@ struct LocalAIView: View {
                     RecommendedModelRow(model: model) {
                         await pull(model.name)
                     }
-                    .listRowBackground(Theme.bg2)
                 }
             } header: {
                 SectionCaption(text: "Recommended for this box")
@@ -141,8 +133,6 @@ struct LocalAIView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await load() }
     }
 

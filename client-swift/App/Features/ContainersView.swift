@@ -59,17 +59,18 @@ struct ContainersView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var model = ContainersModel()
     @State private var search = ""
+    @State private var path: [Container] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if !model.loaded {
-                    ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if model.containers.isEmpty {
                     MessageState(
                         symbol: model.error == nil ? "shippingbox" : "exclamationmark.triangle",
                         title: model.error == nil ? "No containers" : "Cannot list containers",
-                        message: model.error,
+                        message: model.error ?? "Nothing is running in Docker on this server yet.",
                         tint: model.error == nil ? Theme.muted : Theme.danger,
                         retry: { Task { await model.load(app) } }
                     )
@@ -78,9 +79,22 @@ struct ContainersView: View {
                 }
             }
             .navigationTitle("Containers")
-            .screenBackground()
+            .navigationBarTitleDisplayMode(.large)
+            .navigationDestination(for: Container.self) { container in
+                ContainerDetailView(container: container) { action in
+                    await model.perform(action, on: container, app: app)
+                }
+            }
         }
-        .task { await model.load(app) }
+        .task {
+            await model.load(app)
+            // Screenshot runs: `-PocketADMScreenshotRoute detail` opens the
+            // first running container.
+            if AppState.screenshotTab == MainTab.containers.rawValue, AppState.screenshotRoute == "detail",
+               path.isEmpty, let first = model.containers.first(where: \.isRunning) {
+                path = [first]
+            }
+        }
     }
 
     private var filtered: [Stack] {
@@ -99,33 +113,24 @@ struct ContainersView: View {
     private var list: some View {
         List {
             ForEach(filtered) { stack in
-                Section {
+                Section(stack.name) {
                     ForEach(stack.containers) { container in
                         NavigationLink(value: container) {
                             ContainerRow(container: container, busy: model.busy.contains(container.id))
                         }
-                        .listRowBackground(Theme.bg2)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             actions(for: container)
                         }
+                        .contextMenu {
+                            actions(for: container)
+                        }
                     }
-                } header: {
-                    Text(stack.name.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Theme.muted)
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .searchable(text: $search, prompt: "Search containers")
         .refreshable { await model.load(app) }
-        .navigationDestination(for: Container.self) { container in
-            ContainerDetailView(container: container) { action in
-                await model.perform(action, on: container, app: app)
-            }
-        }
+        .animation(.default, value: model.containers)
     }
 
     @ViewBuilder
@@ -134,17 +139,17 @@ struct ContainersView: View {
             Button {
                 Task { await model.perform(.restart, on: container, app: app) }
             } label: { Label("Restart", systemImage: "arrow.clockwise") }
-                .tint(Theme.warn)
+                .tint(.orange)
 
-            Button {
+            Button(role: .destructive) {
                 Task { await model.perform(.stop, on: container, app: app) }
             } label: { Label("Stop", systemImage: "stop.fill") }
-                .tint(Theme.danger)
+                .tint(.red)
         } else {
             Button {
                 Task { await model.perform(.start, on: container, app: app) }
             } label: { Label("Start", systemImage: "play.fill") }
-                .tint(Theme.accent2)
+                .tint(.green)
         }
     }
 }
@@ -154,45 +159,42 @@ struct ContainerRow: View {
     var busy: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            // The server ships an emoji per catalog service; falling back to a
-            // glyph keeps unknown images from rendering as a blank column.
-            Group {
-                if let icon = container.service?.icon, !icon.isEmpty {
-                    Text(icon).font(.title3)
-                } else {
-                    Image(systemName: "shippingbox.fill")
-                        .foregroundStyle(Theme.muted)
-                }
-            }
-            .frame(width: 30)
+        HStack(spacing: 14) {
+            ServiceIcon(names: [container.service?.label ?? "", container.name, container.image],
+                        category: container.service?.category ?? "")
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(container.displayName)
-                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1)
                 Text(container.status)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if busy {
-                ProgressView().tint(Theme.muted)
+                ProgressView()
             } else {
-                StatusPill(text: container.state, tint: stateTint)
+                StatusDot(text: stateLabel, tint: stateTint)
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
+    }
+
+    private var stateLabel: String {
+        if container.state == "running", container.health == "unhealthy" { return "Unhealthy" }
+        return container.state.prefix(1).uppercased() + container.state.dropFirst()
     }
 
     private var stateTint: Color {
         switch container.state {
-        case "running":              return container.health == "unhealthy" ? Theme.warn : Theme.accent2
-        case "restarting", "paused": return Theme.warn
-        default:                     return Theme.muted
+        case "running":              return container.health == "unhealthy" ? .orange : .green
+        case "restarting", "paused": return .orange
+        case "dead":                 return .red
+        default:                     return Color(uiColor: .systemGray3)
         }
     }
 }

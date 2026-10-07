@@ -28,9 +28,6 @@ struct JobConsoleView: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(runner.isRunning ? "Hide" : "Done") { dismiss() }
@@ -62,7 +59,7 @@ struct JobConsoleView: View {
         switch runner.outcome {
         case .running:
             HStack(spacing: 10) {
-                ProgressView().tint(Theme.accent)
+                ProgressView()
                 Text("Working — this keeps running even if you close the app.")
                     .font(.caption)
                     .foregroundStyle(Theme.muted)

@@ -49,14 +49,27 @@ final class AppState: ObservableObject {
     /// Screenshot runs (the release workflow drives the simulator):
     /// `-PocketADMScreenshotTab assistant` opens the demo on that tab, with no
     /// stored server involved.
-    static let screenshotTab: String? = {
+    /// `connect` and `login` show those screens instead of signing in.
+    static let screenshotTab: String? = launchArgument("-PocketADMScreenshotTab")
+
+    /// …and `-PocketADMScreenshotRoute updates` one screen deeper in that tab
+    /// (the routes are listed where each tab handles them).
+    static let screenshotRoute: String? = launchArgument("-PocketADMScreenshotRoute")
+
+    private static func launchArgument(_ name: String) -> String? {
         let args = ProcessInfo.processInfo.arguments
-        guard let i = args.firstIndex(of: "-PocketADMScreenshotTab"), i + 1 < args.count else { return nil }
+        guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
         return args[i + 1]
-    }()
+    }
 
     init() {
         if Self.screenshotTab == nil { restore() }
+    }
+
+    /// The demo server, identified but not signed in — the login screen.
+    func identifyDemo() async throws {
+        let info = try await APIClient(baseURL: Self.demoServer).info()
+        adopt(url: Self.demoServer, info: info)
     }
 
     /// Signs in to the public demo server.

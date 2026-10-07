@@ -21,7 +21,7 @@ struct TerminalHomeView: View {
         NavigationStack(path: $path) {
             Group {
                 if !loaded {
-                    ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let targets {
                     list(targets)
                 } else {
@@ -35,101 +35,94 @@ struct TerminalHomeView: View {
                 }
             }
             .navigationTitle("Terminal")
-            .screenBackground()
+            .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: TerminalSession.self) { session in
                 TerminalSessionView(session: session)
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            // Screenshot runs: `-PocketADMScreenshotRoute session` opens a shell.
+            if AppState.screenshotTab == MainTab.terminal.rawValue, AppState.screenshotRoute == "session",
+               path.isEmpty, let first = targets?.groups.first?.targets.first {
+                await open(first)
+            }
+        }
     }
 
     private func list(_ targets: TerminalTargets) -> some View {
         List {
             if !sessions.isEmpty {
-                Section {
+                // Sessions live on the server, so this is genuinely "still
+                // running", not "recently viewed".
+                Section("Open sessions") {
                     ForEach(sessions) { session in
                         NavigationLink(value: session) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(session.title.isEmpty ? session.context : session.title)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(Theme.text)
-                                Text(session.alive
-                                     ? "active · \(session.clients) attached"
-                                     : "ended")
-                                    .font(.caption)
-                                    .foregroundStyle(session.alive ? Theme.accent2 : Theme.muted)
-                            }
-                        }
-                        .listRowBackground(Theme.bg2)
-                    }
-                    .onDelete { offsets in
-                        Task { await close(offsets.map { sessions[$0] }) }
-                    }
-                } header: {
-                    // Sessions live on the server, so this is genuinely "still
-                    // running", not "recently viewed".
-                    Text("RUNNING SESSIONS")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Theme.muted)
-                }
-            }
-
-            ForEach(targets.groups) { group in
-                Section {
-                    ForEach(group.targets) { target in
-                        Button {
-                            Task { await open(target) }
-                        } label: {
-                            HStack(spacing: 12) {
-                                icon(for: target).frame(width: 26)
+                            HStack(spacing: 14) {
+                                IconTile(symbol: "terminal.fill",
+                                         color: session.alive ? .green : Color(uiColor: .systemGray))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(target.label)
-                                        .font(.subheadline.weight(.medium))
+                                    Text(session.title.isEmpty ? session.context : session.title)
                                         .foregroundStyle(Theme.text)
-                                    if let sub = target.sub, !sub.isEmpty {
-                                        Text(sub)
-                                            .font(.caption)
-                                            .foregroundStyle(Theme.muted)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer()
-                                if opening == target.id {
-                                    ProgressView().tint(Theme.muted)
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.weight(.semibold))
+                                    Text(session.alive
+                                         ? "Active · \(session.clients) attached"
+                                         : "Ended")
+                                        .font(.footnote)
                                         .foregroundStyle(Theme.muted)
                                 }
                             }
                         }
-                        .listRowBackground(Theme.bg2)
                     }
-                } header: {
-                    Text(group.label.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Theme.muted)
+                    .onDelete { offsets in
+                        Task { await close(offsets.map { sessions[$0] }) }
+                    }
+                }
+            }
+
+            ForEach(targets.groups) { group in
+                Section(group.label) {
+                    ForEach(group.targets) { target in
+                        Button {
+                            Task { await open(target) }
+                        } label: {
+                            HStack(spacing: 14) {
+                                icon(for: target)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(target.label)
+                                        .foregroundStyle(Theme.text)
+                                    if let sub = target.sub, !sub.isEmpty {
+                                        Text(sub)
+                                            .font(.footnote)
+                                            .foregroundStyle(Theme.muted)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                if opening == target.id {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "chevron.right")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await load() }
     }
 
+    /// The app's own shell gets the PocketADM icon, containers their brand
+    /// mark — the server's own icon names and emoji are never drawn as text.
     @ViewBuilder
     private func icon(for target: TerminalTargets.Target) -> some View {
-        // The server sends either an SF Symbol name ("box") or an emoji.
-        // Emoji have no symbol of that name, so the fallback matters.
-        if let raw = target.icon, !raw.isEmpty {
-            if UIImage(systemName: raw) != nil {
-                Image(systemName: raw).foregroundStyle(Theme.accent)
-            } else {
-                Text(raw).font(.title3)
-            }
+        if target.container == true || ServiceIcon.isPocketADM(target.label) {
+            ServiceIcon(names: [target.label, target.sub ?? ""])
         } else {
-            Image(systemName: "terminal").foregroundStyle(Theme.accent)
+            IconTile(symbol: ServerSymbol.sfSymbol(for: target.icon ?? "") ?? "terminal.fill",
+                     color: .gray, size: 34)
         }
     }
 
@@ -151,7 +144,17 @@ struct TerminalHomeView: View {
     }
 
     private func open(_ target: TerminalTargets.Target) async {
-        guard let client = app.client, opening == nil else { return }
+        guard opening == nil else { return }
+        // The public demo is read-only and has no host to open a shell on: it
+        // serves a simulated shell on the socket itself, so there is no
+        // session to create — asking for one is refused.
+        if app.me?.demo == true || app.serverInfo?.demo == true {
+            let now = Date().timeIntervalSince1970
+            path.append(TerminalSession(id: "demo-\(target.id)", title: target.label, context: target.id,
+                                        created: now, lastActive: now, alive: true, clients: 1))
+            return
+        }
+        guard let client = app.client else { return }
         opening = target.id
         defer { opening = nil }
         do {
@@ -195,21 +198,31 @@ struct TerminalSessionView: View {
             .background(Theme.termBg.ignoresSafeArea())
             .navigationTitle(session.title.isEmpty ? session.context : session.title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.bg2, for: .navigationBar)
+            // A terminal is dark in either appearance, and so is its bar.
+            .toolbarBackground(Theme.termBg, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar(.hidden, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     switch socket.status {
-                    case .connected: StatusPill(text: "live", tint: Theme.accent2)
-                    case .connecting: ProgressView().tint(Theme.muted)
-                    case .closed:    StatusPill(text: "closed", tint: Theme.danger)
-                    case .idle:      EmptyView()
+                    case .connected:  StatusDot(text: "Live", tint: .green)
+                    case .connecting: ProgressView()
+                    case .closed:     StatusDot(text: "Closed", tint: .red)
+                    case .idle:       EmptyView()
                     }
                 }
             }
             .onAppear { connect() }
             .onDisappear { socket.disconnect() }
+            .onChange(of: socket.status) { _, status in
+                // Screenshot runs show a terminal with something in it.
+                guard status == .connected, AppState.screenshotRoute == "session" else { return }
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    socket.send(input: "docker ps\r")
+                }
+            }
     }
 
     private func connect() {

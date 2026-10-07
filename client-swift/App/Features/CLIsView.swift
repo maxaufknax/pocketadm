@@ -51,7 +51,6 @@ struct CLIsView: View {
                     }
                     .padding(.vertical, 3)
                 }
-                .listRowBackground(Theme.bg2)
             } header: {
                 SectionCaption(text: "Coding agents")
             } footer: {
@@ -61,8 +60,6 @@ struct CLIsView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .navigationTitle("Coding agents")
         .screenBackground()
         .toast($toast)

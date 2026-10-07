@@ -15,7 +15,7 @@ struct AuditView: View {
     var body: some View {
         Group {
             if !loaded {
-                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if events.isEmpty {
                 MessageState(symbol: error == nil ? "list.bullet.rectangle" : "exclamationmark.triangle",
                              title: error == nil ? "Nothing logged yet" : "Cannot read the log",
@@ -27,42 +27,40 @@ struct AuditView: View {
             }
         }
         .navigationTitle("Activity")
-        .screenBackground()
+        .navigationBarTitleDisplayMode(.large)
         .task { if !loaded { await reload() } }
     }
 
     private var list: some View {
         List {
             ForEach(events) { event in
-                HStack(alignment: .top, spacing: 10) {
-                    Text(meta[event.action]?.icon ?? "•")
-                        .frame(width: 22)
+                HStack(alignment: .top, spacing: 14) {
+                    let style = AuditStyle.of(event.action)
+                    IconTile(symbol: style.symbol, color: event.status == .ok ? style.color : event.status.tint)
 
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(meta[event.action]?.label ?? event.action)
-                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(event.status == .ok ? Theme.text : event.status.tint)
                         if !event.target.isEmpty {
                             Text(event.target)
-                                .font(.caption)
+                                .font(.footnote)
                                 .foregroundStyle(Theme.text)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                         if !event.detail.isEmpty {
                             Text(event.detail)
-                                .font(.caption)
+                                .font(.footnote)
                                 .foregroundStyle(Theme.muted)
                                 .lineLimit(2)
                         }
                         Text("\(Fmt.ago(event.date)) · \(event.source)")
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundStyle(Theme.muted)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 3)
-                .listRowBackground(Theme.bg2)
+                .padding(.vertical, 2)
             }
 
             if cursor != nil {
@@ -72,20 +70,16 @@ struct AuditView: View {
                     HStack {
                         Spacer()
                         if loadingMore {
-                            ProgressView().tint(Theme.muted)
+                            ProgressView()
                         } else {
-                            Text("Load older").font(.subheadline)
+                            Text("Load older")
                         }
                         Spacer()
                     }
                 }
-                .tint(Theme.accent)
-                .listRowBackground(Theme.bg2)
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .refreshable { await reload() }
     }
 
@@ -113,5 +107,40 @@ struct AuditView: View {
         // A nil cursor is the end of the log; keeping the old one would loop
         // the same page forever.
         self.cursor = feed.cursor
+    }
+}
+
+/// A symbol per logged action — the server sends emoji, which cannot be
+/// tinted and look different on every row.
+enum AuditStyle {
+    struct Style {
+        let symbol: String
+        let color: Color
+    }
+
+    static func of(_ action: String) -> Style {
+        switch action {
+        case "login":                        return Style(symbol: "lock.open.fill", color: .green)
+        case "login_failed":                 return Style(symbol: "xmark.octagon.fill", color: .red)
+        case "logout_all":                   return Style(symbol: "rectangle.portrait.and.arrow.right", color: .orange)
+        case "password_change", "user_password": return Style(symbol: "key.fill", color: .gray)
+        case "user_lock":                    return Style(symbol: "lock.fill", color: .orange)
+        case "user_admin":                   return Style(symbol: "crown.fill", color: .yellow)
+        case "user_create":                  return Style(symbol: "person.fill.badge.plus", color: .blue)
+        case "2fa_enable":                   return Style(symbol: "lock.shield.fill", color: .green)
+        case "2fa_disable":                  return Style(symbol: "lock.shield", color: .orange)
+        case "container_action":             return Style(symbol: "shippingbox.fill", color: .brown)
+        case "container_remove":             return Style(symbol: "trash.fill", color: .red)
+        case "cli_install":                  return Style(symbol: "chevron.left.forwardslash.chevron.right", color: .teal)
+        case "terminal", "terminal_kill":    return Style(symbol: "terminal.fill", color: .gray)
+        case "update_apply":                 return Style(symbol: "arrow.down.circle.fill", color: .orange)
+        case "app_install", "app_uninstall": return Style(symbol: "square.grid.2x2.fill", color: .blue)
+        case "integration_save", "integration_delete":
+            return Style(symbol: "puzzlepiece.extension.fill", color: .indigo)
+        case "loop_save", "loop_run":        return Style(symbol: "arrow.triangle.2.circlepath", color: .purple)
+        case "agent_tool":                   return Style(symbol: "sparkles", color: .purple)
+        case "settings":                     return Style(symbol: "gearshape.fill", color: .gray)
+        default:                             return Style(symbol: "circle.fill", color: .gray)
+        }
     }
 }

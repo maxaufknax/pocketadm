@@ -30,7 +30,7 @@ struct AgentSettingsView: View {
                     HStack {
                         Spacer()
                         if savingInstructions {
-                            ProgressView().tint(Theme.accent)
+                            ProgressView()
                         } else {
                             Text("Save instructions")
                         }
@@ -46,7 +46,6 @@ struct AgentSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
             }
-            .listRowBackground(Theme.bg2)
 
             Section {
                 TextEditor(text: $memory)
@@ -63,7 +62,7 @@ struct AgentSettingsView: View {
                     HStack {
                         Spacer()
                         if savingMemory {
-                            ProgressView().tint(Theme.accent)
+                            ProgressView()
                         } else {
                             Text("Save memory")
                         }
@@ -79,7 +78,6 @@ struct AgentSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
             }
-            .listRowBackground(Theme.bg2)
 
             if !tools.isEmpty {
                 Section {
@@ -105,7 +103,6 @@ struct AgentSettingsView: View {
                         }
                         .tint(Theme.accent)
                     }
-                    .listRowBackground(Theme.bg2)
                 } header: {
                     SectionCaption(text: "Tools")
                 } footer: {
@@ -116,8 +113,6 @@ struct AgentSettingsView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.bg)
         .navigationTitle("Agent")
         .screenBackground()
         .toast($toast)

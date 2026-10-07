@@ -728,20 +728,7 @@ workflows:
             -derivedDataPath build/sim -skipPackagePluginValidation -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO build | tail -5
           SIMAPP=$(ls -d build/sim/Build/Products/Debug-iphonesimulator/*.app | head -1)
-          UDID=$(xcrun simctl create pocketadm-shots "$SIM_DEVICE")
-          xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
-          xcrun simctl status_bar "$UDID" override --time "9:41" --dataNetwork wifi --wifiMode active \
-            --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
-          xcrun simctl install "$UDID" "$SIMAPP"
-          mkdir -p build/shots/raw
-          # -PocketADMScreenshotTab signs in to the demo server and opens that tab
-          for tab in dashboard assistant containers terminal more; do
-            xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" -PocketADMScreenshotTab "$tab"
-            sleep 15
-            xcrun simctl io "$UDID" screenshot "build/shots/raw/raw-$tab.png"
-          done
-          xcrun simctl shutdown "$UDID" || true
+          bash tools/simulator-shots.sh "$SIMAPP" "$BUNDLE_ID" build/shots/raw tools/shots-store.txt
           python3 -m venv /tmp/shots-venv
           /tmp/shots-venv/bin/pip install --quiet pillow
           /tmp/shots-venv/bin/python tools/store-shots.py build/shots/raw build/shots/store
@@ -782,3 +769,53 @@ workflows:
         notify:
           success: true
           failure: true
+
+  # Every screen in both appearances, on a simulator against the live demo —
+  # for checking the UI without a phone. No signing, no upload, nothing leaves
+  # Codemagic but the pictures. Started by hand (API or UI).
+  ios-native-shots:
+    name: PocketADM 2 · screenshots of every screen
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: client-swift
+    environment:
+      vars:
+        BUNDLE_ID: "de.maxaufknax.pocketadm"
+        XCODE_SCHEME: "PocketADMNative"
+        XCODE_PROJECT: "PocketADMNative.xcodeproj"
+        SIM_DEVICE: "iPhone 17 Pro Max"
+      xcode: 26.6
+    scripts:
+      - name: Provide XcodeGen
+        script: |
+          which xcodegen || brew install xcodegen
+      - name: Generate the Xcode project
+        script: |
+          set -e
+          mkdir -p Config build
+          printf 'CURRENT_PROJECT_VERSION = 1\nPRODUCT_BUNDLE_IDENTIFIER = %s\n' "$BUNDLE_ID" > Config/Build.xcconfig
+          xcodegen generate
+      - name: Ensure the Metal toolchain is available
+        script: |
+          set -uo pipefail
+          if ! xcrun metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20 \
+              || sudo xcodebuild -downloadComponent MetalToolchain 2>&1 | tail -20
+          fi
+          xcrun metal --version >/dev/null 2>&1 || { echo "!! no Metal toolchain"; exit 1; }
+      - name: Build for the simulator
+        script: |
+          set -o pipefail
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build/sim -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build/xcodebuild.log \
+            | grep -E "error:|BUILD (SUCCEEDED|FAILED)" | sort -u | head -120
+      - name: Photograph every screen
+        script: |
+          set -eo pipefail
+          SIMAPP=$(ls -d build/sim/Build/Products/Debug-iphonesimulator/*.app | head -1)
+          bash tools/simulator-shots.sh "$SIMAPP" "$BUNDLE_ID" build/shots tools/shots-review.txt
+    artifacts:
+      - build/shots/*.png
+      - build/xcodebuild.log
