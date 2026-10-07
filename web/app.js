@@ -762,6 +762,21 @@ $("#login-form").addEventListener("submit", async (e) => {
   }
 });
 
+// "Sign in with Authentik" — offered only when the server that served this
+// app has single sign-on set up. The password form stays: SSO is an extra way
+// in, never the only one.
+function renderLoginSSO(sso) {
+  $("#login-sso").classList.toggle("hidden", !sso);
+  if (!sso) return;
+  const btn = $("#login-sso-btn");
+  btn.textContent = "";
+  btn.append(ic("log-in"), " Sign in with " + sso.label);
+}
+
+$("#login-sso-btn").addEventListener("click", () => {
+  location.href = "/api/auth/oidc/start";
+});
+
 /* ---------------------------------------------------------- router */
 
 /* Settings is the one view with a hierarchy: you push it from Home's gear and
@@ -5802,6 +5817,96 @@ function renderSecurity() {
   btn.textContent = on ? "Disable" : "Enable 2FA";
   btn.classList.toggle("primary", !on);
   btn.classList.toggle("danger", on);
+  renderSSOState();
+}
+
+async function renderSSOState() {
+  const line = $("#sso-state"), btn = $("#sso-btn");
+  if (state.me?.demo) {
+    line.textContent = "Not available in the demo.";
+    btn.classList.add("hidden");
+    return;
+  }
+  try {
+    const s = await api("/settings/sso");
+    state.sso = s;
+    line.textContent = s.configured
+      ? `✓ On — "Sign in with ${s.label}" for ${s.allowed.join(", ")}.`
+      : "Off — sign in through Authentik, Authelia, Keycloak or another OpenID Connect provider.";
+    btn.textContent = s.configured ? "Edit" : "Set up";
+    btn.classList.remove("hidden");
+  } catch {
+    // a server on an older PocketADM has no SSO endpoints yet
+    line.textContent = "Needs PocketADM 0.22 or newer on this server.";
+    btn.classList.add("hidden");
+  }
+}
+
+$("#sso-btn").addEventListener("click", openSSOSettings);
+
+function openSSOSettings() {
+  const s = state.sso || {};
+  const hint = (text) => el("div", { class: "muted", style: "font-size:12px;margin-top:3px" }, text);
+  const redirect = el("input", { type: "text", readonly: "readonly",
+    value: (apiBase() || location.origin) + (s.callback_path || "/api/auth/oidc/callback") });
+  const copy = el("button", { type: "button", class: "btn small iconled", style: "margin:6px 0 12px",
+    onclick: async () => {
+      try { await navigator.clipboard.writeText(redirect.value); toast("Redirect URI copied"); }
+      catch { redirect.select(); toast("Long-press the selected address to copy"); }
+    } }, ic("copy"), " Copy redirect URI");
+  const label = el("input", { type: "text", maxlength: "40", value: s.label || "Authentik" });
+  const issuer = el("input", { type: "url", autocomplete: "off", value: s.issuer || "",
+    placeholder: "https://auth.example.com/application/o/pocketadm/" });
+  const clientId = el("input", { type: "text", autocomplete: "off", value: s.client_id || "" });
+  const secret = el("input", { type: "password", autocomplete: "new-password",
+    placeholder: s.secret_set ? "•••••••• (unchanged)" : "" });
+  const allowed = el("input", { type: "text", value: (s.allowed || []).join(", "),
+    placeholder: "e.g. admins" });
+  const status = el("div", { class: "muted", style: "margin-top:6px" });
+
+  const body = el("div", {},
+    el("p", { class: "muted", style: "margin-bottom:10px" },
+      "Sign in through your identity provider: Authentik, Authelia, Keycloak, Pocket ID or " +
+      "any other OpenID Connect provider. Password and 2FA keep working. This adds a second way in."),
+    el("p", { class: "muted", style: "margin-bottom:6px" },
+      "In the provider, create an OpenID Connect application (confidential client) " +
+      "and register this redirect URI:"),
+    redirect, copy,
+    el("label", {}, "Button label", label),
+    el("label", {}, "Issuer URL", issuer,
+      hint("The provider's issuer, or its …/.well-known/openid-configuration address.")),
+    el("label", {}, "Client ID", clientId),
+    el("label", {}, "Client secret", secret),
+    el("label", {}, "Who may sign in", allowed,
+      hint("Groups or usernames, comma-separated. Required: PocketADM is root on this " +
+        "server, so it double-checks the provider's own access rules.")),
+    el("button", { class: "btn primary wide", onclick: async function () {
+      this.disabled = true; status.textContent = "checking the provider…";
+      try {
+        await api("/settings/sso", { method: "PUT", body: JSON.stringify({
+          label: label.value, issuer: issuer.value, client_id: clientId.value,
+          client_secret: secret.value, allowed: allowed.value, redirect_uri: redirect.value }) });
+        closeModal();
+        renderSSOState();
+        $("#sec-status").textContent =
+          "✓ Single sign-on saved. The sign-in screen now offers it next to the password.";
+      } catch (e) { status.textContent = "✕ " + e.message; this.disabled = false; }
+    } }, s.configured ? "Save" : "Turn on single sign-on"),
+    status);
+  if (s.configured) {
+    body.append(el("button", { class: "btn danger wide", style: "margin-top:8px",
+      onclick: async function () {
+        if (!confirm("Turn off single sign-on? Password sign-in keeps working.")) return;
+        this.disabled = true;
+        try {
+          await api("/settings/sso", { method: "DELETE" });
+          closeModal();
+          renderSSOState();
+          $("#sec-status").textContent = "Single sign-on turned off.";
+        } catch (e) { status.textContent = "✕ " + e.message; this.disabled = false; }
+      } }, "Turn off single sign-on"));
+  }
+  openModal("Single sign-on", body);
 }
 
 $("#twofa-btn").addEventListener("click", () => {
@@ -6467,6 +6572,8 @@ function removeServer(id, after) {
 
 // Is this app being served by a real PocketADM backend? (false in the native
 // shell, where the bundled files load from localhost with no /api behind them.)
+let localInfo = null;   // /api/info of the server that served this app
+
 async function localServerReachable() {
   try {
     const ctrl = new AbortController();
@@ -6475,6 +6582,7 @@ async function localServerReachable() {
     clearTimeout(t);
     if (!res.ok) return false;
     const info = await res.json();
+    localInfo = info;
     return !!info.helmsman;
   } catch { return false; }
 }
@@ -7101,11 +7209,16 @@ function parsePairPayload(raw) {
 
 // deep link from a handoff QR/link: /?pair=CODE&c=CHATID — claim a token for
 // the server that served this app, and remember which chat to open.
+// a message for the sign-in screen, e.g. why single sign-on failed
+let loginNotice = "";
+
 async function handleDeepLink() {
   const p = new URLSearchParams(location.search);
   const code = p.get("pair");
   const chat = p.get("c") || p.get("chat");
-  if (!code && !chat) return;
+  const sso = p.get("sso");
+  const ssoError = p.get("sso_error");
+  if (!code && !chat && !sso && !ssoError) return;
   history.replaceState(null, "", location.pathname);   // don't re-trigger on refresh
   if (chat) sessionStorage.setItem("helmsman_open_chat", chat);
   if (code && !state.token) {
@@ -7118,6 +7231,21 @@ async function handleDeepLink() {
       if (res.ok) upsertLocalServer(data.token);
     } catch {}
   }
+  // back from the identity provider (/?sso=CODE): trade the one-time code for a
+  // token. Unlike pairing this runs even with a token stored, because a stale
+  // one is the usual reason to be on the sign-in screen at all.
+  if (sso) {
+    try {
+      const res = await fetch("/api/auth/oidc/claim", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: sso }),
+      });
+      const data = await res.json();
+      if (res.ok) upsertLocalServer(data.token);
+      else loginNotice = data.detail || "Single sign-on failed";
+    } catch { loginNotice = "Single sign-on failed: network error"; }
+  }
+  if (ssoError) loginNotice = ssoError;
 }
 
 async function boot() {
@@ -7131,6 +7259,12 @@ async function boot() {
     if (local) {
       $("#connect-screen").classList.add("hidden");
       $("#login-screen").classList.remove("hidden");
+      renderLoginSSO(localInfo?.sso);
+      if (loginNotice) {
+        $("#login-error").textContent = loginNotice;
+        $("#login-error").classList.remove("hidden");
+        loginNotice = "";
+      }
       // desktop only — autofocus on phones pops the keyboard over the screen
       if (!matchMedia("(pointer: coarse)").matches)
         setTimeout(() => $("#login-password").focus(), 100);
