@@ -1,0 +1,9 @@
+# PocketADM behind Caddy, for an install with a domain:
+#   install.sh --domain pocketadm.example.com
+# Caddy gets and renews a Let's Encrypt certificate for the domain (ports 80
+# and 443 must be free, and the domain's A/AAAA records must point here) and
+# forwards everything, WebSockets included, to the app's plain-HTTP port.
+{$POCKETADM_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy helmsman:8080
+}

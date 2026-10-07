@@ -20,6 +20,8 @@ COPY web ./web
 
 ENV HELMSMAN_DATA=/data
 VOLUME /data
-EXPOSE 8080
+# 8080: plain HTTP for a reverse proxy on the same host (and the loopback port)
+# 8443: HTTPS with a self-signed key whose fingerprint is in the pairing QR
+EXPOSE 8080 8443
 
-CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "server.run"]

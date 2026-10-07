@@ -191,8 +191,10 @@ def _sign(payload: bytes) -> str:
             base64.urlsafe_b64encode(sig).decode().rstrip("="))
 
 
-def issue_token() -> str:
-    payload = json.dumps({"exp": int(time.time()) + TOKEN_TTL,
+def issue_token(ttl: int | None = None) -> str:
+    """A signed token, valid for TOKEN_TTL unless `ttl` (seconds) says less."""
+    ttl = TOKEN_TTL if ttl is None else ttl
+    payload = json.dumps({"exp": int(time.time()) + int(ttl),
                           "gen": config.get_auth_generation(),
                           "n": secrets.token_hex(8)}).encode()
     return _sign(payload)

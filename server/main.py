@@ -14,7 +14,7 @@ from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                clis, config, demodata, dockerapi, hostuser, integrations, jobs,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
                sessions, skills, snapshots, sysinfo, terminal, termsessions,
-               updates)
+               tls, updates)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -183,7 +183,10 @@ async def pair_new():
     code, ttl = pairing.new_code()
     audit.record("pair_new", detail="pairing code issued")
     return {"code": code, "ttl": ttl,
-            "server_name": config.get_server_name() or sysinfo.hostname()}
+            "server_name": config.get_server_name() or sysinfo.hostname(),
+            # fingerprint of the self-signed HTTPS key; a client puts it in the
+            # QR when it encodes the https://…:8443 address (see tls.py)
+            "tls_fingerprint": tls.fingerprint()}
 
 
 class QRBody(BaseModel):
@@ -535,7 +538,7 @@ class BootstrapBody(BaseModel):
     password: str = ""
     key: str = ""
     port: int = 22
-    install_port: int = 8090
+    install_port: int = 8443          # the new server's HTTPS port
 
 
 @app.post("/api/bootstrap/ssh", dependencies=[authed])
@@ -549,7 +552,7 @@ async def bootstrap_ssh(body: BootstrapBody):
         raise HTTPException(400, "host is required")
     job = bootstrap.start_job(host, (body.user or "root").strip(),
                               password=body.password, key=body.key,
-                              port=body.port or 22, install_port=body.install_port or 8090)
+                              port=body.port or 22, install_port=body.install_port or 8443)
     audit.record("bootstrap_ssh", target=f"{body.user}@{host}",
                  detail="remote install started")
     return {"job_id": job.id}

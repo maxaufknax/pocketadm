@@ -19,6 +19,11 @@ services:
       # Need to publish it directly (no proxy, LAN access)? Set HELMSMAN_BIND=0.0.0.0
       # — and then turn on 2FA, because you've just put a root shell on the wire.
       - "${HELMSMAN_BIND:-127.0.0.1}:${HELMSMAN_PORT:-8090}:8080"
+      # HTTPS with PocketADM's own certificate, for phones when there is no
+      # domain: the pairing QR carries the key's fingerprint, so the app trusts
+      # exactly this server (see server/tls.py). Loopback unless the installer
+      # (or you, in .env) set HELMSMAN_TLS_BIND=0.0.0.0.
+      - "${HELMSMAN_TLS_BIND:-127.0.0.1}:${HELMSMAN_TLS_PORT:-8443}:8443"
     environment:
       # - ADMIN_PASSWORD=change-me          # otherwise auto-generated on first run (see logs)
       # - AI_PROVIDER=anthropic             # anthropic | openrouter | openai (or set via UI)
@@ -26,11 +31,38 @@ services:
       # - AI_MODEL=claude-sonnet-5
       # - HOST_SSH=user@172.17.0.1          # optional: real host shell in the terminal
       - HELMSMAN_WORKDIR=/host
+      # the address phones use, written by the installer; it goes into the
+      # pairing QR (`docker exec helmsman python -m server.cli pair`)
+      - POCKETADM_PUBLIC_URL=${POCKETADM_PUBLIC_URL:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /:/host                          # host filesystem, read-only (metrics + AI context)
+      - /:/host                          # host filesystem (metrics, AI context, the local terminal)
       - helmsman_data:/data
       # - ~/.ssh:/root/.ssh:ro              # optional: for HOST_SSH key auth
 
+  # With a domain: Caddy in front, with a Let's Encrypt certificate that every
+  # browser and phone trusts. Only starts with COMPOSE_PROFILES=domain (the
+  # installer's --domain sets that, POCKETADM_DOMAIN and the e-mail in .env).
+  # Needs ports 80 and 443 free and the domain's DNS pointing at this server.
+  caddy:
+    image: caddy:2-alpine
+    container_name: pocketadm-caddy
+    profiles: ["domain"]
+    restart: unless-stopped
+    depends_on:
+      - helmsman
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - POCKETADM_DOMAIN=${POCKETADM_DOMAIN:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   helmsman_data:
+  caddy_data:
+  caddy_config:

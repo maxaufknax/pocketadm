@@ -6685,7 +6685,8 @@ function openBootstrapWizard() {
   const host = el("input", { type: "text", placeholder: "203.0.113.10 or host.example.com", autocapitalize: "off" });
   const user = el("input", { type: "text", value: "root", autocapitalize: "off" });
   const port = el("input", { type: "number", value: "22", style: "width:90px" });
-  const instPort = el("input", { type: "number", value: "8090", style: "width:90px" });
+  // the new server's HTTPS port (its own certificate, pinned through the QR)
+  const instPort = el("input", { type: "number", value: "8443", style: "width:90px" });
   const authSeg = el("div", { class: "seg", style: "margin:6px 0" });
   let authMode = "password";
   const pw = el("input", { type: "password", placeholder: "SSH password (used for sudo too)", autocomplete: "off" });
@@ -6718,7 +6719,7 @@ function openBootstrapWizard() {
         body: JSON.stringify({
           host: host.value.trim(), user: user.value.trim() || "root",
           port: parseInt(port.value, 10) || 22,
-          install_port: parseInt(instPort.value, 10) || 8090,
+          install_port: parseInt(instPort.value, 10) || 8443,
           password: authMode === "password" ? pw.value : "",
           key: authMode === "key" ? key.value : "",
         }),
@@ -6727,15 +6728,35 @@ function openBootstrapWizard() {
       if (!res.ok) throw new Error(data.detail || "Install failed to start");
       const markers = await followJobAt(base, srv.token, data.job_id, logBox);
       status.textContent = "";
-      const url = markers.RESULT_URL || `http://${host.value.trim()}:${parseInt(instPort.value, 10) || 8090}`;
+      const url = markers.RESULT_URL || `https://${host.value.trim()}:${parseInt(instPort.value, 10) || 8443}`;
       result.append(
         el("div", { class: "ok-banner iconled", style: "margin-top:10px" }, ic("check"),
-          " PocketADM is installed on " + host.value.trim()),
-        el("button", { class: "btn primary wide", style: "margin-top:8px", onclick: () => {
+          " PocketADM is installed on " + host.value.trim()));
+      if (markers.RESULT_PAIR) {
+        // the QR the installer printed: address + one-time code + the new
+        // server's key fingerprint — the iPhone app scans it and is signed in
+        const qrBox = el("div", { class: "pair-qr", style: "margin-top:10px" });
+        result.append(
+          el("p", { class: "muted", style: "margin-top:8px" },
+            "Scan this with the PocketADM app (Connect → Scan pairing code). It works once and " +
+            "expires in 10 minutes."),
+          qrBox,
+          el("pre", { class: "install-cmd", style: "margin-top:6px;white-space:pre-wrap;word-break:break-all" },
+            markers.RESULT_PAIR));
+        api("/qr", { method: "POST", body: JSON.stringify({ text: markers.RESULT_PAIR }) })
+          .then((r) => { qrBox.innerHTML = r.svg; })
+          .catch(() => {});
+      }
+      result.append(
+        el("p", { class: "muted", style: "margin-top:8px" },
+          "In a browser: the new server uses its own certificate, so open ",
+          el("a", { href: url, target: "_blank", rel: "noopener" }, url),
+          " once and accept the warning, then add it here."),
+        el("button", { class: "btn wide", style: "margin-top:8px", onclick: () => {
           closeModal();
-          const m = openConnectModal({ base: url });
+          openConnectModal({ base: url });
           if (markers.RESULT_PW) setTimeout(() => { const p = $(".modal input[type=password]"); if (p) p.value = markers.RESULT_PW; }, 80);
-        } }, "Add this server →"));
+        } }, "Add this server here →"));
       if (markers.RESULT_PW) result.append(el("p", { class: "muted", style: "margin-top:6px" },
         "Admin password: ", el("code", {}, markers.RESULT_PW), " (change it after signing in)"));
     } catch (e) {
@@ -6944,8 +6965,12 @@ async function showPairingQR() {
   const body = el("div", { class: "center" }, el("p", { class: "muted" }, "generating…"));
   openModal("Pair a device", body);
   try {
-    const { code } = await api("/pair/new", { method: "POST" });
-    const payload = JSON.stringify({ h: "pair", u: location.origin, c: code });
+    const { code, tls_fingerprint: fp } = await api("/pair/new", { method: "POST" });
+    // the same link every client reads (see parsePairPayload and server/cli.py);
+    // fp lets the iOS app pin this server's own certificate
+    const origin = apiBase() || location.origin;
+    const payload = origin + "/?" + new URLSearchParams(
+      fp && origin.startsWith("https://") ? { pair: code, fp } : { pair: code });
     const { svg } = await api("/qr", { method: "POST", body: JSON.stringify({ text: payload }) });
     body.innerHTML = "";
     const holder = el("div", { class: "qr-holder" });
@@ -7239,14 +7264,21 @@ async function openPairModal() {
   startScan();
 }
 
+// Pairing QR formats, newest first:
+//   https://host/?pair=CODE[&fp=KEY][&c=CHAT]   installer, web, iOS app, handoff
+//   https://host/pair?code=CODE[&fp=KEY]        iOS app builds before 2.0
+//   {"h":"pair","u":"https://host","c":"CODE"} web app before 0.23
+// fp pins a self-signed server in the iOS app; a browser cannot use it.
 function parsePairPayload(raw) {
   try {
     const o = JSON.parse(raw);
     if (o && o.h === "pair" && o.u && o.c) return o;
   } catch {}
-  try {   // handoff QR is a plain deep link: https://host/?pair=CODE&c=CHAT
+  try {
     const u = new URL(raw);
-    const code = u.searchParams.get("pair");
+    if (!/^https?:$/.test(u.protocol)) return null;
+    const code = u.searchParams.get("pair") ||
+      (u.pathname.replace(/\/+$/, "") === "/pair" ? u.searchParams.get("code") : null);
     if (code) return { u: u.origin, c: code, chat: u.searchParams.get("c") || "" };
   } catch {}
   return null;

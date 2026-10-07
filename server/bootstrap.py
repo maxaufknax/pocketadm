@@ -2,8 +2,9 @@
 
 An already-running PocketADM can act as a "bootstrapper": give it SSH access to
 a fresh server and it runs the one-line installer there, streaming the output
-live (as a job) and parsing out the resulting URL + generated admin password so
-the new server can be added to the multi-server list with a single tap.
+live (as a job) and parsing out the resulting address, the generated admin
+password and the pairing link (address + one-time code + TLS key fingerprint)
+that the app scans to sign in without a password.
 
 Password auth uses paramiko; the SSH password doubles as the sudo password when
 the login user is not root. Nothing is persisted — credentials live only for the
@@ -32,6 +33,7 @@ INSTALLER_URL = os.environ.get(
 
 _PW_RE = re.compile(r"admin password:\s*(\S+)", re.I)
 _URL_RE = re.compile(r"https?://[^\s\"']+")
+_PAIR_RE = re.compile(r"PAIRING_LINK:\s*(https?://\S+)")
 
 
 def available() -> bool:
@@ -39,7 +41,10 @@ def available() -> bool:
 
 
 def _remote_command(port: int, as_root: bool) -> str:
-    inner = f"curl -fsSL {shlex.quote(INSTALLER_URL)} | HELMSMAN_PORT={int(port)} bash"
+    # non-interactive: nobody can answer the installer's domain question here;
+    # the new server answers on https://<host>:<port> with its own certificate
+    inner = (f"curl -fsSL {shlex.quote(INSTALLER_URL)} | "
+             f"POCKETADM_NONINTERACTIVE=1 POCKETADM_TLS_PORT={int(port)} bash")
     if as_root:
         return inner
     # feed the login password to sudo on stdin (-S), suppress the prompt (-p '')
@@ -47,10 +52,11 @@ def _remote_command(port: int, as_root: bool) -> str:
 
 
 def start_job(host: str, user: str, *, password: str = "", key: str = "",
-              port: int = 22, install_port: int = 8090) -> jobs.Job:
+              port: int = 22, install_port: int = 8443) -> jobs.Job:
     """Kick off an SSH install as a followable job. Returns the Job immediately.
-    On success the job's final lines carry `RESULT_URL=` / `RESULT_PW=` markers
-    the client uses to pre-fill the 'add server' step."""
+    On success the job's final lines carry `RESULT_URL=` / `RESULT_PW=` /
+    `RESULT_PAIR=` markers: the client shows the pairing QR for the app and
+    pre-fills the 'add server' step."""
 
     async def work(job: jobs.Job) -> None:
         if not HAVE_PARAMIKO:
@@ -90,7 +96,7 @@ def start_job(host: str, user: str, *, password: str = "", key: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-            found_url, found_pw = "", ""
+            found_url, found_pw, found_pair = "", "", ""
             buf = b""
             while True:
                 if chan.recv_ready():
@@ -104,7 +110,11 @@ def start_job(host: str, user: str, *, password: str = "", key: str = "",
                         m = _PW_RE.search(text)
                         if m:
                             found_pw = m.group(1)
-                        if "Open:" in text or "Password:" in text:
+                        pm = _PAIR_RE.search(text)
+                        if pm:
+                            found_pair = pm.group(1)
+                            continue
+                        if any(k in text for k in ("Address:", "Open:", "Password:")):
                             um = _URL_RE.search(text)
                             if um:
                                 found_url = um.group(0)
@@ -120,10 +130,10 @@ def start_job(host: str, user: str, *, password: str = "", key: str = "",
                 job.log(buf.decode("utf-8", "replace"))
             rc = chan.recv_exit_status()
             client.close()
-            return rc == 0, found_url, found_pw
+            return rc == 0, found_url, found_pw, found_pair
 
         try:
-            ok, url, pw = await asyncio.to_thread(run)
+            ok, url, pw, pair = await asyncio.to_thread(run)
         except Exception as e:  # noqa: BLE001
             job.finish(False, f"✗ SSH failed: {type(e).__name__}: {e}")
             return
@@ -132,10 +142,12 @@ def start_job(host: str, user: str, *, password: str = "", key: str = "",
             return
         # fall back to host:port if the installer couldn't print a public URL
         if not url:
-            url = f"http://{host}:{int(install_port)}"
+            url = f"https://{host}:{int(install_port)}"
         job.log(f"RESULT_URL={url}")
         if pw:
             job.log(f"RESULT_PW={pw}")
+        if pair:
+            job.log(f"RESULT_PAIR={pair}")
         job.finish(True, "✓ PocketADM installed — add it as a server below")
 
     return jobs.start(f"Install PocketADM on {host}", "bootstrap", work)

@@ -4,3 +4,4 @@ httpx>=0.27
 pydantic>=2.7
 segno>=1.6          # pure-python QR codes for the 2FA setup screen
 paramiko>=3.4       # SSH bootstrap: install PocketADM onto another server
+cryptography>=42    # the self-signed HTTPS key and certificate (server/tls.py)
