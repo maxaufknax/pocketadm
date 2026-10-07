@@ -714,6 +714,9 @@ workflows:
           echo "✓ $(plist CFBundleIdentifier) $(plist CFBundleShortVersionString) ($(plist CFBundleVersion)), minimum iOS $(plist MinimumOSVersion), privacy manifest present"
 
       - name: Photograph the app for the store
+        # Store images are a bonus, not a gate: if the simulator misbehaves the
+        # build still ships, and the version keeps the images it has.
+        ignore_failure: true
         script: |
           set -eo pipefail
           # A simulator build of the same sources, signed by nobody.
@@ -752,10 +755,16 @@ workflows:
           set -eo pipefail
           python3 -m venv /tmp/asc-venv
           /tmp/asc-venv/bin/pip install --quiet pyjwt cryptography
+          SHOTS=()
+          if ls build/shots/store/en-US/*.png >/dev/null 2>&1; then
+            SHOTS=(--screenshots build/shots/store)
+          else
+            echo "! no store images from this run — the version keeps its current ones"
+          fi
           /tmp/asc-venv/bin/python tools/asc_release.py \
             --bundle-id "$BUNDLE_ID" --version "$APP_VERSION" \
             --build-number "$NATIVE_BUILD_NUMBER" --texts AppStore \
-            --screenshots build/shots/store --wait-minutes 75
+            "${SHOTS[@]}" --wait-minutes 75
 
     artifacts:
       - build/ios/ipa/*.ipa

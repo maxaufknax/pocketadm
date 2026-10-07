@@ -134,6 +134,61 @@ def test_a_rejected_build_stops_with_a_reason(mod, monkeypatch):
     assert not fake.paths("PATCH")
 
 
+# ------------------------------------------------------------------ TestFlight
+
+class BetaASC(FakeASC):
+    def __init__(self, *a, refuse_new_locale=False, **k):
+        super().__init__(*a, **k)
+        self.refuse_new_locale = refuse_new_locale
+
+    def call(self, method, path, body=None, params=None, ok404=False):
+        if path == "/v1/apps/APP/betaGroups":
+            self.calls.append((method, path, body))
+            return {"data": [
+                {"id": "AUTO", "attributes": {"name": "Team", "isInternalGroup": True,
+                                              "hasAccessToAllBuilds": True}},
+                {"id": "PICK", "attributes": {"name": "Friends", "isInternalGroup": True,
+                                              "hasAccessToAllBuilds": False}},
+                {"id": "EXT", "attributes": {"name": "Public", "isInternalGroup": False}}]}
+        if path == "/v1/builds/BUILD/betaBuildLocalizations":
+            self.calls.append((method, path, body))
+            return {"data": [{"id": "BL-en", "attributes": {"locale": "en-US"}}]}
+        if path == "/v1/betaBuildLocalizations" and method == "POST" and self.refuse_new_locale:
+            self.calls.append((method, path, body))
+            raise SystemExit("✗ POST /v1/betaBuildLocalizations → HTTP 409: ENTITY_ERROR")
+        return super().call(method, path, body, params, ok404)
+
+
+def test_the_build_reaches_internal_testflight_groups(mod, monkeypatch):
+    fake = BetaASC([LIVE])
+    run(mod, fake, monkeypatch)
+    added = [(p, b) for m, p, b in fake.calls if m == "POST" and p.startswith("/v1/betaGroups/")]
+    assert added == [("/v1/betaGroups/PICK/relationships/builds",
+                      {"data": [{"type": "builds", "id": "BUILD"}]})], \
+        "only the internal group that does not take every build gets it added; never an external one"
+    first_beta = fake.paths().index("/v1/apps/APP/betaGroups")
+    assert first_beta > max(i for i, p in enumerate(fake.paths()) if p == "/v1/builds"), \
+        "TestFlight only after the build is processed"
+
+
+def test_what_to_test_comes_from_the_whats_new_texts(mod, monkeypatch):
+    fake = BetaASC([LIVE])
+    run(mod, fake, monkeypatch)
+    patch = next(b for m, p, b in fake.calls if m == "PATCH" and p == "/v1/betaBuildLocalizations/BL-en")
+    assert patch["data"]["attributes"]["whatsNew"] == (TEXTS / "whats-new" / "en-US.txt").read_text().strip()
+    post = next(b for m, p, b in fake.calls if m == "POST" and p == "/v1/betaBuildLocalizations")
+    assert post["data"]["attributes"]["locale"] == "de-DE"
+    assert post["data"]["relationships"]["build"]["data"]["id"] == "BUILD"
+
+
+def test_testflight_trouble_does_not_cost_the_store_preparation(mod, monkeypatch):
+    fake = BetaASC([LIVE], refuse_new_locale=True)
+    run(mod, fake, monkeypatch)
+    assert "/v1/appStoreVersions/NEWVER/relationships/build" in fake.paths("PATCH")
+    assert "/v1/appStoreReviewDetails/RD" in fake.paths("PATCH")
+    assert not any("reviewSubmission" in p for p in fake.paths())
+
+
 def test_release_texts_exist_and_fit():
     for name in ("whats-new/en-US.txt", "whats-new/de-DE.txt", "review-notes.txt"):
         text = (TEXTS / name).read_text(encoding="utf-8")

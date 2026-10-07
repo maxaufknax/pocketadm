@@ -5,13 +5,16 @@ Runs at the end of the `ios-native-release` Codemagic workflow, after the IPA
 has been uploaded:
 
   1. waits until App Store Connect has processed the build (VALID);
-  2. finds the version being prepared, or creates it — a new version inherits
+  2. hands it to TestFlight: "What to Test" from the What's New texts, and the
+     build added to every internal tester group that does not get each new
+     build automatically (internal testing needs no beta review);
+  3. finds the version being prepared, or creates it — a new version inherits
      description, keywords, screenshots and review contact from the live one;
-  3. sets its version string, *then* attaches the build (the other order is
+  4. sets its version string, *then* attaches the build (the other order is
      refused: the build has to match the version);
-  4. writes "What's New" for every localization (required for an update) and
+  5. writes "What's New" for every localization (required for an update) and
      the App Review notes with the demo account;
-  5. prints where to press "Submit for Review".
+  6. prints where to press "Submit for Review".
 
 It never submits, and it refuses to touch anything while a version is in
 review or waiting for release. Credentials come from the Codemagic App Store
@@ -111,6 +114,66 @@ def wait_for_build(asc: ASC, app_id: str, version: str, number: str, minutes: in
             raise SystemExit(f"✗ build {number} was not processed within {minutes} min. "
                              "Re-run only this step later; the upload is done.")
         time.sleep(30)
+
+
+def soft(what: str, step, *args) -> bool:
+    """Runs a step whose failure must not cost the App Store preparation —
+    TestFlight extras are worth a warning, not a stop."""
+    try:
+        step(*args)
+        return True
+    except SystemExit as e:
+        print(f"! {what} skipped: {e}")
+        return False
+
+
+def what_to_test(asc: ASC, build_id: str, texts: Path) -> None:
+    """TestFlight's "What to Test", one per What's New text (English first)."""
+    files = sorted((texts / "whats-new").glob("*.txt"), key=lambda p: (p.stem != "en-US", p.stem))
+    existing = {(x.get("attributes") or {}).get("locale"): x["id"] for x in
+                (asc.call("GET", f"/v1/builds/{build_id}/betaBuildLocalizations") or {}).get("data") or []}
+    done = []
+    for path in files:
+        locale, attrs = path.stem, {"whatsNew": path.read_text(encoding="utf-8").strip()[:4000]}
+        if locale in existing:
+            call = ("PATCH", f"/v1/betaBuildLocalizations/{existing[locale]}", {"data": {
+                "type": "betaBuildLocalizations", "id": existing[locale], "attributes": attrs}})
+        else:
+            call = ("POST", "/v1/betaBuildLocalizations", {"data": {
+                "type": "betaBuildLocalizations", "attributes": {"locale": locale, **attrs},
+                "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}})
+        if soft(f"What to Test ({locale})", asc.call, *call):
+            done.append(locale)
+    if done:
+        print(f"✓ TestFlight “What to Test” ({', '.join(done)})")
+
+
+def add_to_internal_groups(asc: ASC, app_id: str, build_id: str) -> None:
+    """Internal testers get the build without a beta review. Groups that take
+    every build automatically already have it; the others get it added here.
+    External groups are left alone — a build there means a Beta App Review."""
+    groups = (asc.call("GET", f"/v1/apps/{app_id}/betaGroups", params={"limit": "50"})
+              or {}).get("data") or []
+    internal = [g for g in groups if (g.get("attributes") or {}).get("isInternalGroup")]
+    for g in internal:
+        a = g.get("attributes") or {}
+        if a.get("hasAccessToAllBuilds"):
+            print(f"✓ TestFlight group “{a.get('name')}” gets every build automatically")
+            continue
+        asc.call("POST", f"/v1/betaGroups/{g['id']}/relationships/builds",
+                 {"data": [{"type": "builds", "id": build_id}]})
+        print(f"✓ TestFlight group “{a.get('name')}”: build added")
+    if not internal:
+        print("! no internal TestFlight group yet — App Store Connect → TestFlight → Internal "
+              "Testing → “+”, add yourself; the build is already there to pick")
+
+
+def testflight_state(asc: ASC, build_id: str) -> None:
+    res = asc.call("GET", f"/v1/builds/{build_id}/buildBetaDetail", ok404=True)
+    state = (((res or {}).get("data") or {}).get("attributes") or {}).get("internalBuildState", "")
+    if state:
+        print(f"{'✓' if state in ('READY_FOR_BETA_TESTING', 'IN_BETA_TESTING') else '!'} "
+              f"TestFlight internal testing: {state}")
 
 
 def versions_or_stop(asc: ASC, app_id: str) -> list[dict]:
@@ -293,6 +356,10 @@ def main() -> None:
         asc.call("PATCH", f"/v1/builds/{build['id']}", {"data": {
             "type": "builds", "id": build["id"], "attributes": {"usesNonExemptEncryption": False}}})
         print("✓ export compliance: standard encryption only")
+
+    soft("TestFlight “What to Test”", what_to_test, asc, build["id"], texts)
+    soft("TestFlight groups", add_to_internal_groups, asc, app_id, build["id"])
+    soft("TestFlight state", testflight_state, asc, build["id"])
 
     version = find_or_create_version(asc, app_id, args.version, args.release_type)
     asc.call("PATCH", f"/v1/appStoreVersions/{version['id']}/relationships/build",
