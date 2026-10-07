@@ -40,6 +40,11 @@
       <button type="submit" class="btn primary wide">Sign in</button>
       <p id="login-error" class="error hidden"></p>
     </form>
+    <!-- shown only when this server has single sign-on set up (Settings → Security) -->
+    <div id="login-sso" class="hidden">
+      <div class="connect-or"><span>or</span></div>
+      <button type="button" id="login-sso-btn" class="btn wide iconled"></button>
+    </div>
     <details class="install-hint">
       <summary>New here? Install PocketADM on a server</summary>
       <p class="muted">SSH into your server and run the one-line installer —
@@ -340,6 +345,14 @@
             <div class="muted" id="twofa-state">…</div>
           </div>
           <button id="twofa-btn" class="btn small">…</button>
+        </div>
+        <hr class="sep">
+        <div class="sec-row">
+          <div>
+            <div class="sec-title">Single sign-on</div>
+            <div class="muted" id="sso-state">…</div>
+          </div>
+          <button id="sso-btn" class="btn small">Set up</button>
         </div>
         <hr class="sep">
         <div class="sec-row">

@@ -3,6 +3,39 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.22.0 — Sign in with Authentik
+
+Self-hosters who already run an identity provider no longer need a separate
+PocketADM password in the browser. *Settings → Security → Single sign-on* adds
+a "Sign in with …" button to the sign-in screen, the way Nextcloud offers it.
+
+- **Any OpenID Connect provider:** Authentik, Authelia, Keycloak, Pocket ID,
+  Zitadel and others. Configuration is the issuer URL, client ID, client secret
+  and an allow-list. The screen shows the redirect URI to register at the
+  provider, with a copy button.
+- **An extra way in, never the only one.** Password and 2FA keep working, and
+  so do the native app and device pairing. A provider that is down or
+  misconfigured cannot lock anyone out.
+- **Strict about who gets in.** The allow-list (groups or usernames) is
+  mandatory: this app is root on its host, and a provider application without
+  an access policy would admit every account in the directory. Email is never
+  matched, because many providers let users change their own address.
+- **The flow:** authorization code with PKCE, a nonce, and state bound by
+  cookie to the browser that started the sign-in. Each attempt and each
+  one-time login code works once. The ID token is checked for issuer,
+  audience, expiry and nonce. It arrives straight from the token endpoint
+  over TLS, authenticated with the client secret, which per OIDC Core
+  3.1.3.7 replaces the signature check. That is also why the issuer must be
+  https. Groups that only the userinfo endpoint knows are picked up, but only
+  for the same subject. The token never appears in a URL: the callback
+  hands the app a one-time code that is valid for 60 seconds.
+- **Audited:** setup, removal, every SSO sign-in (with the group or username
+  that matched) and every refusal appear in the activity log.
+- `tests/test_oidc.py` runs the whole flow against a fake provider. It pins
+  every refusal: forged or replayed state, wrong browser, foreign issuer or
+  audience, stale or future tokens, wrong nonce, users outside the
+  allow-list, and email-only matches. 473 tests are green.
+
 ## v0.21.0 — The scan button responds, whatever breaks
 
 App Review rejected 1.0.0 twice under Guideline 2.1(a), both times on an iPad

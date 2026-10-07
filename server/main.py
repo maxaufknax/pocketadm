@@ -2,16 +2,17 @@
 import asyncio
 import json
 import os
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                clis, config, demodata, dockerapi, hostuser, integrations, jobs,
-               localai, metrics, pairing, permissions, reports, servermap,
+               localai, metrics, oidc, pairing, permissions, reports, servermap,
                sessions, skills, snapshots, sysinfo, terminal, termsessions,
                updates)
 
@@ -137,6 +138,8 @@ async def server_info():
         "server_name": config.get_server_name() or sysinfo.hostname(),
         "demo": config.DEMO,
         "totp_required": auth.totp_enabled(),
+        # label for a "Sign in with …" button, or None when SSO is off
+        "sso": oidc.public_info(),
     }
 
 
@@ -857,6 +860,126 @@ async def revoke_sessions():
     token = auth.revoke_all_sessions()
     audit.record("logout_all", detail="all other devices signed out")
     return {"ok": True, "token": token}
+
+
+# ------------------------------------------------------- single sign-on
+
+def _sso_back(code: str = "", error: str = "") -> RedirectResponse:
+    """Back to the app after a sign-in attempt. The browser-binding cookie is
+    spent either way."""
+    query = urlencode({"sso": code} if code else {"sso_error": error[:300]})
+    resp = RedirectResponse("/?" + query, status_code=302)
+    resp.delete_cookie(oidc.COOKIE, path="/api/auth/oidc")
+    return resp
+
+
+@app.get("/api/auth/oidc/start")
+async def oidc_start():
+    cfg = oidc.get_config()
+    if not cfg:
+        raise HTTPException(404, "Single sign-on is not set up")
+    try:
+        url, browser = await oidc.begin()
+    except oidc.SSOError as e:
+        return _sso_back(error=str(e))
+    resp = RedirectResponse(url, status_code=302)
+    resp.set_cookie(oidc.COOKIE, browser, max_age=oidc.FLOW_TTL, path="/api/auth/oidc",
+                    httponly=True, samesite="lax",
+                    secure=cfg["redirect_uri"].startswith("https://"))
+    return resp
+
+
+@app.get("/api/auth/oidc/callback")
+async def oidc_callback(request: Request, state: str = "", code: str = "",
+                        error: str = "", error_description: str = ""):
+    # No failure counting here: state and code are unguessable, and behind a
+    # reverse proxy every client shares one address, so a few aborted SSO
+    # attempts would otherwise lock the password login too.
+    ip = request.client.host if request.client else "?"
+    if error:
+        msg = (error_description or error)[:160]
+        audit.record("login_failed", target=ip, status="warn", detail=f"SSO: {msg}")
+        return _sso_back(error=f"The provider stopped the sign-in: {msg}")
+    try:
+        who = await oidc.complete(state, code, request.cookies.get(oidc.COOKIE, ""))
+    except oidc.SSOError as e:
+        audit.record("login_failed", target=ip, status="warn", detail=f"SSO: {e}")
+        return _sso_back(error=str(e))
+    return _sso_back(code=oidc.new_login_code(who))
+
+
+class SSOClaimBody(BaseModel):
+    code: str
+
+
+@app.post("/api/auth/oidc/claim")
+async def oidc_claim(body: SSOClaimBody, request: Request):
+    ip = request.client.host if request.client else "?"
+    auth.rate_limit(ip)
+    who = oidc.claim_login_code(body.code)
+    if not who:
+        auth.record_failure(ip)
+        raise HTTPException(401, "Sign-in code is invalid or expired")
+    audit.record("login", target=ip, detail=f"SSO as {who['user']} ({who['matched']})")
+    return {"token": auth.issue_token()}
+
+
+@app.get("/api/settings/sso", dependencies=[authed])
+async def sso_settings():
+    cfg = config.get_oidc()
+    return {
+        "configured": oidc.get_config() is not None,
+        "issuer": cfg.get("issuer", ""),
+        "client_id": cfg.get("client_id", ""),
+        "secret_set": bool(cfg.get("client_secret")),   # the secret never leaves
+        "allowed": cfg.get("allowed", []),
+        "label": cfg.get("label", ""),
+        "redirect_uri": cfg.get("redirect_uri", ""),
+        "callback_path": oidc.CALLBACK_PATH,
+    }
+
+
+class SSOSettingsBody(BaseModel):
+    issuer: str
+    client_id: str
+    client_secret: str = ""          # empty = keep the stored one
+    allowed: list[str] | str
+    label: str = ""
+    redirect_uri: str
+
+
+@app.put("/api/settings/sso", dependencies=[authed])
+async def sso_settings_save(body: SSOSettingsBody):
+    secret = body.client_secret.strip() or config.get_oidc().get("client_secret", "")
+    try:
+        redirect_uri = oidc.check_redirect_uri(body.redirect_uri)
+        allowed = oidc.parse_allowed(body.allowed)
+        if not body.client_id.strip():
+            raise oidc.SSOError("Client ID is required")
+        if not secret:
+            raise oidc.SSOError("Client secret is required")
+        if not allowed:
+            raise oidc.SSOError("Name at least one group or user that may sign in")
+        doc = await oidc.discover(body.issuer, fresh=True)
+    except oidc.SSOError as e:
+        raise HTTPException(400, str(e))
+    config.set_oidc({
+        "issuer": doc["issuer"],
+        "client_id": body.client_id.strip(),
+        "client_secret": secret,
+        "allowed": allowed,
+        "label": body.label.strip()[:40] or "SSO",
+        "redirect_uri": redirect_uri,
+    })
+    audit.record("sso_configure", target=doc["issuer"], detail="allowed: " + ", ".join(allowed))
+    return {"ok": True}
+
+
+@app.delete("/api/settings/sso", dependencies=[authed])
+async def sso_settings_remove():
+    config.set_oidc(None)
+    audit.record("sso_remove", status="warn")
+    return {"ok": True}
 
 
 @app.get("/api/audit", dependencies=[authed])

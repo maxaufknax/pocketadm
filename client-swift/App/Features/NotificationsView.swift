@@ -1,0 +1,83 @@
+import SwiftUI
+
+/// What the server's background agents have flagged since you last looked:
+/// pending updates, failed backups, health findings.
+struct NotificationsView: View {
+    @EnvironmentObject private var app: AppState
+
+    @State private var feed: NotificationFeed?
+    @State private var loaded = false
+    @State private var error: String?
+
+    var body: some View {
+        Group {
+            if !loaded {
+                ProgressView().tint(Theme.accent).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let feed, !feed.items.isEmpty {
+                list(feed)
+            } else {
+                MessageState(symbol: error == nil ? "bell.slash" : "exclamationmark.triangle",
+                             title: error == nil ? "Nothing to report" : "Cannot load alerts",
+                             message: error ?? "The server has raised no alerts.",
+                             tint: error == nil ? Theme.muted : Theme.danger,
+                             retry: { Task { await load() } })
+            }
+        }
+        .navigationTitle("Alerts")
+        .screenBackground()
+        .task { await load() }
+    }
+
+    private func list(_ feed: NotificationFeed) -> some View {
+        List {
+            ForEach(feed.items) { item in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: item.status.symbol)
+                            .font(.caption)
+                            .foregroundStyle(item.status.tint)
+                        Text(item.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.text)
+                        Spacer()
+                        if item.count > 1 {
+                            // The server de-duplicates by fingerprint, so a
+                            // recurring alert is one row with a count rather
+                            // than forty identical ones.
+                            StatusPill(text: "×\(item.count)", tint: Theme.muted)
+                        }
+                    }
+                    Text(item.body)
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(item.source) · \(Fmt.ago(item.date))")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.muted)
+                }
+                .padding(.vertical, 4)
+                .listRowBackground(Theme.bg2)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.bg)
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard let client = app.client else { return }
+        defer { loaded = true }
+        do {
+            feed = try await client.notifications()
+            error = nil
+            // Opening the screen *is* reading them; marking seen here is what
+            // clears the badge on the dashboard.
+            try? await client.markNotificationsSeen()
+            app.clearAlertBadge()
+        } catch {
+            self.error = error.localizedDescription
+            app.handle(error)
+        }
+    }
+}

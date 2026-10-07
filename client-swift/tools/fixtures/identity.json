@@ -1,0 +1,1 @@
+{"hostname":"cc5f4621d5c1","os":"Debian GNU/Linux 13 (trixie)","os_id":"debian","kernel":"6.8.0-138-generic","arch":"x86_64","in_container":true,"host_access":false,"manage_reason":"Running without the host mount — inspection only.","admin_group":"sudo","counts":{"total":18,"human":1,"admins":1,"system":17},"display_name":"PocketADM Demo"}

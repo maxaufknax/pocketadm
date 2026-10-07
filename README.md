@@ -138,6 +138,24 @@ Open `http://<your-server>:8090`, sign in, and on your phone use
 | `OLLAMA_HOST` | Point Local AI at a specific Ollama endpoint (otherwise auto-detected) |
 | `HELMSMAN_DEMO` | `1` = read-only public demo with sample data (password `demo`, no host access) |
 
+### Single sign-on (Authentik, Authelia, Keycloak …)
+
+*Settings → Security → Single sign-on* adds a **"Sign in with Authentik"** button next to
+the password form, the way Nextcloud does it. It works with any OpenID Connect provider:
+Authentik, Authelia, Keycloak, Pocket ID, Zitadel and others. Password and 2FA keep working,
+so an unreachable provider can never lock you out.
+
+1. In the provider, create an OAuth2/OpenID application as a **confidential** client. Register
+   the redirect URI the settings screen shows (`https://<your-host>/api/auth/oidc/callback`).
+   In Authentik, add a policy binding so only your admin group gets in.
+2. Enter the issuer URL (in Authentik: `https://auth.example.com/application/o/<slug>/`),
+   client ID, client secret and **who may sign in**: groups or usernames. The allow-list is
+   required. PocketADM is root on the host, so it does not rely on the provider's access rules
+   alone. Email addresses are never matched, because many providers let users change their own.
+
+Under the hood this is the authorization code flow with PKCE, a nonce, and state bound to
+the browser that started the sign-in. The provider's MFA applies instead of PocketADM's 2FA.
+
 ### Dev mode (no Docker)
 
 ```bash
@@ -166,7 +184,8 @@ apt update checks work too.
 ```
 
 **Security model:** single-admin password (scrypt-hashed), HMAC-signed expiring tokens,
-login rate-limiting. The container has the Docker socket (= root-equivalent on the host) —
+login rate-limiting, optional TOTP 2FA and optional single sign-on through an OpenID Connect
+provider (see above). The container has the Docker socket (= root-equivalent on the host) —
 that is the point of a server manager, the same trust level as Portainer. AI tool calls
 require explicit in-chat approval unless you enable auto-mode; the API key never leaves
 your server.
@@ -184,6 +203,7 @@ your server.
   survives disconnects, steering + queue, chat handoff — **v0.8**
 - [x] **Local AI** — run models on your own hardware via Ollama, RAM-aware recommendations — **v0.8**
 - [x] **Service detection** spot new containers the agent brings up and help finish setup — **v0.8**
+- [x] **Single sign-on** via OpenID Connect (Authentik, Authelia, Keycloak …) next to password + 2FA — **v0.22**
 - [ ] Native mobile app shell (Capacitor) with push notifications for updates/alerts
 - [ ] Domain / reverse-proxy automation: choose "reachable at sub.domain.tld" at install
   time, PocketADM wires up the proxy + DNS (script first, AI agent as fallback)

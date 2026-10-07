@@ -1,0 +1,109 @@
+# XcodeGen description — produces PocketADMNative.xcodeproj so no binary project
+# file lives in the repo:  xcodegen generate
+#
+# This is the *native SwiftUI client* of PocketADM. It is deliberately a
+# separate app from the Capacitor client in ../client: different bundle id,
+# different App Store Connect record, different Codemagic workflow. Nothing
+# here can touch the release that is sitting in App Review.
+name: PocketADMNative
+options:
+  bundleIdPrefix: de.maxaufknax
+  deploymentTarget:
+    # 17.0 buys Swift Charts' modern API and Observation-era SwiftUI while
+    # still covering every phone that can run the Capacitor build.
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  # A real xterm-compatible emulator. The server speaks a PTY byte stream on
+  # /ws/terminal, so anything less than a true emulator renders escape
+  # sequences as garbage the moment a curses program or a colored prompt shows
+  # up. Pinned to a major range: 1.20.0 is what this was written against.
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    minVersion: 1.20.0
+    maxVersion: 2.0.0
+
+settings:
+  base:
+    # SWIFT_VERSION only knows language modes (5.0 / 6.0), not point releases.
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: "0.2.1"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+
+targets:
+  PocketADMNative:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: SwiftTerm
+    # Carries CURRENT_PROJECT_VERSION, written by the Codemagic workflow (and by
+    # tools/bootstrap-config.sh for local generation). Kept out of the repo so
+    # the build number is never a committed, stale value.
+    #
+    # Must be `configFiles`. Written under `settings.configs.<name>.xcconfig` —
+    # which looks right — XcodeGen silently creates a build setting literally
+    # named "xcconfig" instead, the file is never attached, CFBundleVersion
+    # stays 1, and the second upload is rejected for a duplicate build number.
+    configFiles:
+      Debug: Config/Build.xcconfig
+      Release: Config/Build.xcconfig
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: PocketADM
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: en
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        # All four orientations on purpose. Since iOS 26 even iPhone-only apps
+        # run in freely resizable windows on iPad and Mac, and Apple's upload
+        # check rejects a restricted list with error 90474. A phone with Face ID
+        # never uses upside-down anyway, and the terminal is genuinely better
+        # in landscape.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Saves the export-compliance question on every upload: the app only
+        # ever uses the system's own HTTPS/TLS.
+        ITSAppUsesNonExemptEncryption: false
+        # Pairing is the primary onboarding path and it scans a QR code.
+        NSCameraUsageDescription: >-
+          PocketADM uses the camera to scan the pairing QR code shown by a
+          server you are already signed in to.
+        # A self-hosted server usually lives on the LAN. Without this, iOS
+        # silently drops the very first request to 192.168.x.x / *.local and
+        # the Connect screen just says "cannot reach server".
+        NSLocalNetworkUsageDescription: >-
+          PocketADM connects to your own server, which is often on the same
+          local network as this device.
+        NSAppTransportSecurity:
+          # PocketADM is self-hosted: people legitimately point it at
+          # http://192.168.1.10:8090 or a box with a private CA. ATS cannot
+          # know those are trusted, so it has to be relaxed here. See NOTES.md
+          # — this is the one thing to tighten before any public release.
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        # Deliberately NOT de.maxaufknax.pocketadm — that id belongs to the
+        # Capacitor app currently in App Review.
+        PRODUCT_BUNDLE_IDENTIFIER: de.maxaufknax.pocketadm.native
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

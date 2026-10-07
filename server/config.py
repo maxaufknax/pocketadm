@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.21.0"
+VERSION = "0.22.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -161,6 +161,20 @@ def set_exposure_ack(ack: bool) -> None:
         settings["exposure_ack"] = True
     else:
         settings.pop("exposure_ack", None)
+    save_settings(settings)
+
+
+# ---- single sign-on (OpenID Connect provider, see oidc.py) ----
+
+def get_oidc() -> dict:
+    return dict(settings.get("oidc") or {})
+
+
+def set_oidc(cfg: dict | None) -> None:
+    if cfg:
+        settings["oidc"] = cfg
+    else:
+        settings.pop("oidc", None)
     save_settings(settings)
 
 
