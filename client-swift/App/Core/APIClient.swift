@@ -8,7 +8,8 @@ import Foundation
 actor APIClient {
     private let baseURL: URL
     private let token: String?
-    private let session: URLSession
+    // internal: uploads (APIClient+V25.swift) stream a file through the same session
+    let session: URLSession
 
     init(baseURL: URL, token: String? = nil) {
         self.baseURL = baseURL

@@ -421,6 +421,8 @@ workflows:
       - name: Generate the Xcode project
         script: |
           set -eo pipefail
+          # the preview's own app id has no push capability: build without it
+          sed -i '' '/# push-entitlement-begin/,/# push-entitlement-end/d' project.yml
           xcodegen generate
           test -d "$XCODE_PROJECT"
 
@@ -641,9 +643,22 @@ workflows:
           XCCONFIG
           cat Config/Build.xcconfig
 
+      - name: Prepare push notifications on the app id
+        # Push is a bonus, not a gate: when this cannot be done the app is
+        # built without the entitlement and falls back to local notifications.
+        script: |
+          set -eo pipefail
+          python3 -m venv /tmp/asc-venv
+          /tmp/asc-venv/bin/pip install --quiet pyjwt cryptography
+          /tmp/asc-venv/bin/python tools/asc_push.py --bundle-id "$BUNDLE_ID"
+
       - name: Generate the Xcode project
         script: |
           set -eo pipefail
+          if [ "${PUSH_READY:-0}" != "1" ]; then
+            echo "! building without the push entitlement"
+            sed -i '' '/# push-entitlement-begin/,/# push-entitlement-end/d' project.yml
+          fi
           xcodegen generate
           test -d "$XCODE_PROJECT"
 
@@ -711,6 +726,11 @@ workflows:
           [ "$(plist ITSAppUsesNonExemptEncryption)" = "false" ] || { echo "!! export compliance key"; exit 1; }
           plist NSCameraUsageDescription >/dev/null
           test -f "$APP/PrivacyInfo.xcprivacy" || { echo "!! PrivacyInfo.xcprivacy is not in the app"; exit 1; }
+          if [ "${PUSH_READY:-0}" = "1" ]; then
+            codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q "aps-environment" \
+              || { echo "!! the signed app lacks the push entitlement"; exit 1; }
+            echo "✓ push entitlement signed in"
+          fi
           echo "✓ $(plist CFBundleIdentifier) $(plist CFBundleShortVersionString) ($(plist CFBundleVersion)), minimum iOS $(plist MinimumOSVersion), privacy manifest present"
 
       - name: Photograph the app for the store
@@ -743,7 +763,7 @@ workflows:
       - name: Get the App Store version ready (never submits)
         script: |
           set -eo pipefail
-          python3 -m venv /tmp/asc-venv
+          [ -x /tmp/asc-venv/bin/python ] || python3 -m venv /tmp/asc-venv
           /tmp/asc-venv/bin/pip install --quiet pyjwt cryptography
           SHOTS=()
           if ls build/shots/store/en-US/*.png >/dev/null 2>&1; then

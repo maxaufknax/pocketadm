@@ -92,20 +92,26 @@ extension ActivityFeed.Stats {
     }
 }
 
-/// Everything that happens on the server, live: containers starting and
-/// dying, SSH logins and break-in attempts, sudo, apt, the kernel, the
-/// internet connection, and every action taken in PocketADM.
+/// Two halves: **Server** — everything that happens on the machine, live:
+/// containers starting and dying, SSH logins and break-in attempts, sudo, apt,
+/// the kernel, the internet connection — and **PocketADM** — what was done in
+/// and through this app: sign-ins, container actions, the assistant's steps,
+/// file changes, updates.
 struct ActivityView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var stream = ActivityStream()
     @State private var filter: String?
     @State private var selected: ActivityEvent?
+    @AppStorage("pocketadm.activity.scope") private var scope = "server"
 
-    private static let order = ["containers", "security", "system", "network", "updates", "app"]
+    /// The server's own categories; "app" is the PocketADM half.
+    private static let order = ["containers", "security", "system", "network", "updates"]
+
+    private var showsServer: Bool { app.supports("activity") && scope == "server" }
 
     var body: some View {
         Group {
-            if !app.supports("activity") {
+            if !showsServer {
                 AuditView()
             } else if !stream.loaded {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,10 +119,22 @@ struct ActivityView: View {
                 list
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if app.supports("activity") {
+                Picker("Show", selection: $scope) {
+                    Text("Server").tag("server")
+                    Text("PocketADM").tag("app")
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+            }
+        }
         .navigationTitle("Activity")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            if app.supports("activity") {
+            if showsServer {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 5) {
                         Circle()
@@ -149,7 +167,9 @@ struct ActivityView: View {
         }
     }
 
-    private var filterList: [String] { filter.map { [$0] } ?? [] }
+    /// Without a chip chosen: every server category, PocketADM's own actions
+    /// live in the other half.
+    private var filterList: [String] { filter.map { [$0] } ?? Self.order }
 
     private var list: some View {
         List {
@@ -175,7 +195,7 @@ struct ActivityView: View {
 
             if stream.events.isEmpty {
                 Section {
-                    Text(stream.error ?? "Nothing has happened yet. New events appear here the moment they happen.")
+                    Text(stream.error ?? "Nothing has happened yet. Containers, logins, sudo, packages, the kernel and the internet connection appear here the moment something happens.")
                         .foregroundStyle(stream.error == nil ? Theme.muted : Theme.danger)
                 }
             }
@@ -199,7 +219,7 @@ struct ActivityView: View {
     }
 
     private var statsLine: String {
-        let total = stream.stats.counts.values.reduce(0, +)
+        let total = stream.stats.counts.filter { $0.key != "app" }.values.reduce(0, +)
         var line = "\(total) events in the last \(stream.stats.hours) hours"
         if stream.stats.problems > 0 { line += " · \(stream.stats.problems) worth a look" }
         return line

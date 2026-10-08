@@ -34,9 +34,9 @@ struct MoreView: View {
                 }
 
                 Section("Monitor") {
-                    link(.alerts, NavRow(symbol: "bell.fill", title: "Alerts & watch",
+                    link(.alerts, NavRow(symbol: "eye.fill", title: "Watch",
                                          subtitle: app.me?.watchEnabled == true
-                                           ? "The watch writes when something is worth knowing"
+                                           ? "Messages when something is worth knowing — ask it anything"
                                            : "Let an AI keep an eye on the server",
                                          badge: app.unseenAlerts > 0 ? String(app.unseenAlerts) : "",
                                          tint: .red))
@@ -170,9 +170,9 @@ struct MoreDestination: View {
         case .server:   SettingsView()
         case .updates:  UpdatesView()
         case .apps:     AppsView()
-        case .files:    FilesHomeView()
+        case .files:    FilesEntry()
         case .users:    UsersView()
-        case .alerts:   AlertsView()
+        case .alerts:   AlertsHome()
         case .checks:   ChecksView()
         case .activity: ActivityView()
         case .ai:       AIAccountsView()

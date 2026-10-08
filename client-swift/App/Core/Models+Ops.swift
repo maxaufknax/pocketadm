@@ -295,6 +295,10 @@ struct UpdateDetail: Decodable {
     let major: Bool
     let repo: String
     let links: [String: String]
+    /// 0.25+: the same version again — only the image was rebuilt.
+    let rebuild: Bool
+    /// 0.25+: the summary of what changes, when one was already written.
+    let explanation: String
 
     struct Local: Decodable, Hashable {
         let version: String
@@ -355,7 +359,7 @@ struct UpdateDetail: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case image, local, remote, releases, label, icon, category, description, impact, major
-        case repo, links
+        case repo, links, rebuild, explanation
         case usedBy = "used_by"
         case newerCount = "newer_count"
     }
@@ -376,6 +380,8 @@ struct UpdateDetail: Decodable {
         major = c.get(.major, false)
         repo = c.get(.repo, "")
         links = c.get(.links, [:])
+        rebuild = c.get(.rebuild, false)
+        explanation = c.get(.explanation, "")
     }
 }
 
@@ -1036,10 +1042,12 @@ struct FSListing: Decodable {
         let mode: String
         let owner: String
         let link: Bool
+        /// 0.25+: set when this folder is a drive of its own (/mnt/t5).
+        let drive: DriveMark?
         var id: String { path }
         var shownPath: String { display.isEmpty ? path : display }
 
-        enum CodingKeys: String, CodingKey { case name, path, display, modified, mode, owner, link }
+        enum CodingKeys: String, CodingKey { case name, path, display, modified, mode, owner, link, drive }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1050,6 +1058,24 @@ struct FSListing: Decodable {
             mode = c.get(.mode, "")
             owner = c.get(.owner, "")
             link = c.get(.link, false)
+            drive = c.opt(.drive)
+        }
+    }
+
+    struct DriveMark: Decodable, Hashable {
+        let kind: String
+        let percent: Double
+        let label: String
+        let free: Int64
+
+        enum CodingKeys: String, CodingKey { case kind, percent, label, free }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = c.get(.kind, "data")
+            percent = c.get(.percent, 0)
+            label = c.get(.label, "")
+            free = c.get(.free, 0)
         }
     }
 
@@ -1065,13 +1091,15 @@ struct FSListing: Decodable {
         let mode: String
         let owner: String
         let link: Bool
+        /// 0.25+: text, image, video, audio, pdf, archive, document or file.
+        let kind: String
         var id: String { path }
         var shownPath: String { display.isEmpty ? path : display }
         var date: Date { Date(timeIntervalSince1970: modified) }
         var ext: String { (name as NSString).pathExtension.lowercased() }
 
         enum CodingKeys: String, CodingKey {
-            case name, path, display, size, text, modified, mode, owner, link
+            case name, path, display, size, text, modified, mode, owner, link, kind
         }
 
         init(from decoder: Decoder) throws {
@@ -1085,6 +1113,22 @@ struct FSListing: Decodable {
             mode = c.get(.mode, "")
             owner = c.get(.owner, "")
             link = c.get(.link, false)
+            kind = c.get(.kind, "")
+        }
+
+        /// A file entry made up on the phone (a search hit, a fresh upload).
+        init(name: String, path: String, display: String, size: Int64, text: Bool,
+             modified: Double = 0, kind: String = "") {
+            self.name = name
+            self.path = path
+            self.display = display
+            self.size = size
+            self.text = text
+            self.modified = modified
+            self.mode = ""
+            self.owner = ""
+            self.link = false
+            self.kind = kind
         }
     }
 
@@ -1114,8 +1158,14 @@ struct FileContent: Decodable {
     let binary: Bool
     let truncated: Bool
     let content: String
+    /// 0.25+: when it was last changed (the editor refuses to overwrite a
+    /// newer version) and whether PocketADM may change it at all.
+    let modified: Double
+    let writable: Bool
+    let mode: String
+    let owner: String
 
-    enum CodingKeys: String, CodingKey { case path, size, binary, truncated, content }
+    enum CodingKeys: String, CodingKey { case path, size, binary, truncated, content, modified, writable, mode, owner }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1124,6 +1174,10 @@ struct FileContent: Decodable {
         binary = c.get(.binary, false)
         truncated = c.get(.truncated, false)
         content = c.get(.content, "")
+        modified = c.get(.modified, 0)
+        writable = c.get(.writable, false)
+        mode = c.get(.mode, "")
+        owner = c.get(.owner, "")
     }
 }
 
@@ -1410,11 +1464,14 @@ struct ChatSummary: Decodable, Identifiable, Hashable {
     let preview: String
     let snippet: String
     let toolCount: Int
+    /// 0.25+: the agent is still working in this chat / waits for your OK.
+    let running: Bool
+    let waiting: Bool
 
     var date: Date { Date(timeIntervalSince1970: updated) }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, created, updated, archived, pinned, preview, snippet
+        case id, title, created, updated, archived, pinned, preview, snippet, running, waiting
         case messageCount = "message_count"
         case toolCount = "tool_count"
     }
@@ -1431,6 +1488,8 @@ struct ChatSummary: Decodable, Identifiable, Hashable {
         preview = c.get(.preview, "")
         snippet = c.get(.snippet, "")
         toolCount = c.get(.toolCount, 0)
+        running = c.get(.running, false)
+        waiting = c.get(.waiting, false)
     }
 }
 

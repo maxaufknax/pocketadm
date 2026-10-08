@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Live connection to a server-side agent session.
 ///
@@ -14,6 +15,9 @@ final class ChatSocket: ObservableObject {
         case idle
         case connecting
         case connected
+        /// The connection dropped and is being re-established on its own.
+        case reconnecting
+        /// Gave up after several attempts — the banner offers a manual retry.
         case failed(String)
     }
 
@@ -36,6 +40,19 @@ final class ChatSocket: ObservableObject {
     /// failure is not reported as a connection problem.
     private var closing = false
 
+    /// A fresh socket URL per connect: the credential in it is a single-use
+    /// ticket, so a reconnect cannot reuse the old one.
+    private var urlProvider: (() async throws -> URL)?
+    private var connectTask: Task<Void, Never>?
+    private var attempts = 0
+    /// The app is in the background (or about to be suspended).
+    private var away = false
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    /// Messages typed while the connection was being re-established.
+    private var outbox: [String] = []
+    /// Remembers the open chat per server, so a cold start reopens it.
+    private var memoryKey = ""
+
     // MARK: - Connection
 
     /// Shown when the socket could not even be opened (no ticket, no network)
@@ -46,25 +63,162 @@ final class ChatSocket: ObservableObject {
         status = .failed(message)
     }
 
-    func connect(to url: URL, chatID: String) {
-        disconnect()
+    /// Attach to a chat ("" = a new one). `server` keys the memory of the
+    /// open chat; `provider` fetches a fresh socket URL for every (re)connect.
+    func connect(chatID: String, server: String, using provider: @escaping () async throws -> URL) {
+        memoryKey = "pocketadm.chat.last." + server
+        if chatID.isEmpty, self.chatID.isEmpty,
+           let remembered = UserDefaults.standard.string(forKey: memoryKey) {
+            self.chatID = remembered
+        } else if !chatID.isEmpty {
+            self.chatID = chatID
+        }
+        urlProvider = provider
+        attempts = 0
+        open()
+    }
+
+    /// Whether a connection is up or on its way — the view's `.task` runs on
+    /// every appearance and must not tear down a working socket.
+    var isActive: Bool {
+        switch status {
+        case .connected, .connecting, .reconnecting: return true
+        default: return false
+        }
+    }
+
+    private func open() {
+        connectTask?.cancel()
+        guard let provider = urlProvider else { return }
+        closing = true
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
         closing = false
-        status = .connecting
+        status = attempts == 0 ? .connecting : .reconnecting
+        connectTask = Task { [weak self] in
+            do {
+                let url = try await provider()
+                guard let self, !Task.isCancelled else { return }
+                self.start(url)
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.lost(error.localizedDescription)
+            }
+        }
+    }
+
+    private func start(_ url: URL) {
         let task = session.webSocketTask(with: url)
         self.task = task
         task.resume()
-        status = .connected
         receive(on: task)
         // The socket carries no chat identity of its own: the first frame
         // decides which session this device attaches to.
         send(raw: chatID.isEmpty ? ChatProtocol.reset() : ChatProtocol.open(chatID: chatID))
+        if away { send(raw: ChatProtocol.away()) }
+    }
+
+    /// The connection is gone. In front, try again with growing pauses; in the
+    /// background, wait — coming back reconnects at once.
+    private func lost(_ message: String) {
+        task = nil
+        guard !closing else { return }
+        if away {
+            status = .idle
+            return
+        }
+        attempts += 1
+        if attempts > 6 {
+            status = .failed(message)
+            return
+        }
+        status = .reconnecting
+        let delay = min(30.0, pow(2.0, Double(attempts - 1)))
+        connectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            self.open()
+        }
+    }
+
+    /// The Reconnect button.
+    func retry() {
+        attempts = 0
+        open()
     }
 
     func disconnect() {
         closing = true
+        connectTask?.cancel()
+        urlProvider = nil
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        endBackgroundTask()
+        if status != .idle { status = .idle }
+    }
+
+    // MARK: - App lifecycle
+
+    /// Leaving the app. iOS grants some seconds before it suspends us: the
+    /// socket stays open for them, so a quick look at another app does not
+    /// even reconnect. The server is told nobody is watching, and pushes a
+    /// notification when the assistant needs you meanwhile.
+    func enterBackground() {
+        away = true
+        send(raw: ChatProtocol.away())
+        endBackgroundTask()
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "pocketadm.chat") { [weak self] in
+            Task { @MainActor in self?.suspendQuietly() }
+        }
+    }
+
+    private func suspendQuietly() {
+        closing = true
+        connectTask?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         if status != .idle { status = .idle }
+        endBackgroundTask()
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
+    /// Back in front: keep a socket that survived, re-attach otherwise. The
+    /// snapshot brings everything that happened meanwhile.
+    func enterForeground() {
+        away = false
+        endBackgroundTask()
+        guard urlProvider != nil else { return }
+        guard let task, status == .connected else {
+            attempts = 0
+            open()
+            return
+        }
+        // A suspended app's socket can be dead without knowing it; a ping
+        // that is not answered within three seconds means reconnect.
+        var answered = false
+        task.sendPing { [weak self] error in
+            Task { @MainActor in
+                answered = true
+                guard let self, self.task === task else { return }
+                if error != nil {
+                    self.attempts = 0
+                    self.open()
+                } else {
+                    self.send(raw: ChatProtocol.back())
+                }
+            }
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, !answered, self.task === task else { return }
+            self.attempts = 0
+            self.open()
+        }
     }
 
     private func receive(on task: URLSessionWebSocketTask) {
@@ -87,10 +241,8 @@ final class ChatSocket: ObservableObject {
                     // the stream stops after the first message.
                     self.receive(on: task)
                 case .failure(let error):
-                    guard !self.closing else { return }
-                    self.status = .failed(error.localizedDescription)
                     self.running = false
-                    self.task = nil
+                    self.lost(error.localizedDescription)
                 }
             }
         }
@@ -101,16 +253,23 @@ final class ChatSocket: ObservableObject {
     func submit(_ text: String, context: String = "") {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard task != nil else {
-            // Without this the composer clears and nothing else happens, which
-            // reads exactly like the model ignoring the question.
-            items.append(ChatItem(kind: .error,
-                                  text: "Not connected — the message was not sent."))
+        let frame = ChatProtocol.user(text: trimmed, context: context)
+        guard task != nil, status == .connected else {
+            if urlProvider != nil {
+                // sent as soon as the connection is back
+                outbox.append(frame)
+                items.append(ChatItem(kind: .notice, text: "Reconnecting — your message goes out in a moment."))
+                if status != .connecting && status != .reconnecting { retry() }
+            } else {
+                // Without this the composer clears and nothing else happens,
+                // which reads exactly like the model ignoring the question.
+                items.append(ChatItem(kind: .error, text: "Not connected — the message was not sent."))
+            }
             return
         }
         // Echoed back by the server as `user_echo`; appending here as well
         // would show the message twice.
-        send(raw: ChatProtocol.user(text: trimmed, context: context))
+        send(raw: frame)
     }
 
     func answer(_ call: ToolCall, approved: Bool) {
@@ -145,6 +304,7 @@ final class ChatSocket: ObservableObject {
         chatID = ""
         title = ""
         awaitingApproval = nil
+        if !memoryKey.isEmpty { UserDefaults.standard.removeObject(forKey: memoryKey) }
         send(raw: ChatProtocol.reset())
     }
 
@@ -170,7 +330,17 @@ final class ChatSocket: ObservableObject {
             pauseInfo = snapshot.pause
             chatID = snapshot.chatID
             title = snapshot.title
-            awaitingApproval = nil
+            // a call still waiting for its OK is part of the replay — show the
+            // card again instead of a run that seems stuck
+            awaitingApproval = snapshot.items.last(where: { $0.tool?.state == .requested })?.tool
+            status = .connected
+            attempts = 0
+            if !memoryKey.isEmpty, !chatID.isEmpty {
+                UserDefaults.standard.set(chatID, forKey: memoryKey)
+            }
+            let queued = outbox
+            outbox = []
+            for frame in queued { send(raw: frame) }
 
         case .userEcho(let text, let queued):
             let ordinal = items.filter { $0.kind == .user }.count
@@ -227,6 +397,9 @@ final class ChatSocket: ObservableObject {
         case .chatMeta(let id, let newTitle):
             chatID = id
             title = newTitle
+            if !memoryKey.isEmpty, !id.isEmpty {
+                UserDefaults.standard.set(id, forKey: memoryKey)
+            }
 
         case .permission(let title, let detail):
             items.append(ChatItem(kind: .notice,

@@ -39,6 +39,15 @@ final class AppState: ObservableObject {
     /// A screen under More another tab asks to open.
     @Published var pendingRoute: MoreRoute?
 
+    /// A chat to open in the Assistant tab — a tapped notification about it.
+    @Published var pendingChat: String?
+
+    /// Opens a chat in the Assistant tab, from anywhere (a notification).
+    func openChat(_ id: String) {
+        pendingChat = id
+        selectedTab = .assistant
+    }
+
     /// Ask the assistant about something, from anywhere in the app.
     func ask(_ prompt: String) {
         pendingPrompt = prompt
@@ -137,6 +146,7 @@ final class AppState: ObservableObject {
         KeychainStore.set(token, for: Self.tokenAccount)
         if let serverName, !serverName.isEmpty { self.serverName = serverName }
         phase = .ready
+        Task { await PushManager.shared.signedIn() }
     }
 
     /// Changing the password and revoking other sessions both invalidate every
@@ -161,7 +171,13 @@ final class AppState: ObservableObject {
 
     func refreshAlerts() async {
         guard let client else { return }
-        if let feed = try? await client.notifications() {
+        if supports("watch_channel") {
+            // the watch's channel: what it wrote since you last looked
+            if let page = try? await client.watchChannel(limit: 1) {
+                unseenAlerts = page.unread
+                PushManager.shared.setBadge(page.unread)
+            }
+        } else if let feed = try? await client.notifications() {
             unseenAlerts = feed.unseen
         }
     }
@@ -171,6 +187,8 @@ final class AppState: ObservableObject {
     /// Drops the token but keeps the server URL, so signing out lands on the
     /// login screen for the same box instead of making you retype the address.
     func signOut(reason: String? = nil) {
+        let previous = client
+        Task { await PushManager.shared.forget(using: previous) }
         token = nil
         KeychainStore.set(nil, for: Self.tokenAccount)
         me = nil
@@ -186,6 +204,8 @@ final class AppState: ObservableObject {
     /// Forgets the server entirely — back to the Connect screen. Its TLS pin
     /// goes too: re-adding it takes a fresh pairing QR, which re-pins it.
     func forgetServer() {
+        let previous = client
+        Task { await PushManager.shared.forget(using: previous) }
         if let serverURL { TrustStore.setPin(nil, for: serverURL) }
         token = nil
         KeychainStore.set(nil, for: Self.tokenAccount)

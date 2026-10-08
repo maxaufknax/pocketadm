@@ -8,6 +8,7 @@ import UIKit
 /// what happened meanwhile.
 struct ChatView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var socket = ChatSocket()
 
     @State private var draft = ""
@@ -106,11 +107,26 @@ struct ChatView: View {
         .task {
             await app.refreshMe()
             models = try? await app.client?.aiModels()
-            connect()
+            // switching tabs keeps the connection; only a first appearance
+            // (or a socket that gave up) connects
+            if !socket.isActive { connect() }
         }
         .onAppear { takePendingPrompt() }
         .onChange(of: app.pendingPrompt) { _, _ in takePendingPrompt() }
-        .onDisappear { socket.disconnect() }
+        .onChange(of: app.pendingChat) { _, _ in takePendingChat() }
+        // The run lives on the server. Leaving the app keeps the socket for the
+        // seconds iOS allows, coming back re-attaches and replays what
+        // happened meanwhile — the chat never just says "disconnected".
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background: socket.enterBackground()
+            case .active:     socket.enterForeground()
+            default:          break
+            }
+        }
+        .onChange(of: app.phase) { _, phase in
+            if phase != .ready { socket.disconnect() }
+        }
     }
 
     // MARK: - States
@@ -172,11 +188,11 @@ struct ChatView: View {
                     }
 
                     if case .failed(let message) = socket.status {
-                        WarningBanner(title: "Disconnected",
-                                      message: message,
+                        WarningBanner(title: "Connection lost",
+                                      message: "\(message) — the assistant keeps working on the server.",
                                       tint: Theme.danger,
                                       actionTitle: "Reconnect",
-                                      action: connect)
+                                      action: { socket.retry() })
                     }
 
                     // Anchor: scrolling to the last item lands short when that
@@ -190,9 +206,25 @@ struct ChatView: View {
             // The plan stays in sight for the whole run, not only at the top
             // of the conversation: a bar that opens into the checklist.
             .safeAreaInset(edge: .top, spacing: 0) {
-                if !socket.plan.isEmpty {
-                    PlanBar(steps: socket.plan, running: socket.running)
+                VStack(spacing: 0) {
+                    if !socket.plan.isEmpty {
+                        PlanBar(steps: socket.plan, running: socket.running)
+                    }
+                    if socket.status == .reconnecting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.mini)
+                            Text("Reconnecting…")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.muted)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.top, 6)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .animation(.snappy, value: socket.status)
             }
             .onChange(of: socket.items.count) { _, _ in scrollDown(proxy) }
             .onChange(of: socket.awaitingApproval?.callID) { _, _ in scrollDown(proxy) }
@@ -410,22 +442,42 @@ struct ChatView: View {
 
     private func connect() {
         guard let client = app.client else { return }
+        let server = app.serverURL?.host ?? "server"
         Task {
-            do {
-                var chatID = socket.chatID
-                // The demo cannot run the agent (read-only, no key), so it opens
-                // its recorded sample session rather than an empty chat.
-                if chatID.isEmpty, app.me?.demo == true,
-                   let sample = try? await client.chats().first(where: { $0.messageCount > 0 }) {
-                    chatID = sample.id
-                }
-                // a single-use ticket, fetched per connect (APIClient.liveWebSocketURL)
-                let url = try await client.liveWebSocketURL(path: "/ws/chat")
-                socket.connect(to: url, chatID: chatID)
-            } catch {
-                socket.fail(error.localizedDescription)
-                app.handle(error)
+            var chatID = socket.chatID
+            // The demo cannot run the agent (read-only, no key), so it opens
+            // its recorded sample session rather than an empty chat.
+            if chatID.isEmpty, app.me?.demo == true,
+               let sample = try? await client.chats().first(where: { $0.messageCount > 0 }) {
+                chatID = sample.id
             }
+            if let wanted = app.pendingChat {
+                app.pendingChat = nil
+                chatID = wanted
+            }
+            // a single-use ticket per connect (APIClient.liveWebSocketURL) —
+            // fetched again for every reconnect
+            socket.connect(chatID: chatID, server: server) { [weak app] in
+                do {
+                    return try await client.liveWebSocketURL(path: "/ws/chat")
+                } catch {
+                    await MainActor.run { app?.handle(error) }
+                    throw error
+                }
+            }
+        }
+    }
+
+    /// A tapped notification ("the assistant is waiting for your OK") names
+    /// the chat it is about.
+    private func takePendingChat() {
+        guard let id = app.pendingChat else { return }
+        app.pendingChat = nil
+        if socket.isActive {
+            socket.openChat(id)
+        } else {
+            app.pendingChat = id
+            connect()
         }
     }
 

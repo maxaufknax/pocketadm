@@ -28,77 +28,7 @@ extension Severity {
 
 // MARK: - Text
 
-/// Renders the markdown the server's AI features produce.
-///
-/// Fenced code blocks are pulled out and drawn as a console: an AI answer about
-/// a server is mostly commands, and `AttributedString`'s inline markdown
-/// flattens them into prose you cannot copy cleanly.
-struct MarkdownText: View {
-    let text: String
-    var font: Font = .subheadline
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                if block.isCode {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(block.text)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Theme.termFg)
-                            .textSelection(.enabled)
-                            .padding(10)
-                    }
-                    .background(Theme.termBg,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                } else {
-                    Text(Self.attributed(block.text))
-                        .font(font)
-                        .foregroundStyle(Theme.text)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-
-    private struct Block {
-        let text: String
-        let isCode: Bool
-    }
-
-    private var blocks: [Block] {
-        var result: [Block] = []
-        var inCode = false
-        var buffer: [String] = []
-
-        func flush() {
-            let joined = buffer.joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { result.append(Block(text: joined, isCode: inCode)) }
-            buffer = []
-        }
-
-        for line in text.components(separatedBy: .newlines) {
-            if line.hasPrefix("```") {
-                flush()
-                inCode.toggle()
-            } else {
-                buffer.append(line)
-            }
-        }
-        flush()
-        return result
-    }
-
-    /// `interpretedSyntax: .inlineOnlyPreservingWhitespace` keeps the line
-    /// breaks. The default collapses a bulleted list into one run-on line.
-    static func attributed(_ raw: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: raw,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(raw)
-    }
-}
+// MarkdownText lives in MarkdownView.swift.
 
 // MARK: - Rows and headers
 

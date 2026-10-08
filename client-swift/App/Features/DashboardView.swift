@@ -102,7 +102,7 @@ struct DashboardView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        AlertsView()
+                        AlertsHome()
                     } label: {
                         Image(systemName: app.unseenAlerts > 0 ? "bell.badge" : "bell")
                             .symbolRenderingMode(.hierarchical)
@@ -228,7 +228,7 @@ struct DashboardView: View {
     private func statusCard(_ system: SystemSnapshot) -> some View {
         VStack(spacing: 0) {
             NavigationLink {
-                AlertsView()
+                AlertsHome()
             } label: {
                 statusRow(symbol: "bell.fill", color: .red, title: "Alerts",
                           value: app.unseenAlerts == 0 ? (app.me?.watchEnabled == true ? "Watching" : "None new")
@@ -264,7 +264,7 @@ struct DashboardView: View {
             if !model.drives.isEmpty {
                 Divider().padding(.leading, 60)
                 NavigationLink {
-                    FilesHomeView()
+                    FilesEntry()
                 } label: {
                     statusRow(symbol: "internaldrive.fill", color: .gray, title: "Storage",
                               value: storageText, valueTint: storageTint)

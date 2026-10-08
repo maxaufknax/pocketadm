@@ -453,6 +453,16 @@ struct ChatSummaryRow: View {
                         .lineLimit(2)
                 }
                 HStack(spacing: 6) {
+                    if chat.waiting {
+                        Label("Waiting for your OK", systemImage: "hand.raised.fill")
+                            .foregroundStyle(Theme.warn)
+                    } else if chat.running {
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.mini)
+                            Text("Working")
+                        }
+                        .foregroundStyle(Theme.accent)
+                    }
                     Text("\(chat.messageCount) messages")
                     if chat.toolCount > 0 { Text("· \(chat.toolCount) steps") }
                     if current { Text("· open") .foregroundStyle(Theme.accent) }

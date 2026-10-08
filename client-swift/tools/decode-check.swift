@@ -367,6 +367,98 @@ expect("activity stream lines decode",
        ActivityEvent.fromStreamLine("data: {\"id\":\"a\",\"t\":1,\"category\":\"security\",\"kind\":\"ssh.login\",\"title\":\"x\",\"severity\":\"warn\"}")?.severity == .warn
        && ActivityEvent.fromStreamLine(": ping") == nil)
 
+// MARK: - Reconnecting mid-run (0.25)
+
+print("")
+print("Re-attaching to a run in flight:")
+let midRun = ChatProtocol.parse("""
+{"type":"chat","id":"c1","title":"Fix it","running":true,"config":{},"plan":[],
+ "events":[{"t":"user","text":"restart web"}],
+ "live":[{"type":"thinking","delta":"Let me look."},
+         {"type":"text","delta":"Checking first."},
+         {"type":"tool_start","id":"t1","name":"run_command","args":{"command":"docker ps"},"auto":"read-only"},
+         {"type":"tool_result","id":"t1","output":"web  Exited (1)"},
+         {"type":"tool_request","id":"t2","name":"run_command","args":{"command":"docker restart web"}}]}
+""")
+if case .snapshot(let snap) = midRun {
+    let tools = snap.items.compactMap(\.tool)
+    expect("replay: the finished command keeps its output",
+           tools.first?.callID == "t1" && tools.first?.state == .finished && tools.first?.output == "web  Exited (1)")
+    expect("replay: the call waiting for its OK comes back as a request",
+           tools.last?.callID == "t2" && tools.last?.state == .requested && tools.last?.headline == "docker restart web")
+    expect("replay: text and reasoning before the commands",
+           snap.items.map(\.kind) == [.user, .thinking, .assistant, .tool, .tool])
+} else {
+    expect("replay: snapshot parses", false)
+}
+
+// MARK: - Markdown (0.25)
+
+print("")
+print("Markdown blocks:")
+let md = Markdown.parse("""
+## Disk usage
+Root is **78 %** full.
+
+| Mount | Used | Free |
+| :--- | ---: | :---: |
+| / | 78 % | `120 GB` |
+| /mnt/t5 | 41 % | 1.1 TB |
+
+1. Clear the cache
+   - `docker system prune`
+   - restart jellyfin
+2. Check again
+
+- [x] backups
+- [ ] updates
+
+> Note: this takes a minute.
+
+```bash
+df -h
+```
+---
+""")
+expect("markdown: heading, paragraph, table, list, checklist, quote, code, rule",
+       md.count == 8)
+if md.count == 8 {
+    expect("markdown: heading level", md[0] == .heading(level: 2, text: "Disk usage"))
+    expect("markdown: paragraph keeps inline syntax", md[1] == .paragraph("Root is **78 %** full."))
+    if case .table(let t) = md[2] {
+        expect("markdown: table header and rows", t.header == ["Mount", "Used", "Free"] && t.rows.count == 2)
+        expect("markdown: table alignments", t.alignments == [.leading, .trailing, .center])
+        expect("markdown: code span in a cell", t.rows[0][2] == "`120 GB`")
+    } else { expect("markdown: table", false) }
+    if case .list(let ordered, let start, let items) = md[3] {
+        expect("markdown: ordered list", ordered && start == 1 && items.count == 2)
+        if case .list(let inner, _, let sub)? = items.first?.blocks.last {
+            expect("markdown: nested bullets", !inner && sub.count == 2)
+        } else { expect("markdown: nested list", false) }
+    } else { expect("markdown: list", false) }
+    if case .list(_, _, let tasks) = md[4] {
+        expect("markdown: checklist", tasks.map(\.checked) == [true, false])
+    } else { expect("markdown: checklist", false) }
+    if case .quote(let inner) = md[5] {
+        expect("markdown: quote", inner == [.paragraph("Note: this takes a minute.")])
+    } else { expect("markdown: quote", false) }
+    expect("markdown: fenced code", md[6] == .code(language: "bash", text: "df -h"))
+    expect("markdown: rule", md[7] == .rule)
+}
+expect("markdown: an unclosed fence is code up to the end (streaming)",
+       Markdown.parse("Run:\n```\ndocker ps") == [.paragraph("Run:"), .code(language: "", text: "docker ps")])
+if case .table(let t)? = Markdown.parse("| a | b |\n|---|---|").first {
+    expect("markdown: a table with only its header is still a table", t.rows.isEmpty && t.columnCount == 2)
+} else { expect("markdown: header-only table", false) }
+expect("markdown: a pipe in a code span is not a column", Markdown.cells("| `a|b` | c |") == ["`a|b`", "c"])
+expect("markdown: setext heading", Markdown.parse("Title\n=====") == [.heading(level: 1, text: "Title")])
+expect("markdown: '- - -' is a rule, not a list", Markdown.parse("- - -") == [.rule])
+expect("markdown: lines of a paragraph stay one block",
+       Markdown.parse("one\ntwo") == [.paragraph("one\ntwo")])
+if case .list(_, _, let items)? = Markdown.parse("1. a\n  - b\n2. c").first {
+    expect("markdown: two-space nesting under a number", items.count == 2)
+} else { expect("markdown: two-space nesting", false) }
+
 print("")
 if failures == 0 {
     print("✓ \(checks) checks passed")

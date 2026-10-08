@@ -60,6 +60,16 @@ targets:
         buildPhase: resources
     dependencies:
       - package: SwiftTerm
+    # Push notifications (the watch's messages, the assistant waiting for an
+    # OK). The release workflow enables the capability on the app id first
+    # (tools/asc_push.py) and removes this block when it cannot — the app then
+    # falls back to local notifications instead of failing to sign.
+    # push-entitlement-begin
+    entitlements:
+      path: App/PocketADM.entitlements
+      properties:
+        aps-environment: production
+    # push-entitlement-end
     # Carries CURRENT_PROJECT_VERSION and PRODUCT_BUNDLE_IDENTIFIER, written by
     # the Codemagic workflow (and by tools/bootstrap-config.sh for local
     # generation). Kept out of the repo so the build number is never a
@@ -93,6 +103,12 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        # Background refresh: new watch messages and a waiting assistant as
+        # local notifications when real push is not available.
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - de.maxaufknax.pocketadm.refresh
         # Saves the export-compliance question on every upload: the app only
         # ever uses the system's own HTTPS/TLS.
         ITSAppUsesNonExemptEncryption: false

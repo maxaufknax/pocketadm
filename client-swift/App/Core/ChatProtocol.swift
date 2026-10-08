@@ -12,6 +12,7 @@ import Foundation
 //                     {"type":"approve","id":"<tool call>","approved":true}
 //                     {"type":"continue"} | {"type":"stop"}
 //                     {"type":"rewind","ordinal":N,"text":…}
+//                     {"type":"away"} | {"type":"back"}      (0.25: presence)
 //
 //   server → client   one JSON object per frame, discriminated by "type".
 //
@@ -339,24 +340,65 @@ enum ChatProtocol {
             }
         }
 
-        // Replay the live buffer so a reconnect mid-run does not look frozen.
+        // Replay the live buffer — the turn in flight — so a reconnect mid-run
+        // shows what is happening: the text so far, the commands with their
+        // output, and above all a call still waiting for its OK. Without that
+        // card a run that needs you looks frozen, and nothing can unblock it.
         var assistantBuffer = ""
+        var thinkingBuffer = ""
+        func flushText() {
+            if !thinkingBuffer.isEmpty {
+                items.append(ChatItem(kind: .thinking, text: thinkingBuffer))
+                thinkingBuffer = ""
+            }
+            if !assistantBuffer.isEmpty {
+                items.append(ChatItem(kind: .assistant, text: assistantBuffer))
+                assistantBuffer = ""
+            }
+        }
+        func index(of id: String) -> Int? {
+            items.lastIndex { $0.tool?.callID == id }
+        }
         for case let event as [String: Any] in (json["live"] as? [Any] ?? []) {
             switch event["type"] as? String {
             case "text":
+                if !thinkingBuffer.isEmpty, assistantBuffer.isEmpty {
+                    items.append(ChatItem(kind: .thinking, text: thinkingBuffer))
+                    thinkingBuffer = ""
+                }
                 assistantBuffer += event["delta"] as? String ?? ""
-            case "tool_start", "tool_result":
-                if !assistantBuffer.isEmpty {
-                    items.append(ChatItem(kind: .assistant, text: assistantBuffer))
-                    assistantBuffer = ""
+            case "thinking":
+                thinkingBuffer += event["delta"] as? String ?? ""
+            case "tool_request":
+                flushText()
+                var call = toolCall(from: event)
+                call.state = .requested
+                items.append(ChatItem(id: call.callID, kind: .tool, text: call.name, tool: call))
+            case "tool_start":
+                flushText()
+                var call = toolCall(from: event)
+                call.state = .running
+                call.autoNote = event["auto"] as? String ?? ""
+                if let i = index(of: call.callID) {
+                    items[i].tool = call
+                } else {
+                    items.append(ChatItem(id: call.callID, kind: .tool, text: call.name, tool: call))
+                }
+            case "tool_result":
+                flushText()
+                let id = event["id"] as? String ?? ""
+                let output = event["output"] as? String ?? ""
+                if let i = index(of: id), var call = items[i].tool {
+                    call.output = output
+                    call.diff = event["diff"] as? String ?? ""
+                    call.state = output == "[denied by user]" ? .denied : .finished
+                    items[i].tool = call
                 }
             default:
                 break
             }
         }
-        if !assistantBuffer.isEmpty {
-            items.append(ChatItem(kind: .assistant, text: assistantBuffer))
-        }
+        flushText()
 
         let pauseJSON = json["pause"] as? [String: Any] ?? [:]
         return ChatSnapshot(
@@ -443,6 +485,14 @@ enum ChatProtocol {
     }
 
     static func stop() -> String { encode(["type": "stop"]) }
+
+    /// The phone is about to suspend the app: the socket may linger, but
+    /// nobody is looking — the server pushes "waiting for your OK" instead
+    /// (server 0.25; older servers ignore unknown frames).
+    static func away() -> String { encode(["type": "away"]) }
+
+    /// Back in front.
+    static func back() -> String { encode(["type": "back"]) }
 
     static func resume() -> String { encode(["type": "continue"]) }
 

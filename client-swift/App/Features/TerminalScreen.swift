@@ -264,6 +264,7 @@ struct TerminalSessionView: View {
     let session: TerminalSession
 
     @EnvironmentObject private var app: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var socket = TerminalSocket()
     @State private var terminal = TerminalHost()
 
@@ -303,6 +304,15 @@ struct TerminalSessionView: View {
             }
             .onAppear { connect() }
             .onDisappear { socket.disconnect() }
+            // The shell keeps running on the server; coming back to the app
+            // re-attaches to it when the connection did not survive.
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background: socket.enterBackground()
+                case .active:     socket.enterForeground()
+                default:          break
+                }
+            }
             .onChange(of: socket.status) { _, status in
                 // Screenshot runs show a terminal with something in it —
                 // commands whose output fits a phone's width.
@@ -321,16 +331,21 @@ struct TerminalSessionView: View {
         socket.onOutput = { text in
             terminal.view?.feed(text: text)
         }
-        Task {
+        // A re-attach replays the scrollback: start from a clean screen (RIS)
+        // so nothing appears twice.
+        socket.onReattach = {
+            terminal.view?.feed(text: "\u{1b}c")
+        }
+        let sessionID = session.id
+        // a single-use ticket per connect (APIClient.liveWebSocketURL)
+        socket.connect { [weak app] in
             do {
-                // a single-use ticket, fetched per connect (APIClient.liveWebSocketURL)
-                let url = try await client.liveWebSocketURL(
+                return try await client.liveWebSocketURL(
                     path: "/ws/terminal",
-                    extra: [URLQueryItem(name: "session", value: session.id)])
-                socket.connect(to: url)
+                    extra: [URLQueryItem(name: "session", value: sessionID)])
             } catch {
-                socket.fail(error.localizedDescription)
-                app.handle(error)
+                await MainActor.run { app?.handle(error) }
+                throw error
             }
         }
     }
