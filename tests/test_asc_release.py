@@ -306,13 +306,20 @@ def test_store_shots_compositor_writes_both_languages(tmp_path):
     from PIL import Image
     raw = tmp_path / "raw"
     raw.mkdir()
-    for tab in ("dashboard", "assistant", "containers", "terminal", "more"):
-        Image.new("RGB", (1320, 2868), (20, 30, 40)).save(raw / f"raw-{tab}.png")
+    # the shots the release workflow takes (tools/shots-store.txt) are the
+    # ones the compositor needs, no more and no fewer
+    listed = [line.split()[0] for line in
+              (ROOT / "client-swift" / "tools" / "shots-store.txt").read_text().splitlines()
+              if line.strip() and not line.startswith("#")]
+    assert listed == ["raw-dashboard", "raw-assistant", "raw-watch", "raw-files",
+                      "raw-containers", "raw-terminal"]
+    for name in listed:
+        Image.new("RGB", (1320, 2868), (20, 30, 40)).save(raw / f"{name}.png")
     import subprocess
     out = subprocess.run([sys.executable, str(ROOT / "client-swift" / "tools" / "store-shots.py"),
                           str(raw), str(tmp_path / "out")], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     for locale in ("en-US", "de-DE"):
         files = sorted((tmp_path / "out" / locale).glob("*.png"))
-        assert [f.name for f in files][0] == "01-dashboard.png" and len(files) == 5
+        assert [f.name for f in files][0] == "01-dashboard.png" and len(files) == 6
         assert Image.open(files[0]).size == (1284, 2778)
