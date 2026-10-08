@@ -274,6 +274,99 @@ expect("a trailing slash is dropped",
        ServerURL.candidates(from: "box.example.com/").first?.absoluteString == "https://box.example.com")
 expect("empty input yields nothing", ServerURL.candidates(from: "   ").isEmpty)
 
+// Server 0.24: apps, the live container detail, drives, activity, the watch,
+// AI accounts and sign-in. Captured from the demo instance.
+print("Server 0.24 responses:")
+check("me_v2", MeResponse.self) { $0.supports("services") && $0.supports("watch") && $0.watchEnabled }
+check("containers_v2", [Container].self) {
+    $0.allSatisfy { $0.groupID != nil && $0.role != nil } && Set($0.map(\.displayName)).count == $0.count
+}
+check("services", ServicesResponse.self) {
+    $0.groups.contains { $0.total > 1 && $0.containers.count == $0.total && !$0.iconNames.isEmpty }
+        && $0.groups.contains { $0.state == "stopped" }
+}
+check("container_detail_v2", ContainerDetail.self) {
+    $0.env.contains { $0.secret && $0.value != "never-shown" } && !$0.networkDetails.isEmpty
+        && $0.resources != nil && !$0.composeDir.isEmpty
+}
+check("container_stats_live", ContainerStats.self) { $0.memLimit > 0 && $0.netRxRate != nil && $0.pids > 0 }
+check("container_top", ContainerTop.self) {
+    !$0.processes.isEmpty && !$0.value($0.processes[0], "COMMAND", "CMD").isEmpty
+}
+check("container_events", ContainerEventList.self) { !$0.events.isEmpty && $0.events[0].t > 0 }
+check("storage", StorageResponse.self) {
+    $0.filesystems.contains { $0.external && $0.total > 0 } && $0.filesystems.contains { $0.mount == "/" }
+}
+check("activity", ActivityFeed.self) {
+    !$0.events.isEmpty && !$0.categories.isEmpty && $0.events.contains { $0.severity == .warn }
+}
+check("watch", WatchStatus.self) {
+    $0.settings.enabled && !$0.route.label.isEmpty && !$0.runs.isEmpty && $0.settings.quietStart == "23:00"
+}
+check("ai_accounts", AIAccounts.self) {
+    $0.accounts.contains { $0.signedIn && $0.canSubscribe } && $0.routes["watch"] != nil
+        && $0.accounts.contains { $0.id == "mistral" && $0.engine == "mistral-vibe" }
+}
+check("reports_latest_v2", Report.self) {
+    $0.points != nil && $0.checks.contains { !$0.actions.isEmpty && !$0.explain.isEmpty }
+        && $0.checks.allSatisfy { !$0.category.isEmpty }
+}
+check("notifications_v2", NotificationFeed.self) {
+    $0.items.contains { $0.isWatch && !$0.actions.isEmpty && !$0.importance.isEmpty }
+}
+check("chats_v2", ChatIndex.self) { $0.chats.allSatisfy { !$0.preview.isEmpty || $0.messageCount == 0 } }
+check("fs_v2", FSListing.self) {
+    $0.hidden >= 1 && $0.fileEntries.contains { $0.name == ".env" } && !$0.display.isEmpty
+        && $0.fileEntries.allSatisfy { $0.modified > 0 && !$0.mode.isEmpty }
+}
+check("metrics_history", MetricsHistory.self)
+check("update_detail_v2", UpdateDetail.self) { !$0.impact.isEmpty && !$0.label.isEmpty }
+check("signin_flow", SignInFlowEnvelope.self) { $0.flow.state == "waiting_code" && !$0.flow.url.isEmpty }
+
+// Older servers keep working: a container without the 0.24 fields still
+// decodes, and its display name falls back to the catalog label.
+inline("container from 0.23", """
+    {"id":"abc","name":"nextcloud","image":"nextcloud:29","state":"running","status":"Up",
+     "health":"","ports":[],"compose_project":"cloud","compose_service":"app","created":0,
+     "mounts_docker_sock":false,"service":{"label":"Nextcloud","icon":"","category":"Files"}}
+    """, Container.self) { $0.displayName == "Nextcloud" && $0.groupID == nil }
+
+// The transcript folds runs of tool calls into one group.
+print("Chat timeline:")
+func toolItem(_ name: String, _ state: ToolCall.State = .finished) -> ChatItem {
+    var call = ToolCall(callID: UUID().uuidString, name: name, headline: "x", detail: "")
+    call.state = state
+    return ChatItem(id: call.callID, kind: .tool, text: name, tool: call)
+}
+let userItem = ChatItem(kind: .user, text: "why?")
+let answer = ChatItem(kind: .assistant, text: "Because.")
+let thought = ChatItem(kind: .thinking, text: "hmm")
+let folded = ChatTimeline.rows([userItem, toolItem("run_command"), thought, toolItem("run_command"),
+                                toolItem("read_file"), thought, answer])
+expect("a run of tools becomes one group between the question and the answer",
+       folded.count == 4 && { if case .tools(let g) = folded[1] { return g.calls.count == 3 } else { return false } }())
+expect("reasoning after the last call stays outside the group",
+       { if case .item(let i) = folded[2] { return i.kind == .thinking } else { return false } }())
+if case .tools(let g) = folded[1] {
+    expect("the group says what was done", g.summary == "Ran 2 commands · read 1 file")
+}
+let single = ChatTimeline.rows([userItem, toolItem("run_command"), answer])
+expect("a single call stays a card", single.count == 3)
+let waiting = ChatTimeline.rows([toolItem("run_command"), toolItem("run_command", .requested)])
+expect("a call waiting for approval is never folded away", waiting.count == 2)
+let running = ChatTimeline.rows([toolItem("read_file"), toolItem("run_command", .running)])
+if case .tools(let g) = running.first {
+    expect("a running group shows its running call", g.isRunning && g.current?.name == "run_command")
+} else {
+    expect("a running run is still a group", false)
+}
+let progress = PlanProgress([PlanStep(title: "a", status: "done"), PlanStep(title: "b", status: "in_progress"),
+                             PlanStep(title: "c", status: "pending")])
+expect("plan progress names the active step", progress.done == 1 && progress.total == 3 && progress.current == "b")
+expect("activity stream lines decode",
+       ActivityEvent.fromStreamLine("data: {\"id\":\"a\",\"t\":1,\"category\":\"security\",\"kind\":\"ssh.login\",\"title\":\"x\",\"severity\":\"warn\"}")?.severity == .warn
+       && ActivityEvent.fromStreamLine(": ping") == nil)
+
 print("")
 if failures == 0 {
     print("✓ \(checks) checks passed")

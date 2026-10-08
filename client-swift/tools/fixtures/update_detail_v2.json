@@ -1,0 +1,36 @@
+{
+ "image": "mariadb:11",
+ "local": {
+  "version": "",
+  "created": "2026-03-01T00:00:00",
+  "tag": "11",
+  "digest": "sha256:000000000000"
+ },
+ "remote": {
+  "version": "11.8.9",
+  "created": "2026-10-02T01:31:10",
+  "digest": "sha256:6422478cb8e1",
+  "source": "https://github.com/MariaDB/mariadb-docker"
+ },
+ "releases": [],
+ "links": {
+  "hub": "https://hub.docker.com/_/mariadb",
+  "changelog": "https://github.com/MariaDB/mariadb-docker/releases",
+  "source": "https://github.com/MariaDB/mariadb-docker"
+ },
+ "label": "MariaDB",
+ "icon": "🗄️",
+ "category": "Database",
+ "security": true,
+ "description": "A database other apps store their data in.",
+ "impact": "Apps that keep their data in it stop working while it restarts — best done when nobody uses them.",
+ "used_by": [
+  {
+   "name": "nextcloud-db",
+   "state": "running"
+  }
+ ],
+ "repo": "MariaDB/mariadb-docker",
+ "newer_count": 0,
+ "major": false
+}

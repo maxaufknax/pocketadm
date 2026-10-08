@@ -61,12 +61,18 @@ def within(resolved: str, allowed: list[str]) -> bool:
 
 def resolve(path: str) -> str:
     """A requested path, made real and checked against the allowed roots.
-    Accepts the host's own form ("/srv/x") as well as the /host form."""
-    candidate = path
-    if HOST and not (path == HOST or path.startswith(HOST + "/")) and path.startswith("/"):
-        candidate = HOST + path
-    resolved = os.path.realpath(candidate)
-    if not within(resolved, roots()):
+    Accepts the host's own form ("/srv/x") as well as the /host form; the
+    host's form wins when both exist."""
+    allowed = roots()
+    candidates = [path]
+    if HOST and path.startswith("/") and not (path == HOST or path.startswith(HOST + "/")):
+        candidates.insert(0, HOST + path)
+    for candidate in candidates:
+        resolved = os.path.realpath(candidate)
+        if within(resolved, allowed) and os.path.exists(resolved):
+            return resolved
+    resolved = os.path.realpath(candidates[-1])
+    if not within(resolved, allowed):
         raise PermissionError("outside the folders PocketADM may browse")
     return resolved
 

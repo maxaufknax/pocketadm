@@ -155,17 +155,28 @@ struct ChatSettingsSheet: View {
     }
 }
 
-/// Past conversations. They live on the server and are shared across devices,
-/// so this is genuinely "all my chats", not this phone's history.
-struct ChatHistorySheet: View {
+/// Every conversation, to find, open and keep tidy. Chats live on the server
+/// and are shared across devices, so this is genuinely "all my chats", not
+/// this phone's history.
+struct ChatsListView: View {
+    let currentID: String
     let onOpen: (String) -> Void
+    let onNew: () -> Void
 
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var chats: [ChatSummary] = []
     @State private var loaded = false
+    @State private var search = ""
     @State private var showArchived = false
+    @State private var selection = Set<String>()
+    @State private var editMode: EditMode = .inactive
+    @State private var renaming: ChatSummary?
+    @State private var newTitle = ""
+    @State private var confirmDelete: [String] = []
+    @State private var shareText: ShareText?
+    @State private var toast: Toast?
 
     var body: some View {
         NavigationStack {
@@ -173,9 +184,11 @@ struct ChatHistorySheet: View {
                 if !loaded {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if visible.isEmpty {
-                    MessageState(symbol: "bubble.left",
-                                 title: "No chats yet",
-                                 message: "Conversations you start show up here.")
+                    MessageState(symbol: search.isEmpty ? "bubble.left.and.bubble.right" : "magnifyingglass",
+                                 title: search.isEmpty ? "No chats yet" : "Nothing found",
+                                 message: search.isEmpty
+                                    ? "Conversations you start show up here, on every device."
+                                    : "No chat mentions “\(search)”.")
                 } else {
                     list
                 }
@@ -183,75 +196,271 @@ struct ChatHistorySheet: View {
             .background(Theme.bg.ignoresSafeArea())
             .navigationTitle("Chats")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Search titles and messages")
+            .environment(\.editMode, $editMode)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }.tint(Theme.muted)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(showArchived ? "Hide archived" : "Archived") {
-                        showArchived.toggle()
+                    if editMode.isEditing {
+                        Button("Done") {
+                            editMode = .inactive
+                            selection = []
+                        }
+                    } else {
+                        Button("Close") { dismiss() }.tint(Theme.muted)
                     }
-                    .font(.caption)
-                    .tint(Theme.accent)
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if !editMode.isEditing {
+                        Menu {
+                            Button {
+                                editMode = .active
+                            } label: { Label("Select", systemImage: "checkmark.circle") }
+                            Toggle(isOn: $showArchived) {
+                                Label("Show archived", systemImage: "archivebox")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        Button {
+                            onNew()
+                        } label: { Image(systemName: "square.and.pencil") }
+                            .accessibilityLabel("New chat")
+                    }
+                }
+                if editMode.isEditing {
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        Button {
+                            Task { await archive(Array(selection), archived: true) }
+                        } label: { Text("Archive") }
+                            .disabled(selection.isEmpty)
+                        Spacer()
+                        Button(role: .destructive) {
+                            confirmDelete = Array(selection)
+                        } label: { Text(selection.isEmpty ? "Delete" : "Delete (\(selection.count))") }
+                            .disabled(selection.isEmpty)
+                    }
                 }
             }
-            .task { await load() }
+            .task(id: search) {
+                // the server searches message text too; wait for typing to pause
+                if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+                await load()
+            }
+            .alert("Rename chat", isPresented: Binding(get: { renaming != nil },
+                                                        set: { if !$0 { renaming = nil } })) {
+                TextField("Title", text: $newTitle)
+                Button("Save") {
+                    if let chat = renaming { Task { await rename(chat) } }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .confirmationDialog(confirmDelete.count == 1 ? "Delete this chat?" : "Delete \(confirmDelete.count) chats?",
+                                isPresented: Binding(get: { !confirmDelete.isEmpty },
+                                                     set: { if !$0 { confirmDelete = [] } }),
+                                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    let ids = confirmDelete
+                    Task { await delete(ids) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Deleted chats are gone on every device.")
+            }
+            .sheet(item: $shareText) { item in ShareSheet(items: [item.text]) }
+            .toast($toast)
         }
     }
 
     private var visible: [ChatSummary] {
-        chats.filter { showArchived ? true : !$0.archived }
-            .sorted { $0.updated > $1.updated }
+        chats.filter { showArchived || !$0.archived || !search.isEmpty }
     }
 
-    private var list: some View {
-        List {
-            ForEach(visible) { chat in
-                Button { onOpen(chat.id) } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(chat.title.isEmpty ? "Untitled" : chat.title)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Theme.text)
-                            .lineLimit(1)
-                        Text("\(chat.messageCount) messages · \(Fmt.ago(chat.date))")
-                            .font(.caption)
-                            .foregroundStyle(Theme.muted)
-                    }
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) {
-                        Task { await delete(chat) }
-                    } label: { Label("Delete", systemImage: "trash") }
+    private var pinned: [ChatSummary] { visible.filter { $0.pinned && !$0.archived } }
+    private var recent: [ChatSummary] { visible.filter { !$0.pinned && !$0.archived } }
+    private var archived: [ChatSummary] { visible.filter(\.archived) }
 
-                    Button {
-                        Task { await archive(chat) }
-                    } label: {
-                        Label(chat.archived ? "Unarchive" : "Archive",
-                              systemImage: chat.archived ? "tray.and.arrow.up" : "archivebox")
-                    }
-                    .tint(Theme.muted)
+    private var list: some View {
+        List(selection: $selection) {
+            if !pinned.isEmpty {
+                Section("Pinned") { rows(pinned) }
+            }
+            if !recent.isEmpty {
+                Section {
+                    rows(recent)
+                } header: {
+                    if !pinned.isEmpty { Text("Recent") }
                 }
+            }
+            if !archived.isEmpty {
+                Section("Archived") { rows(archived) }
             }
         }
         .listStyle(.insetGrouped)
         .refreshable { await load() }
     }
 
+    @ViewBuilder
+    private func rows(_ items: [ChatSummary]) -> some View {
+        ForEach(items) { chat in
+            Button {
+                guard !editMode.isEditing else { return }
+                onOpen(chat.id)
+            } label: {
+                ChatSummaryRow(chat: chat, current: chat.id == currentID, searching: !search.isEmpty)
+            }
+            .tag(chat.id)
+            .swipeActions(edge: .leading) {
+                Button {
+                    Task { await pin(chat) }
+                } label: {
+                    Label(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash" : "pin")
+                }
+                .tint(.orange)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    confirmDelete = [chat.id]
+                } label: { Label("Delete", systemImage: "trash") }
+
+                Button {
+                    Task { await archive([chat.id], archived: !chat.archived) }
+                } label: {
+                    Label(chat.archived ? "Unarchive" : "Archive",
+                          systemImage: chat.archived ? "tray.and.arrow.up" : "archivebox")
+                }
+                .tint(Theme.muted)
+            }
+            .contextMenu {
+                Button { onOpen(chat.id) } label: { Label("Open", systemImage: "bubble.left") }
+                Button {
+                    newTitle = chat.title
+                    renaming = chat
+                } label: { Label("Rename", systemImage: "pencil") }
+                Button {
+                    Task { await pin(chat) }
+                } label: { Label(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash" : "pin") }
+                Button {
+                    Task { await share(chat) }
+                } label: { Label("Share", systemImage: "square.and.arrow.up") }
+                Button {
+                    Task { await archive([chat.id], archived: !chat.archived) }
+                } label: {
+                    Label(chat.archived ? "Unarchive" : "Archive",
+                          systemImage: chat.archived ? "tray.and.arrow.up" : "archivebox")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    confirmDelete = [chat.id]
+                } label: { Label("Delete", systemImage: "trash") }
+            }
+        }
+    }
+
+    // MARK: - Actions
+
     private func load() async {
         defer { loaded = true }
         guard let client = app.client else { return }
-        chats = (try? await client.chats()) ?? []
+        if app.supports("chat_manage") {
+            if let found = try? await client.chats(search: search) { chats = found }
+        } else {
+            let all = (try? await client.chats()) ?? []
+            chats = search.isEmpty ? all
+                : all.filter { $0.title.localizedCaseInsensitiveContains(search) }
+        }
     }
 
-    private func delete(_ chat: ChatSummary) async {
+    private func rename(_ chat: ChatSummary) async {
         guard let client = app.client else { return }
-        try? await client.deleteChat(chat.id)
+        let title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        do {
+            try await client.renameChat(chat.id, title: title)
+            await load()
+        } catch {
+            toast = Toast(text: error.localizedDescription, isError: true)
+        }
+    }
+
+    private func pin(_ chat: ChatSummary) async {
+        guard let client = app.client else { return }
+        do {
+            try await client.pinChat(chat.id, pinned: !chat.pinned)
+            await load()
+        } catch {
+            toast = Toast(text: "Pinning needs PocketADM 0.24 on the server", isError: true)
+        }
+    }
+
+    private func archive(_ ids: [String], archived: Bool) async {
+        guard let client = app.client else { return }
+        for id in ids { try? await client.archiveChat(id, archived: archived) }
+        selection = []
+        editMode = .inactive
+        toast = Toast(text: archived ? "Archived" : "Back in your chats")
         await load()
     }
 
-    private func archive(_ chat: ChatSummary) async {
+    private func delete(_ ids: [String]) async {
         guard let client = app.client else { return }
-        try? await client.archiveChat(chat.id, archived: !chat.archived)
+        if app.supports("chat_manage") && ids.count > 1 {
+            try? await client.deleteChats(ids)
+        } else {
+            for id in ids { try? await client.deleteChat(id) }
+        }
+        confirmDelete = []
+        selection = []
+        editMode = .inactive
         await load()
+    }
+
+    private func share(_ chat: ChatSummary) async {
+        guard let client = app.client else { return }
+        do {
+            shareText = ShareText(text: try await client.exportChat(chat.id))
+        } catch {
+            toast = Toast(text: error.localizedDescription, isError: true)
+        }
+    }
+}
+
+struct ChatSummaryRow: View {
+    let chat: ChatSummary
+    var current = false
+    var searching = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            IconTile(symbol: chat.pinned ? "pin.fill" : "bubble.left.fill",
+                     color: chat.pinned ? .orange : (current ? Theme.accent : .gray), size: 32)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(chat.title.isEmpty ? "Untitled" : chat.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(Fmt.ago(chat.date))
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                }
+                let line = searching && !chat.snippet.isEmpty ? chat.snippet : chat.preview
+                if !line.isEmpty {
+                    Text(line)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 6) {
+                    Text("\(chat.messageCount) messages")
+                    if chat.toolCount > 0 { Text("· \(chat.toolCount) steps") }
+                    if current { Text("· open") .foregroundStyle(Theme.accent) }
+                }
+                .font(.caption2)
+                .foregroundStyle(Color(uiColor: .tertiaryLabel))
+            }
+        }
+        .padding(.vertical, 2)
     }
 }

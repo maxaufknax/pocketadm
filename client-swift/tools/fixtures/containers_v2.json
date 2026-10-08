@@ -1,0 +1,396 @@
+[
+ {
+  "id": "00000000000a",
+  "name": "gitea",
+  "image": "gitea/gitea:1.22",
+  "state": "running",
+  "status": "Up 20 days",
+  "health": "",
+  "ports": [
+   {
+    "private": 3000,
+    "public": 3002,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   },
+   {
+    "private": 22,
+    "public": 2222,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "git",
+  "compose_service": "server",
+  "created": 1789689147,
+  "mounts_docker_sock": false,
+  "image_ref": "gitea/gitea:1.22",
+  "service": {
+   "label": "Gitea",
+   "icon": "🍵",
+   "category": "Development",
+   "security": false
+  },
+  "role": "App",
+  "group_id": "gitea",
+  "group_name": "Gitea",
+  "display_name": "Gitea"
+ },
+ {
+  "id": "000000000007",
+  "name": "grafana",
+  "image": "grafana/grafana:11.1.0",
+  "state": "running",
+  "status": "Up 4 days",
+  "health": "",
+  "ports": [
+   {
+    "private": 3000,
+    "public": 3000,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "monitoring",
+  "compose_service": "grafana",
+  "created": 1791071547,
+  "mounts_docker_sock": false,
+  "image_ref": "grafana/grafana:11.1.0",
+  "service": {
+   "label": "Grafana",
+   "icon": "📊",
+   "category": "Monitoring",
+   "security": false
+  },
+  "role": "Grafana",
+  "group_id": "monitoring",
+  "group_name": "Monitoring",
+  "display_name": "Grafana"
+ },
+ {
+  "id": "00000000000b",
+  "name": "helmsman",
+  "image": "ghcr.io/maxaufknax/helmsman:latest",
+  "state": "running",
+  "status": "Up 24 hours",
+  "health": "",
+  "ports": [
+   {
+    "private": 8080,
+    "public": 8090,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "helmsman",
+  "compose_service": "helmsman",
+  "created": 1791330747,
+  "mounts_docker_sock": true,
+  "image_ref": "ghcr.io/maxaufknax/helmsman:latest",
+  "service": {
+   "label": "PocketADM",
+   "icon": "🧭",
+   "category": "Management",
+   "security": true
+  },
+  "role": "App",
+  "group_id": "pocketadm",
+  "group_name": "PocketADM",
+  "display_name": "PocketADM"
+ },
+ {
+  "id": "000000000003",
+  "name": "jellyfin",
+  "image": "jellyfin/jellyfin:latest",
+  "state": "running",
+  "status": "Up 13 days",
+  "health": "",
+  "ports": [
+   {
+    "private": 8096,
+    "public": 8096,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "media",
+  "compose_service": "jellyfin",
+  "created": 1790293947,
+  "mounts_docker_sock": false,
+  "image_ref": "jellyfin/jellyfin:latest",
+  "service": {
+   "label": "Jellyfin",
+   "icon": "🎬",
+   "category": "Media",
+   "security": false
+  },
+  "role": "App",
+  "group_id": "jellyfin",
+  "group_name": "Jellyfin",
+  "display_name": "Jellyfin"
+ },
+ {
+  "id": "000000000004",
+  "name": "navidrome",
+  "image": "deluan/navidrome:latest",
+  "state": "running",
+  "status": "Up 13 days",
+  "health": "",
+  "ports": [
+   {
+    "private": 4533,
+    "public": 4533,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "media",
+  "compose_service": "navidrome",
+  "created": 1790293947,
+  "mounts_docker_sock": false,
+  "image_ref": "deluan/navidrome:latest",
+  "service": {
+   "label": "Navidrome",
+   "icon": "🎵",
+   "category": "Media",
+   "security": false
+  },
+  "role": "App",
+  "group_id": "navidrome",
+  "group_name": "Navidrome",
+  "display_name": "Navidrome"
+ },
+ {
+  "id": "000000000000",
+  "name": "nextcloud",
+  "image": "nextcloud:29-apache",
+  "state": "running",
+  "status": "Up 30 days (healthy)",
+  "health": "healthy",
+  "ports": [
+   {
+    "private": 80,
+    "public": 8081,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "cloud",
+  "compose_service": "nextcloud",
+  "created": 1788825147,
+  "mounts_docker_sock": false,
+  "image_ref": "nextcloud:29-apache",
+  "service": {
+   "label": "Nextcloud",
+   "icon": "☁️",
+   "category": "Files & Sync",
+   "security": true
+  },
+  "role": "App",
+  "group_id": "nextcloud",
+  "group_name": "Nextcloud",
+  "display_name": "Nextcloud"
+ },
+ {
+  "id": "000000000001",
+  "name": "nextcloud-db",
+  "image": "mariadb:11",
+  "state": "running",
+  "status": "Up 30 days",
+  "health": "",
+  "ports": [],
+  "compose_project": "cloud",
+  "compose_service": "db",
+  "created": 1788825147,
+  "mounts_docker_sock": false,
+  "image_ref": "mariadb:11",
+  "service": {
+   "label": "MariaDB",
+   "icon": "🗄️",
+   "category": "Database",
+   "security": true
+  },
+  "role": "Database",
+  "group_id": "nextcloud",
+  "group_name": "Nextcloud",
+  "display_name": "MariaDB"
+ },
+ {
+  "id": "000000000002",
+  "name": "nextcloud-redis",
+  "image": "redis:7-alpine",
+  "state": "running",
+  "status": "Up 30 days",
+  "health": "",
+  "ports": [],
+  "compose_project": "cloud",
+  "compose_service": "redis",
+  "created": 1788825147,
+  "mounts_docker_sock": false,
+  "image_ref": "redis:7-alpine",
+  "service": {
+   "label": "Redis",
+   "icon": "⚡",
+   "category": "Cache",
+   "security": true
+  },
+  "role": "Cache",
+  "group_id": "nextcloud",
+  "group_name": "Nextcloud",
+  "display_name": "Redis"
+ },
+ {
+  "id": "000000000006",
+  "name": "pihole",
+  "image": "pihole/pihole:latest",
+  "state": "running",
+  "status": "Up 58 days (healthy)",
+  "health": "healthy",
+  "ports": [
+   {
+    "private": 53,
+    "public": 53,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   },
+   {
+    "private": 80,
+    "public": 8053,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "dns",
+  "compose_service": "pihole",
+  "created": 1786377147,
+  "mounts_docker_sock": false,
+  "image_ref": "pihole/pihole:latest",
+  "service": {
+   "label": "Pi-hole",
+   "icon": "🛡️",
+   "category": "DNS / Adblock",
+   "security": true
+  },
+  "role": "App",
+  "group_id": "dns",
+  "group_name": "Pi-hole",
+  "display_name": "Pi-hole"
+ },
+ {
+  "id": "000000000008",
+  "name": "prometheus",
+  "image": "prom/prometheus:latest",
+  "state": "running",
+  "status": "Up 4 days",
+  "health": "",
+  "ports": [
+   {
+    "private": 9090,
+    "public": 9090,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "monitoring",
+  "compose_service": "prometheus",
+  "created": 1791071547,
+  "mounts_docker_sock": false,
+  "image_ref": "prom/prometheus:latest",
+  "service": {
+   "label": "Prometheus",
+   "icon": "🔥",
+   "category": "Monitoring",
+   "security": false
+  },
+  "role": "Prometheus",
+  "group_id": "monitoring",
+  "group_name": "Monitoring",
+  "display_name": "Prometheus"
+ },
+ {
+  "id": "000000000009",
+  "name": "uptime-kuma",
+  "image": "louislam/uptime-kuma:1",
+  "state": "running",
+  "status": "Up 4 days (healthy)",
+  "health": "healthy",
+  "ports": [
+   {
+    "private": 3001,
+    "public": 3001,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "monitoring",
+  "compose_service": "uptime-kuma",
+  "created": 1791071547,
+  "mounts_docker_sock": false,
+  "image_ref": "louislam/uptime-kuma:1",
+  "service": {
+   "label": "Uptime Kuma",
+   "icon": "📈",
+   "category": "Monitoring",
+   "security": false
+  },
+  "role": "App",
+  "group_id": "uptime",
+  "group_name": "Uptime Kuma",
+  "display_name": "Uptime Kuma"
+ },
+ {
+  "id": "000000000005",
+  "name": "vaultwarden",
+  "image": "vaultwarden/server:latest",
+  "state": "running",
+  "status": "Up 4 days (healthy)",
+  "health": "healthy",
+  "ports": [
+   {
+    "private": 80,
+    "public": 8222,
+    "type": "tcp",
+    "ip": "0.0.0.0"
+   }
+  ],
+  "compose_project": "vault",
+  "compose_service": "vaultwarden",
+  "created": 1791071547,
+  "mounts_docker_sock": false,
+  "image_ref": "vaultwarden/server:latest",
+  "service": {
+   "label": "Vaultwarden",
+   "icon": "🔐",
+   "category": "Passwords",
+   "security": true
+  },
+  "role": "App",
+  "group_id": "vaultwarden",
+  "group_name": "Vaultwarden",
+  "display_name": "Vaultwarden"
+ },
+ {
+  "id": "00000000000c",
+  "name": "backup-runner",
+  "image": "offen/docker-volume-backup:v2",
+  "state": "exited",
+  "status": "Exited (0) 2 hours ago",
+  "health": "",
+  "ports": [],
+  "compose_project": "backup",
+  "compose_service": "backup",
+  "created": 1791417147,
+  "mounts_docker_sock": false,
+  "image_ref": "offen/docker-volume-backup:v2",
+  "service": {
+   "label": "Docker Volume Backup",
+   "icon": "📦",
+   "category": "Service",
+   "security": false
+  },
+  "role": "App",
+  "group_id": "runner",
+  "group_name": "Docker Volume Backup",
+  "display_name": "Docker Volume Backup"
+ }
+]

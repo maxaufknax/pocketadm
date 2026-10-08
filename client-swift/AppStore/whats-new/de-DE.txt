@@ -1,9 +1,12 @@
 PocketADM 2.0 ist eine neue App: von Grund auf als native iPhone-App gebaut.
 
-• Durchgehend nativ: das Aussehen von iOS in Hell und Dunkel, echte Logos deiner Dienste, ein echter Terminal-Emulator und Live-Diagramme.
-• In Sekunden verbunden: Der Installer auf dem Server endet jetzt mit einem QR-Code. Scannen und du bist angemeldet, von der ersten Minute an über HTTPS, auch ohne Domain.
-• Coding-Agenten auf deinem Server: Claude Code oder Codex im Assistant-Tab, mit deinem eigenen Abo. Jeder Schritt ist sichtbar, riskante warten auf deinen Tipp.
-• Anmelden mit Authentik, Authelia, Keycloak oder jedem OpenID-Connect-Anbieter, zusätzlich zu Passwort und 2FA.
-• Ein vorsichtigerer Agent: Alles, was ins Internet ginge, fragt vorher nach, und Hintergrund-Wächter können nur noch lesen.
+• Der Wächter: Eine KI schaut alle paar Stunden und sofort nach einem Ausfall auf deinen Server und schreibt dir nur, wenn es sich lohnt – in ganzen Sätzen, mit dem nächsten Schritt einen Tipp entfernt. Nachts still, nie mehr als ein paar Nachrichten am Tag, auf Wunsch auch per Push oder in Element (Matrix).
+• Deine KI-Abos an einem Ort: Claude, ChatGPT und Mistral mit einem Tipp verbinden, ohne Terminal – und wählen, welche KI chattet, wacht und erklärt.
+• Apps statt Container-Listen: Zusammengehörige Container erscheinen als eine App mit eindeutigen Namen. Container-Seiten mit Live-Auslastung, Shell, Prozessen, Verlauf und Live-Logs.
+• Health mit Punktzahl, verständlichen Erklärungen und Aktionen zum Beheben – Bekanntes lässt sich akzeptieren.
+• Dateien und Laufwerke: jeder Ordner, auch externe Festplatten, mit Belegung, Ordnergrößen, Suche und Vorschau.
+• Aktivität live: Container, SSH-Logins, Pakete, Internet-Ausfälle und alles, was in PocketADM passiert.
+• Der Assistent fasst Befehlsfolgen zusammen, zeigt den Plan dauerhaft oben, Chats lassen sich suchen, anheften, umbenennen und teilen.
+• Updates erklären sich: installierte und neue Version, was sich ändert und was beim Update kurz ausfällt.
 
-Du kommst von 1.x? Melde dich einmal neu an oder scanne den Pairing-QR deines Servers. Die neuesten Funktionen brauchen PocketADM 0.23 auf dem Server: Führe dazu den Installer erneut aus.
+Die neuen Funktionen brauchen PocketADM 0.24 auf dem Server: Führe dazu den Installer erneut aus.

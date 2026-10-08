@@ -1,0 +1,104 @@
+{
+ "id": "00000000000a",
+ "name": "gitea",
+ "image": "gitea/gitea:1.22",
+ "image_id": "dddddddddddd",
+ "created": "2026-06-01T00:00:00Z",
+ "started_at": "2026-07-01T00:00:00Z",
+ "finished_at": "",
+ "state": "running",
+ "exit_code": 0,
+ "oom_killed": false,
+ "error": "",
+ "health": "",
+ "health_failing_streak": 0,
+ "health_log": [],
+ "restart_count": 0,
+ "restart_policy": "unless-stopped",
+ "restart_max": 0,
+ "privileged": false,
+ "env_count": 4,
+ "env": [
+  {
+   "key": "PGID",
+   "value": "1000",
+   "secret": false
+  },
+  {
+   "key": "PUID",
+   "value": "1000",
+   "secret": false
+  },
+  {
+   "key": "SERVER_PASSWORD",
+   "value": "••••••••",
+   "secret": true
+  },
+  {
+   "key": "TZ",
+   "value": "Europe/Berlin",
+   "secret": false
+  }
+ ],
+ "cmd": "",
+ "entrypoint": "/init",
+ "working_dir": "/app",
+ "user": "",
+ "hostname": "gitea",
+ "mounts": [
+  {
+   "source": "/srv/git/data",
+   "dest": "/data",
+   "rw": true,
+   "type": "bind",
+   "name": ""
+  }
+ ],
+ "networks": [
+  "git_default"
+ ],
+ "network_details": [
+  {
+   "name": "git_default",
+   "ip": "172.18.0.12",
+   "gateway": "172.18.0.1",
+   "aliases": [
+    "server"
+   ]
+  }
+ ],
+ "network_mode": "bridge",
+ "ports": [
+  {
+   "private": 3000,
+   "proto": "tcp",
+   "public": 3002,
+   "ip": "0.0.0.0"
+  },
+  {
+   "private": 22,
+   "proto": "tcp",
+   "public": 2222,
+   "ip": "0.0.0.0"
+  }
+ ],
+ "resources": {
+  "memory_limit": 0,
+  "cpus": 0,
+  "cpu_shares": 0,
+  "pids_limit": 0
+ },
+ "log_driver": "json-file",
+ "compose_dir": "/srv/git",
+ "compose_files": "/srv/git/docker-compose.yml",
+ "labels": {
+  "com.docker.compose.project": "git",
+  "com.docker.compose.service": "server"
+ },
+ "service": {
+  "label": "Gitea",
+  "icon": "🍵",
+  "category": "Development",
+  "security": false
+ }
+}

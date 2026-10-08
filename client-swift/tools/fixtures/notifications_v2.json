@@ -1,0 +1,112 @@
+{
+ "items": [
+  {
+   "id": "8f94137eb2",
+   "time": 1791409947.1752803,
+   "source": "watch",
+   "status": "warn",
+   "title": "No backup ran for the vault in a week",
+   "body": "The nightly volume backup has not finished since last Tuesday — the backup container exits right after starting because its target disk is not mounted. Plug the USB drive back in and run `docker start backup-runner`, or ask the assistant to check the mount.",
+   "fp": "backup",
+   "count": 1,
+   "last_seen": 1791409947.1752803,
+   "kind": "watch",
+   "importance": "important",
+   "topic": "backup",
+   "actions": [
+    {
+     "kind": "container",
+     "label": "Open backup-runner",
+     "target": "backup-runner"
+    },
+    {
+     "kind": "open",
+     "label": "Health",
+     "target": "checks"
+    },
+    {
+     "kind": "assistant",
+     "label": "Ask the assistant",
+     "prompt": "The watch wrote: \"The nightly volume backup has not finished since last Tuesday — the backup container exits right after starting because its target disk is not mounted. Plug the USB drive back in and run `docker start backup-runner`, or ask the assistant to check the mount.\" — what should I do?"
+    }
+   ],
+   "steps": [
+    {
+     "tool": "run_command",
+     "detail": "docker ps -a --filter name=backup",
+     "output": "backup-runner  Exited (1) 2 hours ago",
+     "ms": 140
+    }
+   ]
+  },
+  {
+   "id": "d1d2a33be7",
+   "time": 1791345147.1752803,
+   "source": "watch",
+   "status": "info",
+   "title": "The disk fills up in about six weeks",
+   "body": "Root is at 78% and grew by 2.1 GB a day this week, mostly Jellyfin's transcode cache. At this pace it is full in roughly six weeks; clearing the cache frees about 9 GB.",
+   "fp": "disk-trend",
+   "count": 1,
+   "last_seen": 1791345147.1752803,
+   "kind": "watch",
+   "importance": "info",
+   "topic": "disk-trend",
+   "actions": [
+    {
+     "kind": "open",
+     "label": "Storage",
+     "target": "storage"
+    },
+    {
+     "kind": "assistant",
+     "label": "Ask the assistant",
+     "prompt": "The watch wrote: \"Root is at 78% and grew by 2.1 GB a day this week, mostly Jellyfin's transcode cache. At this pace it is full in roughly six weeks; clearing the cache frees about 9 GB.\" — what should I do?"
+    }
+   ],
+   "steps": [
+    {
+     "tool": "run_command",
+     "detail": "docker ps -a --filter name=backup",
+     "output": "backup-runner  Exited (1) 2 hours ago",
+     "ms": 140
+    }
+   ]
+  },
+  {
+   "id": "0bfc982ec6",
+   "time": 1791244347.1752803,
+   "source": "watch",
+   "status": "crit",
+   "title": "Nextcloud was down for 4 minutes",
+   "body": "Nextcloud stopped answering at 14:02 after its database ran out of connections; it recovered on its own at 14:06 when the cron job finished. If it happens again, raise max_connections in MariaDB.",
+   "fp": "nextcloud-down",
+   "count": 1,
+   "last_seen": 1791244347.1752803,
+   "kind": "watch",
+   "importance": "critical",
+   "topic": "nextcloud-down",
+   "actions": [
+    {
+     "kind": "container",
+     "label": "Open nextcloud",
+     "target": "nextcloud"
+    },
+    {
+     "kind": "assistant",
+     "label": "Ask the assistant",
+     "prompt": "The watch wrote: \"Nextcloud stopped answering at 14:02 after its database ran out of connections; it recovered on its own at 14:06 when the cron job finished. If it happens again, raise max_connections in MariaDB.\" — what should I do?"
+    }
+   ],
+   "steps": [
+    {
+     "tool": "run_command",
+     "detail": "docker ps -a --filter name=backup",
+     "output": "backup-runner  Exited (1) 2 hours ago",
+     "ms": 140
+    }
+   ]
+  }
+ ],
+ "unseen": 3
+}

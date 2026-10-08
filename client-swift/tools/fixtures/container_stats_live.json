@@ -1,0 +1,13 @@
+{
+ "cpu_percent": 3.7,
+ "cpu_known": true,
+ "mem_usage": 236978176,
+ "mem_limit": 8589934592,
+ "net_rx": 101711872,
+ "net_tx": 61865984,
+ "blk_read": 133169152,
+ "blk_write": 157286400,
+ "pids": 31,
+ "net_rx_rate": 5253.525012721003,
+ "net_tx_rate": 4341.759866281058
+}

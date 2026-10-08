@@ -1,0 +1,135 @@
+{
+ "events": [
+  {
+   "id": "cedaea6c68",
+   "t": 1791415247.378,
+   "category": "updates",
+   "kind": "apt.batch",
+   "title": "14 packages changed by apt",
+   "detail": "openssl, libssl3, curl, git…",
+   "severity": "info",
+   "target": "",
+   "source": "demo"
+  },
+  {
+   "id": "a793f84f54",
+   "t": 1791413347.378,
+   "category": "security",
+   "kind": "fail2ban.ban",
+   "title": "fail2ban banned 198.51.100.4",
+   "detail": "jail sshd",
+   "severity": "info",
+   "target": "198.51.100.4",
+   "source": "demo"
+  },
+  {
+   "id": "693cdc486f",
+   "t": 1791411447.378,
+   "category": "network",
+   "kind": "net.up",
+   "title": "Internet is back after about 2 min",
+   "detail": "",
+   "severity": "ok",
+   "target": "",
+   "source": "demo"
+  },
+  {
+   "id": "740e51354b",
+   "t": 1791409547.378,
+   "category": "app",
+   "kind": "pocketadm.agent_tool",
+   "title": "The assistant acted",
+   "detail": "run_command · docker compose pull jellyfin",
+   "severity": "info",
+   "target": "",
+   "source": "demo"
+  },
+  {
+   "id": "baeafa2d4e",
+   "t": 1791407647.378,
+   "category": "system",
+   "kind": "systemd.finished",
+   "title": "Finished: Nightly volume backup",
+   "detail": "",
+   "severity": "ok",
+   "target": "backup",
+   "source": "demo"
+  },
+  {
+   "id": "3132f3c534",
+   "t": 1791405747.378,
+   "category": "security",
+   "kind": "ssh.failed",
+   "title": "37 failed SSH logins from 203.0.113.9",
+   "detail": "tried: root, admin, ubnt",
+   "severity": "warn",
+   "target": "203.0.113.9",
+   "source": "demo"
+  },
+  {
+   "id": "68b4dd7953",
+   "t": 1791403847.378,
+   "category": "updates",
+   "kind": "docker.image.pull",
+   "title": "Image pulled: grafana/grafana:11.1.0",
+   "detail": "",
+   "severity": "ok",
+   "target": "grafana",
+   "source": "demo"
+  },
+  {
+   "id": "687135b72c",
+   "t": 1791401947.378,
+   "category": "containers",
+   "kind": "docker.health",
+   "title": "vaultwarden is healthy again",
+   "detail": "",
+   "severity": "ok",
+   "target": "vaultwarden",
+   "source": "demo"
+  },
+  {
+   "id": "49dc189b3d",
+   "t": 1791400047.378,
+   "category": "security",
+   "kind": "ssh.login",
+   "title": "admin logged in over SSH",
+   "detail": "from 192.168.1.20 (publickey)",
+   "severity": "info",
+   "target": "admin",
+   "source": "demo"
+  },
+  {
+   "id": "f7a5df4423",
+   "t": 1791398147.378,
+   "category": "containers",
+   "kind": "docker.restart",
+   "title": "nextcloud restarted",
+   "detail": "",
+   "severity": "info",
+   "target": "nextcloud",
+   "source": "demo"
+  }
+ ],
+ "cursor": null,
+ "categories": {
+  "containers": "Containers",
+  "security": "Logins & security",
+  "system": "System",
+  "network": "Network",
+  "updates": "Updates & packages",
+  "app": "PocketADM & AI"
+ },
+ "stats": {
+  "hours": 24,
+  "counts": {
+   "containers": 2,
+   "security": 3,
+   "system": 1,
+   "network": 1,
+   "updates": 2,
+   "app": 1
+  },
+  "problems": 1
+ }
+}

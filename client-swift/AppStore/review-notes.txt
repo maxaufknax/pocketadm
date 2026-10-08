@@ -7,7 +7,9 @@ Equivalent manual route: type the address demo.pocketadm.com, tap Continue, and 
 
 CAMERA: used only to scan the pairing QR code a PocketADM server prints at the end of its installer, or that a signed-in device shows. "Scan pairing code" asks for camera permission and opens the scanner. The read-only demo cannot create pairing codes, so there is nothing to scan during review; close the scanner with Cancel. "Paste pairing link" accepts the same link as text.
 
-ASSISTANT: an AI agent that works on the user's own server with the user's own API key or coding-agent subscription (Claude Code, Codex). The demo is read-only, so its Assistant tab shows a recorded sample session; sending a message there explains that the demo cannot run the agent.
+ASSISTANT: an AI agent that works on the user's own server with the user's own API key or coding-agent subscription (Claude Code, Codex, Mistral Vibe). The demo is read-only, so its Assistant tab shows a recorded sample session; sending a message there explains that the demo cannot run the agent.
+
+ALERTS AND AI ACCOUNTS: More → Alerts & watch shows sample messages of the watch, a background agent that checks the user's own server with the user's own AI. More → AI accounts shows how a subscription or an API key is connected; in the read-only demo these screens can be viewed but not changed. Signing in to Claude, ChatGPT or Mistral happens on the provider's own website and only connects the user's own server.
 
 TERMINAL: in the demo, opening any shell shows a simulated, read-only shell (try ls, docker ps, free, df, cat readme.txt); nothing is executed. On a user's own server it is a real terminal.
 

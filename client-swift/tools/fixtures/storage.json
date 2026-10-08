@@ -1,0 +1,58 @@
+{
+ "filesystems": [
+  {
+   "mount": "/",
+   "path": "/",
+   "device": "/dev/nvme0n1p2",
+   "fstype": "ext4",
+   "label": "",
+   "model": "Samsung SSD 980",
+   "disk": "nvme0n1",
+   "transport": "nvme",
+   "removable": false,
+   "external": false,
+   "kind": "system",
+   "total": 511101108224,
+   "used": 317827579904,
+   "free": 193273528320,
+   "percent": 62.2,
+   "browsable": false
+  },
+  {
+   "mount": "/mnt/backup",
+   "path": "/mnt/backup",
+   "device": "/dev/sda1",
+   "fstype": "ext4",
+   "label": "Backup",
+   "model": "Portable SSD T7",
+   "disk": "sda",
+   "transport": "usb",
+   "removable": false,
+   "external": true,
+   "kind": "external",
+   "total": 999653638144,
+   "used": 431644213248,
+   "free": 568009424896,
+   "percent": 43.2,
+   "browsable": false
+  },
+  {
+   "mount": "/boot/efi",
+   "path": "/boot/efi",
+   "device": "/dev/nvme0n1p1",
+   "fstype": "vfat",
+   "label": "",
+   "model": "Samsung SSD 980",
+   "disk": "nvme0n1",
+   "transport": "nvme",
+   "removable": false,
+   "external": false,
+   "kind": "boot",
+   "total": 1073741824,
+   "used": 42949672,
+   "free": 1030792152,
+   "percent": 4.0,
+   "browsable": false
+  }
+ ]
+}

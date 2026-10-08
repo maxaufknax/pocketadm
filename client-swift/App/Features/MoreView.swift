@@ -25,36 +25,35 @@ struct MoreView: View {
                                             : "Images and rollback points",
                                           badge: updateCount > 0 ? String(updateCount) : "",
                                           tint: .orange))
-                    link(.apps, NavRow(symbol: "square.grid.2x2.fill", title: "Apps",
-                                       subtitle: "Install services in one tap", tint: .blue))
-                    link(.files, NavRow(symbol: "folder.fill", title: "Files",
-                                        subtitle: "Browse the workspaces", tint: .cyan))
+                    link(.apps, NavRow(symbol: "square.grid.2x2.fill", title: "App catalog",
+                                       subtitle: "Install new services in one tap", tint: .blue))
+                    link(.files, NavRow(symbol: "folder.fill", title: "Files & drives",
+                                        subtitle: "Every folder, every disk, how full they are", tint: .cyan))
                     link(.users, NavRow(symbol: "person.2.fill", title: "Users",
                                         subtitle: "Linux accounts on the host", tint: .gray))
                 }
 
                 Section("Monitor") {
-                    link(.alerts, NavRow(symbol: "bell.fill", title: "Alerts",
-                                         subtitle: "What the server has flagged",
+                    link(.alerts, NavRow(symbol: "bell.fill", title: "Alerts & watch",
+                                         subtitle: app.me?.watchEnabled == true
+                                           ? "The watch writes when something is worth knowing"
+                                           : "Let an AI keep an eye on the server",
                                          badge: app.unseenAlerts > 0 ? String(app.unseenAlerts) : "",
                                          tint: .red))
-                    link(.checks, NavRow(symbol: "checkmark.shield.fill", title: "Health checks",
-                                         subtitle: "Security and health of this server",
+                    link(.checks, NavRow(symbol: "checkmark.shield.fill", title: "Health",
+                                         subtitle: "Security, stability, storage, updates, backups",
                                          badge: checkBadge, badgeTint: checkScore?.tint ?? Theme.danger,
                                          tint: .green))
                     link(.activity, NavRow(symbol: "clock.arrow.circlepath", title: "Activity",
-                                           subtitle: "Every action taken on this server", tint: .indigo))
+                                           subtitle: "Everything that happens on the server, live", tint: .indigo))
                 }
 
-                Section("Assistant") {
-                    link(.ai, NavRow(symbol: "sparkles", title: "AI models",
+                Section("AI") {
+                    link(.ai, NavRow(symbol: "sparkles", title: "AI accounts",
                                      subtitle: app.me?.aiConfigured == true
-                                       ? "Providers, default model and usage"
-                                       : "Not set up yet",
+                                       ? "Claude, ChatGPT, Mistral — and what runs on what"
+                                       : "Connect a subscription or a key",
                                      tint: .purple))
-                    link(.agents, NavRow(symbol: "chevron.left.forwardslash.chevron.right",
-                                         title: "Coding agents",
-                                         subtitle: "Claude Code, Codex and more", tint: .teal))
                 }
 
                 Section("Security") {
@@ -85,7 +84,7 @@ struct MoreView: View {
             .navigationTitle("More")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: MoreRoute.self) { route in
-                destination(route)
+                MoreDestination(route: route)
             }
             .sheet(isPresented: $showPairSheet) { PairCodeSheet() }
             .refreshable { await loadBadges() }
@@ -93,7 +92,9 @@ struct MoreView: View {
         .task {
             await loadBadges()
             openScreenshotRoute()
+            openPendingRoute()
         }
+        .onChange(of: app.pendingRoute) { _, _ in openPendingRoute() }
     }
 
     private func link(_ route: MoreRoute, _ row: NavRow) -> some View {
@@ -122,24 +123,6 @@ struct MoreView: View {
         .padding(.vertical, 6)
     }
 
-    @ViewBuilder
-    private func destination(_ route: MoreRoute) -> some View {
-        switch route {
-        case .server:   SettingsView()
-        case .updates:  UpdatesView()
-        case .apps:     AppsView()
-        case .files:    FilesView()
-        case .users:    UsersView()
-        case .alerts:   NotificationsView()
-        case .checks:   ChecksView()
-        case .activity: AuditView()
-        case .ai:       AISettingsView()
-        case .agents:   CLIsView()
-        case .security: SecurityView()
-        case .about:    AboutView()
-        }
-    }
-
     private var checkBadge: String {
         switch checkScore {
         case .crit, .warn: return "!"
@@ -162,11 +145,41 @@ struct MoreView: View {
         }
     }
 
+    /// Another tab asked for a screen here ("Open updates" on an alert).
+    private func openPendingRoute() {
+        guard let route = app.pendingRoute else { return }
+        app.pendingRoute = nil
+        path = [route]
+    }
+
     /// Screenshot runs: `-PocketADMScreenshotRoute updates` opens that screen.
     private func openScreenshotRoute() {
         guard AppState.screenshotTab == MainTab.more.rawValue, path.isEmpty,
               let raw = AppState.screenshotRoute, let route = MoreRoute(rawValue: raw) else { return }
         path = [route]
+    }
+}
+
+/// The screen for a route — the More tab's list, and every link elsewhere that
+/// leads to one of its screens (an alert's "Updates", a finding's "Storage").
+struct MoreDestination: View {
+    let route: MoreRoute
+
+    var body: some View {
+        switch route {
+        case .server:   SettingsView()
+        case .updates:  UpdatesView()
+        case .apps:     AppsView()
+        case .files:    FilesHomeView()
+        case .users:    UsersView()
+        case .alerts:   AlertsView()
+        case .checks:   ChecksView()
+        case .activity: ActivityView()
+        case .ai:       AIAccountsView()
+        case .agents:   CLIsView()
+        case .security: SecurityView()
+        case .about:    AboutView()
+        }
     }
 }
 

@@ -1,0 +1,15 @@
+{
+ "chats": [
+  {
+   "id": "de300000c0ffee01",
+   "title": "Jellyfin keeps buffering in the evenings",
+   "created": 1791406347.1752803,
+   "updated": 1791406587.1752803,
+   "archived": false,
+   "pinned": false,
+   "message_count": 4,
+   "tool_count": 2,
+   "preview": "Found it. Jellyfin is **software-transcoding** every evening stream, so the CPU maxes out and playback buffers. Your box has an Intel iGPU t"
+  }
+ ]
+}

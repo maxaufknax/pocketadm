@@ -73,11 +73,24 @@ struct NotificationFeed: Decodable {
         /// How often the same alert has repeated — the server de-duplicates by
         /// fingerprint rather than spamming one row per occurrence.
         let count: Int
+        /// "watch" for messages the background watch wrote (0.24+).
+        let kind: String
+        /// critical / important / info — the watch's own words.
+        let importance: String
+        let topic: String
+        /// Links into the app the server derived from the message.
+        let actions: [AlertAction]
+        /// What the agent looked at before writing — so a claim can be checked.
+        let steps: [TraceStep]
+        /// "helpful" / "not_helpful" once the user said so.
+        let feedback: String
 
         var date: Date { Date(timeIntervalSince1970: time) }
+        var isWatch: Bool { kind == "watch" || source == "watch" }
 
         enum CodingKeys: String, CodingKey {
-            case id, time, source, status, title, body, count
+            case id, time, source, status, title, body, count, kind, importance, topic
+            case actions, steps, feedback
         }
 
         init(from decoder: Decoder) throws {
@@ -89,6 +102,12 @@ struct NotificationFeed: Decodable {
             title = c.get(.title, "")
             body = c.get(.body, "")
             count = c.get(.count, 1)
+            kind = c.get(.kind, "")
+            importance = c.get(.importance, "")
+            topic = c.get(.topic, "")
+            actions = c.get(.actions, [])
+            steps = c.get(.steps, [])
+            feedback = c.get(.feedback, "")
         }
     }
 
@@ -98,6 +117,49 @@ struct NotificationFeed: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         items = c.get(.items, [])
         unseen = c.get(.unseen, 0)
+    }
+}
+
+/// A link from an alert or a health finding into the app.
+struct AlertAction: Decodable, Hashable, Identifiable {
+    /// container / open / assistant / job / copy / mute / unmute / dismiss
+    let kind: String
+    let label: String
+    /// The screen ("updates", "storage", …) or the container's name.
+    let target: String
+    let prompt: String
+    let command: String
+    let job: String
+    let ids: [String]
+    var id: String { kind + target + label }
+
+    enum CodingKeys: String, CodingKey { case kind, label, target, prompt, command, job, ids }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = c.get(.kind, "")
+        label = c.get(.label, "")
+        target = c.get(.target, "")
+        prompt = c.get(.prompt, "")
+        command = c.get(.command, "")
+        job = c.get(.job, "")
+        ids = c.get(.ids, [])
+    }
+}
+
+/// One tool call a background agent made.
+struct TraceStep: Decodable, Hashable {
+    let tool: String
+    let detail: String
+    let output: String
+
+    enum CodingKeys: String, CodingKey { case tool, detail, output }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tool = c.get(.tool, "")
+        detail = c.get(.detail, "")
+        output = c.get(.output, "")
     }
 }
 
@@ -137,6 +199,9 @@ struct DockerUpdate: Decodable, Identifiable, Hashable {
     let version: String
     /// "high" / "normal" — the server's own ranking, not a guess made here.
     let priority: String
+    /// What the registry would pull now (0.24+): its version label and build date.
+    let latestVersion: String
+    let latestCreated: String
 
     var id: String { image }
     var displayName: String { label.isEmpty ? image : label }
@@ -148,6 +213,8 @@ struct DockerUpdate: Decodable, Identifiable, Hashable {
         case usedBy = "used_by"
         case updateAvailable = "update_available"
         case ageDays = "age_days"
+        case latestVersion = "latest_version"
+        case latestCreated = "latest_created"
     }
 
     init(from decoder: Decoder) throws {
@@ -166,6 +233,8 @@ struct DockerUpdate: Decodable, Identifiable, Hashable {
         security = c.get(.security, false)
         version = c.get(.version, "")
         priority = c.get(.priority, "normal")
+        latestVersion = c.get(.latestVersion, "")
+        latestCreated = c.get(.latestCreated, "")
     }
 }
 
@@ -210,9 +279,22 @@ struct AptStatus: Decodable {
 struct UpdateDetail: Decodable {
     let image: String
     let local: Local
+    /// What the registry would pull now (0.24+).
+    let remote: Local
     let releases: [Release]
     let label: String
     let icon: String
+    let category: String
+    /// One sentence on what the service is.
+    let description: String
+    /// What restarting it does to the people using it.
+    let impact: String
+    let usedBy: [UsedBy]
+    /// Releases between the installed version and the one that would be pulled.
+    let newerCount: Int
+    let major: Bool
+    let repo: String
+    let links: [String: String]
 
     struct Local: Decodable, Hashable {
         let version: String
@@ -233,6 +315,19 @@ struct UpdateDetail: Decodable {
         init() { version = ""; created = ""; tag = ""; digest = "" }
     }
 
+    struct UsedBy: Decodable, Hashable {
+        let name: String
+        let state: String
+
+        enum CodingKeys: String, CodingKey { case name, state }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = c.get(.name, "")
+            state = c.get(.state, "")
+        }
+    }
+
     struct Release: Decodable, Identifiable, Hashable {
         let tag: String
         let name: String
@@ -240,9 +335,11 @@ struct UpdateDetail: Decodable {
         let prerelease: Bool
         let notes: String
         let url: String
+        /// Arrives with this update (newer than what runs, not beyond what is pulled).
+        let newer: Bool
         var id: String { tag + date }
 
-        enum CodingKeys: String, CodingKey { case tag, name, date, prerelease, notes, url }
+        enum CodingKeys: String, CodingKey { case tag, name, date, prerelease, notes, url, newer }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -252,18 +349,33 @@ struct UpdateDetail: Decodable {
             prerelease = c.get(.prerelease, false)
             notes = c.get(.notes, "")
             url = c.get(.url, "")
+            newer = c.get(.newer, false)
         }
     }
 
-    enum CodingKeys: String, CodingKey { case image, local, releases, label, icon }
+    enum CodingKeys: String, CodingKey {
+        case image, local, remote, releases, label, icon, category, description, impact, major
+        case repo, links
+        case usedBy = "used_by"
+        case newerCount = "newer_count"
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         image = c.get(.image, "")
         local = c.opt(.local) ?? Local()
+        remote = c.opt(.remote) ?? Local()
         releases = c.get(.releases, [])
         label = c.get(.label, "")
         icon = c.get(.icon, "")
+        category = c.get(.category, "")
+        description = c.get(.description, "")
+        impact = c.get(.impact, "")
+        usedBy = c.get(.usedBy, [])
+        newerCount = c.get(.newerCount, 0)
+        major = c.get(.major, false)
+        repo = c.get(.repo, "")
+        links = c.get(.links, [:])
     }
 }
 
@@ -545,11 +657,13 @@ struct ReportSummary: Decodable, Identifiable, Hashable {
     let score: Severity
     let counts: ReportCounts
     let trigger: String
+    /// 0–100 (0.24+); nil on older servers.
+    let points: Int?
 
     var id: String { file }
     var date: Date { Date(timeIntervalSince1970: time) }
 
-    enum CodingKeys: String, CodingKey { case file, time, score, counts, trigger }
+    enum CodingKeys: String, CodingKey { case file, time, score, counts, trigger, points }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -558,6 +672,7 @@ struct ReportSummary: Decodable, Identifiable, Hashable {
         score = Severity(c.get(.score, "info"))
         counts = c.opt(.counts) ?? ReportCounts()
         trigger = c.get(.trigger, "")
+        points = c.opt(.points)
     }
 }
 
@@ -568,8 +683,24 @@ struct Report: Decodable {
     let counts: ReportCounts
     let score: Severity
     let checks: [Check]
+    /// 0–100 (0.24+). Older servers send none; the app derives one.
+    let points: Int?
+    let mutedCount: Int
 
     var date: Date { Date(timeIntervalSince1970: time) }
+
+    /// The score, from the server when it sends one.
+    var score100: Int {
+        points ?? max(0, 100 - 20 * counts.crit - 8 * counts.warn - counts.info)
+    }
+
+    var needsAttention: [Check] {
+        checks.filter { ($0.status == .crit || $0.status == .warn) && !$0.muted }
+            .sorted { $0.status.weight < $1.status.weight }
+    }
+    var passing: [Check] { checks.filter { $0.status == .ok } }
+    var informational: [Check] { checks.filter { $0.status == .info && !$0.muted } }
+    var accepted: [Check] { checks.filter { $0.muted } }
 
     /// Checks grouped the way the server labelled them, worst group first.
     var groups: [CheckGroup] {
@@ -593,9 +724,21 @@ struct Report: Decodable {
         let summary: String
         /// Present only when something needs doing — the actionable half.
         let recommendation: String?
+        /// Security / Stability / Storage / Updates / Backups / Assistant (0.24+).
+        let category: String
+        /// What the finding means, in plain words.
+        let explain: String
+        let actions: [AlertAction]
+        /// Accepted on purpose by the user: shown apart, not counted.
+        let muted: Bool
+        let mutedNote: String
+        let originalStatus: Severity?
 
         enum CodingKeys: String, CodingKey {
-            case id, group, title, icon, status, summary, recommendation
+            case id, group, title, icon, status, summary, recommendation, category, explain
+            case actions, muted
+            case mutedNote = "muted_note"
+            case originalStatus = "original_status"
         }
 
         init(from decoder: Decoder) throws {
@@ -608,11 +751,32 @@ struct Report: Decodable {
             summary = c.get(.summary, "")
             let hint: String = c.get(.recommendation, "")
             recommendation = hint.isEmpty ? nil : hint
+            category = c.get(.category, Report.Check.category(forGroup: c.get(.group, "Other")))
+            explain = c.get(.explain, "")
+            actions = c.get(.actions, [])
+            muted = c.get(.muted, false)
+            mutedNote = c.get(.mutedNote, "")
+            let original: String = c.get(.originalStatus, "")
+            originalStatus = original.isEmpty ? nil : Severity(original)
+        }
+
+        /// The area an older server's group belongs to.
+        static func category(forGroup group: String) -> String {
+            switch group {
+            case "Resources", "Containers":                              return "Stability"
+            case "Storage":                                              return "Storage"
+            case "Network", "SSH", "Logins", "Protection", "App security": return "Security"
+            case "Backups":                                              return "Backups"
+            case "Updates":                                              return "Updates"
+            case "Agent tasks":                                          return "Assistant"
+            default:                                                     return "Other"
+            }
         }
     }
 
     enum CodingKeys: String, CodingKey {
-        case time, duration, trigger, counts, score, checks
+        case time, duration, trigger, counts, score, checks, points
+        case mutedCount = "muted_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -623,6 +787,8 @@ struct Report: Decodable {
         counts = c.opt(.counts) ?? ReportCounts()
         score = Severity(c.get(.score, "info"))
         checks = c.get(.checks, [])
+        points = c.opt(.points)
+        mutedCount = c.get(.mutedCount, 0)
     }
 }
 
@@ -847,60 +1013,98 @@ struct CLITool: Decodable, Identifiable, Hashable {
 
 struct FSListing: Decodable {
     let path: String
+    /// The host's own name for the path ("/srv/x" for "/host/srv/x"), 0.24+.
+    let display: String
     /// "" at a workspace root — there is nowhere further up to go.
     let parent: String
     let dirs: [Entry]
     let fileEntries: [FileEntry]
     let files: Int
     let roots: [String]
+    /// Dotfiles in this folder; listed only when asked for.
+    let hidden: Int
+    let free: Int64
+    let truncated: Bool
+
+    var shownPath: String { display.isEmpty ? path : display }
 
     struct Entry: Decodable, Identifiable, Hashable {
         let name: String
         let path: String
+        let display: String
+        let modified: Double
+        let mode: String
+        let owner: String
+        let link: Bool
         var id: String { path }
+        var shownPath: String { display.isEmpty ? path : display }
 
-        enum CodingKeys: String, CodingKey { case name, path }
+        enum CodingKeys: String, CodingKey { case name, path, display, modified, mode, owner, link }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             name = c.get(.name, "")
             path = c.get(.path, "")
+            display = c.get(.display, "")
+            modified = c.get(.modified, 0)
+            mode = c.get(.mode, "")
+            owner = c.get(.owner, "")
+            link = c.get(.link, false)
         }
     }
 
     struct FileEntry: Decodable, Identifiable, Hashable {
         let name: String
         let path: String
+        let display: String
         let size: Int64
         /// The server's own guess at whether a preview would be readable —
         /// opening a binary just to discover it is binary wastes a round trip.
         let text: Bool
+        let modified: Double
+        let mode: String
+        let owner: String
+        let link: Bool
         var id: String { path }
+        var shownPath: String { display.isEmpty ? path : display }
+        var date: Date { Date(timeIntervalSince1970: modified) }
+        var ext: String { (name as NSString).pathExtension.lowercased() }
 
-        enum CodingKeys: String, CodingKey { case name, path, size, text }
+        enum CodingKeys: String, CodingKey {
+            case name, path, display, size, text, modified, mode, owner, link
+        }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             name = c.get(.name, "")
             path = c.get(.path, "")
+            display = c.get(.display, "")
             size = c.get(.size, 0)
             text = c.get(.text, false)
+            modified = c.get(.modified, 0)
+            mode = c.get(.mode, "")
+            owner = c.get(.owner, "")
+            link = c.get(.link, false)
         }
     }
 
     enum CodingKeys: String, CodingKey {
-        case path, parent, dirs, files, roots
+        case path, display, parent, dirs, files, roots, hidden, free, truncated
         case fileEntries = "file_entries"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         path = c.get(.path, "")
+        display = c.get(.display, "")
         parent = c.get(.parent, "")
         dirs = c.get(.dirs, [])
         fileEntries = c.get(.fileEntries, [])
         files = c.get(.files, 0)
         roots = c.get(.roots, [])
+        hidden = c.get(.hidden, 0)
+        free = c.get(.free, 0)
+        truncated = c.get(.truncated, false)
     }
 }
 
@@ -1035,10 +1239,15 @@ struct AIModels: Decodable {
         /// A coding agent CLI on the server (Claude Code, Codex) rather than
         /// a model API: it uses that CLI's own login and subscription.
         let agent: Bool
+        /// For an agent CLI: whether it has a login (0.24+; older servers: true).
+        let signedIn: Bool
         var id: String { provider }
         var displayName: String { label.isEmpty ? provider.capitalized : label }
 
-        enum CodingKeys: String, CodingKey { case provider, models, local, label, agent }
+        enum CodingKeys: String, CodingKey {
+            case provider, models, local, label, agent
+            case signedIn = "signed_in"
+        }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1047,6 +1256,7 @@ struct AIModels: Decodable {
             local = c.get(.local, false)
             label = c.get(.label, "")
             agent = c.get(.agent, false)
+            signedIn = c.get(.signedIn, true)
         }
     }
 
@@ -1194,12 +1404,19 @@ struct ChatSummary: Decodable, Identifiable, Hashable {
     let updated: Double
     let archived: Bool
     let messageCount: Int
+    /// 0.24+: pinned chats stay on top; the preview is the latest answer, the
+    /// snippet the passage a search matched.
+    let pinned: Bool
+    let preview: String
+    let snippet: String
+    let toolCount: Int
 
     var date: Date { Date(timeIntervalSince1970: updated) }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, created, updated, archived
+        case id, title, created, updated, archived, pinned, preview, snippet
         case messageCount = "message_count"
+        case toolCount = "tool_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -1210,6 +1427,10 @@ struct ChatSummary: Decodable, Identifiable, Hashable {
         updated = c.get(.updated, 0)
         archived = c.get(.archived, false)
         messageCount = c.get(.messageCount, 0)
+        pinned = c.get(.pinned, false)
+        preview = c.get(.preview, "")
+        snippet = c.get(.snippet, "")
+        toolCount = c.get(.toolCount, 0)
     }
 }
 
@@ -1219,15 +1440,30 @@ struct ContainerStats: Decodable {
     let cpuPercent: Double
     let memUsage: Int64
     let memLimit: Int64
+    // 0.24+
+    let netRx: Int64
+    let netTx: Int64
+    let blockRead: Int64
+    let blockWrite: Int64
+    let pids: Int
+    let netRxRate: Double?
+    let netTxRate: Double?
 
     var memPercent: Double {
         memLimit > 0 ? Double(memUsage) / Double(memLimit) * 100 : 0
     }
 
     enum CodingKeys: String, CodingKey {
+        case pids
         case cpuPercent = "cpu_percent"
         case memUsage = "mem_usage"
         case memLimit = "mem_limit"
+        case netRx = "net_rx"
+        case netTx = "net_tx"
+        case blockRead = "blk_read"
+        case blockWrite = "blk_write"
+        case netRxRate = "net_rx_rate"
+        case netTxRate = "net_tx_rate"
     }
 
     init(from decoder: Decoder) throws {
@@ -1235,6 +1471,13 @@ struct ContainerStats: Decodable {
         cpuPercent = c.get(.cpuPercent, 0)
         memUsage = c.get(.memUsage, 0)
         memLimit = c.get(.memLimit, 0)
+        netRx = c.get(.netRx, 0)
+        netTx = c.get(.netTx, 0)
+        blockRead = c.get(.blockRead, 0)
+        blockWrite = c.get(.blockWrite, 0)
+        pids = c.get(.pids, 0)
+        netRxRate = c.opt(.netRxRate)
+        netTxRate = c.opt(.netTxRate)
     }
 }
 

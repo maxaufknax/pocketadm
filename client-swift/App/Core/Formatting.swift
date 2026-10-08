@@ -34,4 +34,27 @@ enum Fmt {
         return "\(minutes)m"
     }
 
+    /// Docker and the registries speak ISO 8601 in several shapes ("…Z",
+    /// fractional seconds, nanoseconds, no zone at all). Docker's "zero time"
+    /// for a container that never stopped reads as nil.
+    static func isoDate(_ text: String) -> Date? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 19, !trimmed.hasPrefix("0001") else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: trimmed) { return date }
+        let plain = ISO8601DateFormatter()
+        if let date = plain.date(from: trimmed) { return date }
+        // nanoseconds, or no zone: read the first 19 characters as UTC
+        let head = String(trimmed.prefix(19))
+        return plain.date(from: head + "Z")
+    }
+
+    /// "12 Oct" this year, "12 Oct 2025" before.
+    static func shortDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        let thisYear = Calendar.current.isDate(date, equalTo: Date(), toGranularity: .year)
+        f.setLocalizedDateFormatFromTemplate(thisYear ? "d MMM" : "d MMM yyyy")
+        return f.string(from: date)
+    }
 }

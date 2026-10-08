@@ -1,0 +1,14 @@
+{
+ "flow": {
+  "id": "6f1c0b2a9d3e4f50",
+  "engine": "claude-code",
+  "state": "waiting_code",
+  "url": "https://claude.ai/oauth/authorize?code=true&client_id=demo&state=s1",
+  "user_code": "",
+  "message": "Sign in on the page that opens, then copy the code it shows and paste it here.",
+  "error": "",
+  "needs_code": true,
+  "expires": 1791420000,
+  "label": "Claude Code"
+ }
+}

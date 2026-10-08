@@ -325,8 +325,14 @@ struct UpdateRow: View {
 
     private var subtitle: String {
         var parts: [String] = []
-        if !update.tag.isEmpty { parts.append(update.tag) }
-        if let age = update.ageDays, age > 0 { parts.append("\(age)d old") }
+        if !update.version.isEmpty && !update.latestVersion.isEmpty && update.version != update.latestVersion {
+            parts.append("\(update.version) → \(update.latestVersion)")
+        } else if !update.latestCreated.isEmpty, let built = Fmt.isoDate(update.latestCreated) {
+            parts.append("\(update.tag.isEmpty ? "new build" : update.tag) from \(Fmt.shortDate(built))")
+        } else if !update.tag.isEmpty {
+            parts.append(update.tag)
+        }
+        if let age = update.ageDays, age > 0 { parts.append("yours is \(age) days old") }
         if !update.usedBy.isEmpty { parts.append(update.usedBy.joined(separator: ", ")) }
         return parts.joined(separator: " · ")
     }
@@ -385,34 +391,35 @@ struct UpdateDetailSheet: View {
     @State private var detail: UpdateDetail?
     @State private var loading = true
     @State private var applying = false
+    @State private var showOlder = false
+    @State private var explanation: String?
+    @State private var explaining = false
+    @State private var explainError: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    FactsCard {
-                        FactRow(label: "Image", value: update.image, selectable: true)
-                        HairlineDivider()
-                        FactRow(label: "Tag", value: update.tag.isEmpty ? "—" : update.tag)
-                        if let local = detail?.local, !local.version.isEmpty {
-                            HairlineDivider()
-                            FactRow(label: "Installed", value: local.version)
-                        }
-                        if let created = detail?.local.created, !created.isEmpty {
-                            HairlineDivider()
-                            FactRow(label: "Built", value: created)
-                        }
-                        if !update.usedBy.isEmpty {
-                            HairlineDivider()
-                            FactRow(label: "Used by", value: update.usedBy.joined(separator: ", "))
-                        }
-                        if !update.error.isEmpty {
-                            HairlineDivider()
-                            FactRow(label: "Check failed", value: update.error, tint: Theme.danger)
-                        }
+                    if let description = detail?.description, !description.isEmpty {
+                        Text(description)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+
+                    versionCard
+
+                    if !update.error.isEmpty {
+                        Label(update.error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.danger)
+                    }
+
+                    impactCard
+
+                    aiCard
 
                     Button {
                         applying = true
@@ -424,14 +431,16 @@ struct UpdateDetailSheet: View {
                             Label("Update now", systemImage: "arrow.down.circle.fill")
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle(enabled: !applying))
-                    .disabled(applying)
+                    .buttonStyle(PrimaryButtonStyle(enabled: !applying && app.me?.demo != true))
+                    .disabled(applying || app.me?.demo == true)
 
                     Text("A snapshot of the running image is taken first, so this can be undone from the Updates screen.")
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
 
                     releases
+
+                    links
 
                     Button(update.ignored ? "Watch this image again" : "Ignore this image") {
                         Task { await onIgnore(update.image, !update.ignored) }
@@ -459,16 +468,111 @@ struct UpdateDetailSheet: View {
                 Text(update.displayName)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(Theme.text)
-                if !update.category.isEmpty {
-                    Text(update.category)
+                Text(update.category.isEmpty ? update.image : update.category)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(1)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                if update.security {
+                    StatusPill(text: "security", tint: Theme.danger)
+                }
+                if detail?.major == true {
+                    StatusPill(text: "major version", tint: Theme.warn)
+                }
+            }
+        }
+    }
+
+    /// Installed next to what the update brings: versions and build dates.
+    private var versionCard: some View {
+        let local = detail?.local
+        let remote = detail?.remote
+        return HStack(alignment: .top, spacing: 0) {
+            versionColumn(title: "Installed",
+                          version: local?.version.isEmpty == false ? local!.version : (update.version.isEmpty ? update.tag : update.version),
+                          built: local?.created ?? "")
+            Image(systemName: "arrow.right")
+                .font(.headline)
+                .foregroundStyle(Theme.accent)
+                .padding(.top, 22)
+            versionColumn(title: "New",
+                          version: remote?.version.isEmpty == false ? remote!.version
+                            : (update.latestVersion.isEmpty ? "newer \(update.tag.isEmpty ? "build" : update.tag)" : update.latestVersion),
+                          built: remote?.created.isEmpty == false ? remote!.created : update.latestCreated)
+        }
+        .card()
+    }
+
+    private func versionColumn(title: String, version: String, built: String) -> some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(Theme.muted)
+            Text(version.isEmpty ? "—" : version)
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            if let date = Fmt.isoDate(built) {
+                Text("built \(Fmt.shortDate(date))")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.muted)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var impactCard: some View {
+        let users = detail?.usedBy ?? []
+        if !(detail?.impact.isEmpty ?? true) || !users.isEmpty || !update.usedBy.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionCaption(text: "While it updates")
+                if let impact = detail?.impact, !impact.isEmpty {
+                    Text(impact)
                         .font(.subheadline)
+                        .foregroundStyle(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                let names = users.isEmpty ? update.usedBy : users.map(\.name)
+                if !names.isEmpty {
+                    Text("Recreated: " + names.joined(separator: ", "))
+                        .font(.footnote)
                         .foregroundStyle(Theme.muted)
                 }
             }
-            Spacer()
-            if update.isHighPriority {
-                StatusPill(text: "high priority", tint: Theme.warn)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    @ViewBuilder
+    private var aiCard: some View {
+        if app.me?.aiConfigured == true {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("In plain words", systemImage: "sparkles")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
+                    Spacer()
+                    if explaining { ProgressView().controlSize(.small) }
+                }
+                if let explanation {
+                    MarkdownText(text: explanation, font: .subheadline)
+                } else if let explainError {
+                    Text(explainError).font(.footnote).foregroundStyle(Theme.danger)
+                } else {
+                    Button(explaining ? "Reading the release notes…" : "What changes for me, and is it risky?") {
+                        Task { await explain() }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .disabled(explaining)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
         }
     }
 
@@ -481,29 +585,49 @@ struct UpdateDetailSheet: View {
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
             }
-        } else if let releases = detail?.releases, !releases.isEmpty {
+        } else if let all = detail?.releases, !all.isEmpty {
+            let coming = all.filter(\.newer)
+            let older = all.filter { !$0.newer }
             VStack(alignment: .leading, spacing: 10) {
-                SectionCaption(text: "What's new upstream")
-                ForEach(releases) { release in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(release.name.isEmpty ? release.tag : release.name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.text)
-                            if release.prerelease {
-                                StatusPill(text: "pre", tint: Theme.warn)
-                            }
-                            Spacer()
-                            Text(release.date)
-                                .font(.caption)
-                                .foregroundStyle(Theme.muted)
-                        }
-                        if !release.notes.isEmpty {
-                            MarkdownText(text: String(release.notes.prefix(900)), font: .caption)
+                SectionCaption(text: coming.isEmpty ? "Latest releases upstream"
+                               : coming.count == 1 ? "What this update brings"
+                               : "What this update brings · \(coming.count) releases")
+                ForEach(Array((coming.isEmpty ? older : coming).enumerated()), id: \.element.id) { index, release in
+                    ReleaseCard(release: release, startOpen: index == 0)
+                }
+                if !coming.isEmpty && !older.isEmpty {
+                    Button(showOlder ? "Hide older releases" : "Show \(older.count) older releases") {
+                        withAnimation(.snappy) { showOlder.toggle() }
+                    }
+                    .font(.footnote.weight(.semibold))
+                    if showOlder {
+                        ForEach(older) { release in
+                            ReleaseCard(release: release, startOpen: false)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .card()
+                }
+            }
+        } else if detail != nil {
+            Text("No release notes found upstream for this image.")
+                .font(.footnote)
+                .foregroundStyle(Theme.muted)
+        }
+    }
+
+    @ViewBuilder
+    private var links: some View {
+        let entries = (detail?.links ?? [:]).compactMap { key, value -> (String, URL)? in
+            guard let url = URL(string: value) else { return nil }
+            let title = ["changelog": "Changelog", "source": "Source code", "hub": "Registry page"][key] ?? key
+            return (title, url)
+        }.sorted { $0.0 < $1.0 }
+        if !entries.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(entries, id: \.0) { entry in
+                    Link(destination: entry.1) {
+                        Label(entry.0, systemImage: "arrow.up.right.square")
+                            .font(.footnote.weight(.semibold))
+                    }
                 }
             }
         }
@@ -515,5 +639,65 @@ struct UpdateDetailSheet: View {
         // Release notes come from GitHub and are best-effort; the sheet is
         // useful without them, so a failure is silent.
         detail = try? await client.updateDetail(image: update.image)
+    }
+
+    private func explain() async {
+        guard let client = app.client else { return }
+        explaining = true
+        defer { explaining = false }
+        do {
+            let lang = Locale.current.language.languageCode?.identifier ?? ""
+            explanation = try await client.explainUpdate(image: update.image, lang: lang == "en" ? "" : lang)
+        } catch {
+            explainError = error.localizedDescription
+        }
+    }
+}
+
+/// One upstream release: its name and date, its notes on a tap.
+struct ReleaseCard: View {
+    let release: UpdateDetail.Release
+    @State private var open: Bool
+
+    init(release: UpdateDetail.Release, startOpen: Bool) {
+        self.release = release
+        _open = State(initialValue: startOpen)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.snappy) { open.toggle() }
+            } label: {
+                HStack {
+                    Text(release.name.isEmpty ? release.tag : release.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    if release.prerelease {
+                        StatusPill(text: "pre-release", tint: Theme.warn)
+                    }
+                    Spacer()
+                    Text(release.date)
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open && !release.notes.isEmpty {
+                MarkdownText(text: String(release.notes.prefix(1800)), font: .caption)
+                if let url = URL(string: release.url), !release.url.isEmpty {
+                    Link("Full notes on GitHub", destination: url)
+                        .font(.caption.weight(.semibold))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
     }
 }

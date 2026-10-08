@@ -3,6 +3,69 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.24.0 — The watch · AI accounts · apps · live activity
+
+**The watch replaces the digests.** The Sentinel loops sent a report every few hours whether
+there was anything to say or not. The watch is one agent that decides for itself: it looks
+around every few hours, investigates within minutes when the live activity shows trouble (a
+container that died, a unit that failed, a disk filling up, the internet dropping — related
+events bundled into one look), writes a short look back on Sunday evenings, and otherwise stays
+silent. Its messages read like a note from a colleague, with the next step one tap away (the
+container, the updates, the storage, the assistant). The guardrails live in code: quiet hours
+(only critical messages at night), a daily limit per importance, muted topics, pauses, no
+second message on a topic within twelve hours unless it got worse, a monthly budget, and
+read-only tools. It runs on any connected AI — an API key, a local model or a subscription
+through its CLI — and delivers to the app, ntfy and a Matrix room. "Helpful / not helpful"
+on each message is read back on the next run.
+
+**AI accounts.** Claude, ChatGPT and Mistral subscriptions connect from the phone: PocketADM
+drives each CLI's own sign-in that works across devices — Claude Code's `setup-token` (the
+long-lived token stays on the server), Codex's device login, and Mistral Vibe's delegated
+browser sign-in over the Agent Client Protocol — installing the CLI first when it is missing.
+Each feature picks its model: the assistant, the watch and the explainers (containers, updates,
+health) can run on different accounts. **Mistral Vibe** joins Claude Code and Codex as a chat
+engine (ACP: streaming, plans, approvals, resume).
+
+**Apps instead of container lists.** `/api/services` groups containers into apps — shared name
+prefixes, well-known families (Synapse + Element = Matrix; Prometheus + cAdvisor +
+node-exporter = Monitoring), a lone database in a small project — and names every container so
+it can be told apart ("Authentik · Worker", "PostgreSQL · Matrix"; compose-built images are named
+after their service, not "Docker …"). Whole apps start, stop and restart in a working order. The
+container detail adds masked environment variables, port bindings, networks with addresses,
+health-check output, resources, processes, recent events, the restart policy, pause / resume /
+kill, a cheap live stats poll and a live log tail.
+
+**Dashboard, files, activity, health, updates**
+
+- Network rates now come from the host's physical interfaces: the app container's own network
+  namespace had made a busy server read "42 B/s". Disk I/O and internet loss join the history.
+- `/api/storage` lists every drive with how full it is, USB disks recognised as external; the
+  file browser shows dotfiles on request, owners and dates, folder sizes, search, and serves raw
+  files for previews — PocketADM's own credentials (and Vibe's key) stay unreadable.
+- `/api/activity` (+ a live SSE stream): Docker events, SSH logins and failed attempts, sudo,
+  apt, kernel OOM kills and drives, systemd failures, internet outages and PocketADM's own
+  actions, in one feed.
+- The health report carries a 0–100 score, five areas, a plain explanation and one-tap actions
+  per finding, and findings accepted on purpose. Backups set up as systemd timers count (they
+  were reported as "no backup tooling"); permission requests expire after a week and merge by
+  kind; pending updates are a warning, critical only when a security-relevant image is two
+  months behind. A job removes unused images.
+- Update details show the installed and the new version with build dates (from the registry's
+  image config), the upstream releases in between — a pinned tag only follows its own line —
+  what the service is, and what the restart does to the people using it. GitHub renames are
+  followed (Nginx Proxy Manager's notes were missing), and well-known images map to their repos.
+- Chats can be pinned, searched by content, deleted in bulk and exported as Markdown.
+
+**iPhone app 2.0** (same version, new build): the watch and its settings, AI accounts with
+in-app sign-in, an Apps / Containers tab with tiles and filters, a much richer container screen,
+a health screen with a score and actions, the history graph's metric and range switch, drives
+and folders, a live activity feed, update details with versions and impact, and an assistant
+that folds runs of commands into one line, keeps its plan pinned on top, and manages chats
+(search, pin, rename, share, edit and resend). Screens fall back to what an older server can
+serve.
+
+Tests: 840 on the server; the iOS decode check covers every new response (99 assertions).
+
 ## v0.23.0 — Scan, done · coding agents on your subscription · iPhone app 2.0
 
 **Installing is finally the five-minute thing it was meant to be.** Since 0.19 the app port

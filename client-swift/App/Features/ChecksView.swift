@@ -1,4 +1,6 @@
+import Charts
 import SwiftUI
+import UIKit
 
 @MainActor
 final class ChecksModel: ObservableObject {
@@ -15,7 +17,8 @@ final class ChecksModel: ObservableObject {
         defer { loaded = true }
         index = try? await client.reports()
         do {
-            report = try await client.latestReport()
+            report = viewing == nil ? try await client.latestReport()
+                                    : try await client.report(named: viewing ?? "")
             error = nil
         } catch let failure as APIClient.APIError {
             // 404 means "never run", which is an empty state and not a fault.
@@ -31,10 +34,14 @@ final class ChecksModel: ObservableObject {
         }
     }
 
-    func open(_ name: String, app: AppState) async {
+    func open(_ name: String?, app: AppState) async {
         guard let client = app.client else { return }
         viewing = name
-        report = try? await client.report(named: name)
+        if let name {
+            report = try? await client.report(named: name)
+        } else {
+            report = try? await client.latestReport()
+        }
     }
 
     func runNow(_ app: AppState) async {
@@ -52,8 +59,8 @@ final class ChecksModel: ObservableObject {
     }
 }
 
-/// The server's own health checks — SSH exposure, fail2ban, disk, backups,
-/// pending updates — as one screen you can read in ten seconds.
+/// The server's own health checks as one screen you can read in ten seconds:
+/// a score, what needs you, and what to do about each finding.
 struct ChecksView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var model = ChecksModel()
@@ -61,6 +68,10 @@ struct ChecksView: View {
     @State private var analysis: String?
     @State private var analysing = false
     @State private var showConfig = false
+    @State private var category: String?
+    @State private var selected: Report.Check?
+    @State private var route: MoreRoute?
+    @State private var job: PendingJob?
     @State private var toast: Toast?
 
     var body: some View {
@@ -78,7 +89,7 @@ struct ChecksView: View {
                              retryTitle: model.error == nil ? "Run checks now" : "Try again")
             }
         }
-        .navigationTitle("Health checks")
+        .navigationTitle("Health")
         .navigationBarTitleDisplayMode(.large)
         .screenBackground()
         .toast($toast)
@@ -88,12 +99,26 @@ struct ChecksView: View {
                 await save(interval: interval, auto: auto)
             }
         }
+        .sheet(item: $selected) { check in
+            CheckDetailSheet(check: check) { action in
+                Task { await perform(action, on: check) }
+            }
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $job) { pending in
+            JobConsoleView(jobID: pending.id, title: pending.title) { _ in
+                Task { await model.runNow(app) }
+            }
+        }
+        .navigationDestination(item: $route) { route in
+            MoreDestination(route: route)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
                         Task { await model.runNow(app) }
-                    } label: { Label("Run checks now", systemImage: "play.circle") }
+                    } label: { Label("Check again now", systemImage: "play.circle") }
 
                     Button {
                         showConfig = true
@@ -114,27 +139,58 @@ struct ChecksView: View {
 
     private func content(_ report: Report) -> some View {
         ScrollView {
-            VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 18) {
                 scoreCard(report)
 
-                if model.running {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Running checks…").font(.caption).foregroundStyle(Theme.muted)
-                        Spacer()
+                if model.viewing != nil {
+                    Button {
+                        Task { await model.open(nil, app: app) }
+                    } label: {
+                        Label("You are looking at an earlier check — back to the latest", systemImage: "clock.arrow.circlepath")
+                            .font(.footnote.weight(.semibold))
                     }
-                    .card()
                 }
+
+                categoryChips(report)
 
                 if analysing || analysis != nil {
                     analysisCard
                 }
 
-                ForEach(report.groups) { group in
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionCaption(text: group.name)
-                        ForEach(group.checks) { check in
-                            CheckCard(check: check)
+                let attention = filtered(report.needsAttention)
+                if !attention.isEmpty {
+                    section(title: "Needs you", count: attention.count) {
+                        ForEach(attention) { check in
+                            CheckRow(check: check) { selected = check }
+                        }
+                    }
+                } else if category == nil {
+                    allClear
+                }
+
+                let info = filtered(report.informational)
+                if !info.isEmpty {
+                    collapsible(title: "Good to know", count: info.count, startOpen: attention.isEmpty) {
+                        ForEach(info) { check in
+                            CheckRow(check: check) { selected = check }
+                        }
+                    }
+                }
+
+                let accepted = filtered(report.accepted)
+                if !accepted.isEmpty {
+                    collapsible(title: "Accepted by you", count: accepted.count, startOpen: false) {
+                        ForEach(accepted) { check in
+                            CheckRow(check: check) { selected = check }
+                        }
+                    }
+                }
+
+                let passing = filtered(report.passing)
+                if !passing.isEmpty {
+                    collapsible(title: "Passing", count: passing.count, startOpen: false) {
+                        ForEach(passing) { check in
+                            CheckRow(check: check) { selected = check }
                         }
                     }
                 }
@@ -148,59 +204,156 @@ struct ChecksView: View {
         .refreshable { await model.load(app) }
     }
 
+    private func filtered(_ checks: [Report.Check]) -> [Report.Check] {
+        guard let category else { return checks }
+        return checks.filter { $0.category == category }
+    }
+
+    // MARK: - Score
+
     private func scoreCard(_ report: Report) -> some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                Image(systemName: report.score.symbol)
-                    .font(.system(size: 30))
-                    .foregroundStyle(report.score.tint)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(headline(report))
-                        .font(.headline)
+        let score = report.score100
+        let tint: Color = score >= 85 ? .green : score >= 60 ? .orange : Theme.danger
+        return HStack(spacing: 18) {
+            ZStack {
+                Circle().stroke(tint.opacity(0.18), lineWidth: 10)
+                Circle()
+                    .trim(from: 0, to: max(0.02, Double(score) / 100))
+                    .stroke(tint.gradient, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                VStack(spacing: 0) {
+                    Text("\(score)")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.text)
-                    Text("\(Fmt.ago(report.date)) · \(report.trigger) · \(String(format: "%.1fs", report.duration))")
-                        .font(.caption)
+                        .contentTransition(.numericText())
+                    Text("of 100")
+                        .font(.caption2)
                         .foregroundStyle(Theme.muted)
                 }
-                Spacer()
             }
+            .frame(width: 96, height: 96)
+            .animation(.smooth, value: score)
 
-            HStack(spacing: 8) {
-                countPill(report.counts.crit, "critical", Theme.danger)
-                countPill(report.counts.warn, "warnings", Theme.warn)
-                countPill(report.counts.ok, "passing", Theme.accent2)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(verdict(report))
+                    .font(.headline)
+                    .foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Checked \(Fmt.ago(report.date))")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.muted)
+                Button {
+                    Task { await model.runNow(app) }
+                } label: {
+                    HStack(spacing: 6) {
+                        if model.running { ProgressView().controlSize(.mini) }
+                        Text(model.running ? "Checking…" : "Check again")
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .disabled(model.running)
             }
+            Spacer(minLength: 0)
         }
         .card()
     }
 
-    private func headline(_ report: Report) -> String {
-        switch report.score {
-        case .crit: return "Something needs attention"
-        case .warn: return "A few things to look at"
-        case .info: return "Informational findings"
-        case .ok:   return "All clear"
+    private func verdict(_ report: Report) -> String {
+        let crit = report.needsAttention.filter { $0.status == .crit }.count
+        let warn = report.needsAttention.count - crit
+        if crit > 0 {
+            return crit == 1 ? "One thing needs you now" : "\(crit) things need you now"
+        }
+        if warn > 0 {
+            return warn == 1 ? "Healthy — one thing to look at" : "Healthy — \(warn) things to look at"
+        }
+        return "All clear"
+    }
+
+    private var allClear: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+            Text("Nothing needs you right now.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.text)
+            Spacer()
+        }
+        .card()
+    }
+
+    // MARK: - Areas
+
+    private static let areas: [(String, String, Color)] = [
+        ("Security", "lock.shield.fill", .blue),
+        ("Stability", "waveform.path.ecg", .green),
+        ("Storage", "internaldrive.fill", .gray),
+        ("Updates", "arrow.triangle.2.circlepath", .orange),
+        ("Backups", "externaldrive.fill.badge.timemachine", .teal),
+        ("Assistant", "sparkles", .purple),
+    ]
+
+    private func categoryChips(_ report: Report) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Self.areas, id: \.0) { area in
+                    let checks = report.checks.filter { $0.category == area.0 }
+                    if !checks.isEmpty {
+                        let worst = checks.filter { !$0.muted }.map(\.status).min { $0.weight < $1.weight } ?? .ok
+                        Button {
+                            withAnimation(.snappy) { category = category == area.0 ? nil : area.0 }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: area.1)
+                                    .font(.caption)
+                                Text(area.0)
+                                    .font(.subheadline.weight(.medium))
+                                Circle()
+                                    .fill(worst == .ok || worst == .info ? Color.green : worst.tint)
+                                    .frame(width: 7, height: 7)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(category == area.0 ? Theme.onAccent : Theme.text)
+                            .background(category == area.0 ? area.2 : Theme.bg2, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 
-    private func countPill(_ value: Int, _ label: String, _ tint: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(String(value))
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(value > 0 ? tint : Theme.muted)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(Theme.muted)
+    // MARK: - Sections
+
+    private func section<Content: View>(title: String, count: Int,
+                                        @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SectionCaption(text: title)
+                Spacer()
+                Text("\(count)").font(.footnote).foregroundStyle(Theme.muted)
+            }
+            .padding(.horizontal, 4)
+            VStack(spacing: 0) { content() }
+                .background(Theme.bg2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(Theme.bg3, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func collapsible<Content: View>(title: String, count: Int, startOpen: Bool,
+                                            @ViewBuilder content: @escaping () -> Content) -> some View {
+        CollapsibleCard(title: title, count: count, startOpen: startOpen, content: content)
     }
 
     private var analysisCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                SectionCaption(text: "AI summary")
+                Label("AI summary", systemImage: "sparkles")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.muted)
                 Spacer()
                 if analysing { ProgressView().tint(Theme.muted) }
             }
@@ -217,9 +370,27 @@ struct ChecksView: View {
     }
 
     private func historyCard(_ reports: [ReportSummary]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionCaption(text: "Earlier runs")
-            ForEach(reports.prefix(12)) { summary in
+        let recent = Array(reports.prefix(20))
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionCaption(text: "Over time")
+            if recent.contains(where: { $0.points != nil }) {
+                Chart(recent) { summary in
+                    LineMark(x: .value("When", summary.date),
+                             y: .value("Score", summary.points ?? 0))
+                        .interpolationMethod(.monotone)
+                        .foregroundStyle(Theme.accent)
+                    PointMark(x: .value("When", summary.date),
+                              y: .value("Score", summary.points ?? 0))
+                        .foregroundStyle(summary.score.tint)
+                        .symbolSize(30)
+                }
+                .chartYScale(domain: 0...100)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: [0, 50, 100])
+                }
+                .frame(height: 110)
+            }
+            ForEach(reports.prefix(6)) { summary in
                 Button {
                     Task { await model.open(summary.file, app: app) }
                 } label: {
@@ -231,7 +402,8 @@ struct ChecksView: View {
                             .font(.subheadline)
                             .foregroundStyle(Theme.text)
                         Spacer()
-                        Text("\(summary.counts.crit + summary.counts.warn) findings")
+                        Text(summary.points.map { "\($0)/100" }
+                             ?? "\(summary.counts.crit + summary.counts.warn) findings")
                             .font(.caption)
                             .foregroundStyle(Theme.muted)
                         if model.viewing == summary.file {
@@ -249,6 +421,45 @@ struct ChecksView: View {
     }
 
     // MARK: - Actions
+
+    private func perform(_ action: AlertAction, on check: Report.Check) async {
+        guard let client = app.client else { return }
+        switch action.kind {
+        case "open":
+            selected = nil
+            if action.target == "containers" {
+                app.selectedTab = .containers
+            } else {
+                route = MoreRoute.from(target: action.target)
+            }
+        case "assistant":
+            selected = nil
+            app.ask(action.prompt)
+        case "copy":
+            UIPasteboard.general.string = action.command
+            toast = Toast(text: "Command copied — run it in the terminal")
+        case "job":
+            selected = nil
+            if action.job == "prune_images", let id = try? await client.pruneImages() {
+                job = PendingJob(id: id, title: "Remove unused images")
+            }
+        case "mute", "unmute":
+            selected = nil
+            do {
+                try await client.muteCheck(check.id, muted: action.kind == "mute")
+                await model.load(app)
+                toast = Toast(text: action.kind == "mute" ? "Accepted — it no longer counts" : "Watching it again")
+            } catch {
+                toast = Toast(text: error.localizedDescription, isError: true)
+            }
+        case "dismiss":
+            selected = nil
+            try? await client.dismissPermissions(action.ids)
+            await model.runNow(app)
+        default:
+            break
+        }
+    }
 
     private func analyse() async {
         guard let client = app.client, !analysing else { return }
@@ -277,49 +488,180 @@ struct ChecksView: View {
     }
 }
 
-struct CheckCard: View {
-    let check: Report.Check
-    @State private var expanded = false
+/// A titled card that opens and closes, with a count.
+struct CollapsibleCard<Content: View>: View {
+    let title: String
+    let count: Int
+    let content: () -> Content
+    @State private var open: Bool
+
+    init(title: String, count: Int, startOpen: Bool, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.count = count
+        self.content = content
+        _open = State(initialValue: startOpen)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: check.status.symbol)
-                    .foregroundStyle(check.status.tint)
-                    .font(.subheadline)
-                    .frame(width: 18)
+            Button {
+                withAnimation(.snappy) { open.toggle() }
+            } label: {
+                HStack {
+                    SectionCaption(text: title)
+                    Text("\(count)").font(.footnote).foregroundStyle(Theme.muted)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open {
+                VStack(spacing: 0) { content() }
+                    .background(Theme.bg2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .transition(.opacity)
+            }
+        }
+    }
+}
 
-                VStack(alignment: .leading, spacing: 4) {
+/// One finding, compact: its state, its title, the one line that matters.
+struct CheckRow: View {
+    let check: Report.Check
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: check.muted ? "checkmark.circle" : check.status.symbol)
+                    .foregroundStyle(check.muted ? Theme.muted : check.status.tint)
+                    .font(.body)
+                    .frame(width: 22)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 3) {
                     Text(check.title)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(Theme.text)
-                    Text(check.summary)
+                    Text(check.muted && !check.mutedNote.isEmpty ? check.mutedNote : check.summary)
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2)
                 }
-
-                Spacer(minLength: 0)
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                    .padding(.top, 3)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableRowStyle())
+    }
+}
 
-            if let recommendation = check.recommendation {
-                // The fix is the reason the check exists, so it is never hidden
-                // behind a tap for anything that is not already green.
-                if check.status == .ok && !expanded {
-                    Button("Show suggestion") { expanded = true }
-                        .font(.caption)
-                        .tint(Theme.accent)
-                } else {
-                    MarkdownText(text: recommendation, font: .caption)
-                        .padding(10)
+/// Everything about one finding: what it means, why it matters, what to do —
+/// with the doing one tap away.
+struct CheckDetailSheet: View {
+    let check: Report.Check
+    let perform: (AlertAction) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        Image(systemName: check.muted ? "checkmark.circle" : check.status.symbol)
+                            .font(.title2)
+                            .foregroundStyle(check.muted ? Theme.muted : check.status.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(check.title)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(Theme.text)
+                            Text(check.muted ? "Accepted by you · \(check.category)"
+                                 : "\((check.originalStatus ?? check.status).label) · \(check.category)")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+
+                    Text(check.summary)
+                        .font(.body)
+                        .foregroundStyle(Theme.text)
+                        .textSelection(.enabled)
+
+                    if !check.explain.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            SectionCaption(text: "What this means")
+                            Text(check.explain)
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    if let recommendation = check.recommendation {
+                        VStack(alignment: .leading, spacing: 6) {
+                            SectionCaption(text: "What to do")
+                            MarkdownText(text: recommendation, font: .subheadline)
+                        }
+                        .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(check.status.tint.opacity(0.10),
-                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+
+                    if check.muted && !check.mutedNote.isEmpty {
+                        Label(check.mutedNote, systemImage: "text.quote")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.muted)
+                    }
+
+                    if !check.actions.isEmpty {
+                        VStack(spacing: 10) {
+                            ForEach(check.actions) { action in
+                                if action.kind == "mute" || action.kind == "unmute" || action.kind == "dismiss" {
+                                    Button(action.label) { perform(action) }
+                                        .buttonStyle(SecondaryButtonStyle(tint: Theme.muted))
+                                } else {
+                                    Button {
+                                        perform(action)
+                                    } label: {
+                                        Label(action.label, systemImage: symbol(action))
+                                    }
+                                    .buttonStyle(PrimaryButtonStyle())
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Theme.bg.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+    }
+
+    private func symbol(_ action: AlertAction) -> String {
+        switch action.kind {
+        case "assistant": return "sparkles"
+        case "copy":      return "doc.on.doc"
+        case "job":       return "trash"
+        default:          return "arrow.right"
+        }
     }
 }
 
@@ -358,7 +700,7 @@ struct ReportScheduleSheet: View {
                 } header: {
                     SectionCaption(text: "How often")
                 } footer: {
-                    Text("Findings also arrive as alerts, so a shorter interval means more notifications rather than more information.")
+                    Text("The checks themselves run without AI and cost nothing. The watch reads their result.")
                         .font(.caption)
                         .foregroundStyle(Theme.muted)
                 }

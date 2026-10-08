@@ -1,0 +1,67 @@
+{
+ "settings": {
+  "enabled": true,
+  "lang": "en",
+  "timezone": "Europe/Berlin",
+  "interval_min": 180,
+  "quiet_start": "23:00",
+  "quiet_end": "07:30",
+  "info_per_day": 3,
+  "important_per_day": 8,
+  "weekly": true,
+  "knowledge": "Jellyfin is only used in the evenings.",
+  "budget_usd": 5.0,
+  "push_min": "important",
+  "ntfy_url": "",
+  "matrix_homeserver": "",
+  "matrix_room": "",
+  "matrix_token_set": false,
+  "paused_until": 0,
+  "mutes": []
+ },
+ "route": {
+  "provider": "mistral",
+  "model": "mistral-medium-latest",
+  "label": "Mistral API",
+  "usable": true
+ },
+ "running": false,
+ "paused": false,
+ "quiet_now": false,
+ "last_round": 1791413547.1752803,
+ "next_round": 1791424347.1752803,
+ "sent_today": {
+  "critical": 0,
+  "important": 1,
+  "info": 0
+ },
+ "spent_30d": 0.84,
+ "budget_left": 4.16,
+ "pending_events": 0,
+ "runs": [
+  {
+   "t": 1791413547.1752803,
+   "kind": "observe",
+   "decision": "silent",
+   "reason": "all quiet",
+   "provider": "mistral",
+   "model": "mistral-medium-latest",
+   "cost": 0.03
+  },
+  {
+   "t": 1791409947.1752803,
+   "kind": "incident",
+   "decision": "notify",
+   "importance": "important",
+   "topic": "backup",
+   "provider": "mistral",
+   "model": "mistral-medium-latest",
+   "cost": 0.05
+  }
+ ],
+ "held": [],
+ "memory": [
+  "Disk / 78% on Monday",
+  "Minecraft is stopped on purpose"
+ ]
+}

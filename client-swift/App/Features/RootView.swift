@@ -43,10 +43,9 @@ enum MainTab: String, Hashable {
 
 struct MainTabs: View {
     @EnvironmentObject private var app: AppState
-    @State private var tab: MainTab = AppState.screenshotTab.flatMap(MainTab.init(rawValue:)) ?? .dashboard
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $app.selectedTab) {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent") }
                 .tag(MainTab.dashboard)

@@ -1,0 +1,40 @@
+{
+ "ok": true,
+ "version": "0.24.0",
+ "demo": true,
+ "hostname": "stream",
+ "server_name": "PocketADM Demo",
+ "onboarded": true,
+ "ai_configured": false,
+ "ai_default": {
+  "provider": "",
+  "model": ""
+ },
+ "ai_providers": [],
+ "workspaces": [
+  "/tmp/tmp3x6wq9g1/srv"
+ ],
+ "default_workspace": "/tmp/tmp3x6wq9g1/srv",
+ "report_config": {
+  "interval_min": 360,
+  "auto": true
+ },
+ "totp_enabled": false,
+ "can_pair": false,
+ "public_exposure": false,
+ "exposure_ack": false,
+ "features": [
+  "services",
+  "container_live",
+  "activity",
+  "storage",
+  "files_v2",
+  "watch",
+  "accounts",
+  "routes",
+  "chat_manage",
+  "health_v2",
+  "update_details_v2"
+ ],
+ "watch_enabled": true
+}

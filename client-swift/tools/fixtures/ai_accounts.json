@@ -1,0 +1,114 @@
+{
+ "accounts": [
+  {
+   "id": "anthropic",
+   "name": "Claude",
+   "vendor": "Anthropic",
+   "engine": "claude-code",
+   "key_provider": "anthropic",
+   "subscription": "Claude Pro or Max",
+   "key_hint": "",
+   "brand": "anthropic",
+   "key_set": false,
+   "can_subscribe": true,
+   "cli_installed": true,
+   "cli_version": "2.1.210",
+   "signed_in": true,
+   "detail": "Signed in with your Claude subscription",
+   "plan": "max",
+   "connected": true,
+   "used_for": [
+    "Assistant"
+   ]
+  },
+  {
+   "id": "openai",
+   "name": "ChatGPT",
+   "vendor": "OpenAI",
+   "engine": "codex",
+   "key_provider": "openai",
+   "subscription": "ChatGPT Plus or Pro",
+   "key_hint": "",
+   "brand": "openai",
+   "key_set": false,
+   "can_subscribe": true,
+   "cli_installed": false,
+   "cli_version": "",
+   "signed_in": false,
+   "detail": "",
+   "plan": "",
+   "connected": false,
+   "used_for": []
+  },
+  {
+   "id": "mistral",
+   "name": "Mistral",
+   "vendor": "Mistral AI",
+   "engine": "mistral-vibe",
+   "key_provider": "mistral",
+   "subscription": "Le Chat Pro, with Mistral Vibe",
+   "key_hint": "",
+   "brand": "mistral",
+   "key_set": true,
+   "can_subscribe": true,
+   "cli_installed": false,
+   "cli_version": "",
+   "signed_in": false,
+   "detail": "",
+   "plan": "",
+   "connected": true,
+   "used_for": [
+    "Watch",
+    "Explanations"
+   ]
+  },
+  {
+   "id": "openrouter",
+   "name": "OpenRouter",
+   "vendor": "OpenRouter",
+   "engine": "",
+   "key_provider": "openrouter",
+   "subscription": "",
+   "key_hint": "",
+   "brand": "openrouter",
+   "key_set": false,
+   "can_subscribe": false,
+   "cli_installed": false,
+   "cli_version": "",
+   "signed_in": false,
+   "detail": "",
+   "plan": "",
+   "connected": false,
+   "used_for": []
+  }
+ ],
+ "local": {
+  "running": false,
+  "base": "",
+  "models": 0,
+  "used_for": []
+ },
+ "routes": {
+  "assistant": {
+   "label": "Assistant",
+   "provider": "claude-code",
+   "model": "default",
+   "custom": true,
+   "provider_label": "Claude Code"
+  },
+  "watch": {
+   "label": "Watch",
+   "provider": "mistral",
+   "model": "mistral-medium-latest",
+   "custom": true,
+   "provider_label": "Mistral API"
+  },
+  "insights": {
+   "label": "Explanations",
+   "provider": "mistral",
+   "model": "mistral-small-latest",
+   "custom": true,
+   "provider_label": "Mistral API"
+  }
+ }
+}

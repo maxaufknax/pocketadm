@@ -13,6 +13,9 @@ struct TerminalHomeView: View {
     @State private var error: String?
     @State private var loaded = false
     @State private var opening: String?
+    /// Container id -> its app (server 0.24+), to list shells by app.
+    @State private var apps: [String: AppGroup] = [:]
+    @State private var search = ""
     /// Bound to the stack so opening a target can push straight into the new
     /// session instead of making you tap it again in the list.
     @State private var path = NavigationPath()
@@ -36,6 +39,7 @@ struct TerminalHomeView: View {
             }
             .navigationTitle("Terminal")
             .navigationBarTitleDisplayMode(.large)
+            .searchable(text: $search, prompt: "Find a shell")
             .navigationDestination(for: TerminalSession.self) { session in
                 TerminalSessionView(session: session)
             }
@@ -80,38 +84,105 @@ struct TerminalHomeView: View {
             }
 
             ForEach(targets.groups) { group in
-                Section(group.label) {
-                    ForEach(group.targets) { target in
-                        Button {
-                            Task { await open(target) }
-                        } label: {
-                            HStack(spacing: 14) {
-                                icon(for: target)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(target.label)
-                                        .foregroundStyle(Theme.text)
-                                    if let sub = target.sub, !sub.isEmpty {
-                                        Text(sub)
-                                            .font(.footnote)
-                                            .foregroundStyle(Theme.muted)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer(minLength: 8)
-                                if opening == target.id {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(Color(uiColor: .tertiaryLabel))
-                                }
-                            }
+                if !apps.isEmpty && group.targets.contains(where: { $0.container == true }) {
+                    appSections(group)
+                } else {
+                    let shown = group.targets.filter(matches)
+                    if !shown.isEmpty {
+                        Section(group.label) {
+                            ForEach(shown) { target in targetRow(target) }
                         }
                     }
                 }
             }
         }
         .refreshable { await load() }
+    }
+
+    private func matches(_ target: TerminalTargets.Target) -> Bool {
+        guard !search.isEmpty else { return true }
+        let app = apps[containerID(target)]?.name ?? ""
+        return target.label.localizedCaseInsensitiveContains(search)
+            || (target.sub ?? "").localizedCaseInsensitiveContains(search)
+            || app.localizedCaseInsensitiveContains(search)
+    }
+
+    private func containerID(_ target: TerminalTargets.Target) -> String {
+        target.id.hasPrefix("container:") ? String(target.id.dropFirst("container:".count)) : ""
+    }
+
+    /// Service containers by app: an app with one container is one row, an
+    /// app with several opens into its parts.
+    @ViewBuilder
+    private func appSections(_ group: TerminalTargets.Group) -> some View {
+        let shown = group.targets.filter(matches)
+        let byApp = Dictionary(grouping: shown) { apps[containerID($0)]?.name ?? $0.label }
+        let names = byApp.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        if !names.isEmpty {
+            Section {
+                ForEach(names, id: \.self) { name in
+                    let members = byApp[name] ?? []
+                    if members.count == 1, let only = members.first {
+                        targetRow(only, title: name)
+                    } else {
+                        DisclosureGroup {
+                            ForEach(members) { target in targetRow(target, title: roleTitle(target)) }
+                        } label: {
+                            HStack(spacing: 14) {
+                                ServiceIcon(names: apps[containerID(members[0])]?.iconNames ?? [name])
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(name).foregroundStyle(Theme.text)
+                                    Text("\(members.count) containers")
+                                        .font(.footnote)
+                                        .foregroundStyle(Theme.muted)
+                                }
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Apps")
+            } footer: {
+                Text("A shell inside a container sees only that container — its files, its processes.")
+            }
+        }
+    }
+
+    private func roleTitle(_ target: TerminalTargets.Target) -> String {
+        let id = containerID(target)
+        guard let group = apps[id], let container = group.containers.first(where: { $0.id == id }) else {
+            return target.label
+        }
+        if let role = container.role, role != "App" { return role }
+        return container.displayName
+    }
+
+    private func targetRow(_ target: TerminalTargets.Target, title: String? = nil) -> some View {
+        Button {
+            Task { await open(target) }
+        } label: {
+            HStack(spacing: 14) {
+                icon(for: target)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title ?? target.label)
+                        .foregroundStyle(Theme.text)
+                    if let sub = target.sub, !sub.isEmpty {
+                        Text(sub)
+                            .font(.footnote)
+                            .foregroundStyle(Theme.muted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                if opening == target.id {
+                    ProgressView()
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                }
+            }
+        }
     }
 
     /// The app's own shell gets the PocketADM icon, containers their brand
@@ -130,12 +201,20 @@ struct TerminalHomeView: View {
 
     private func load() async {
         guard let client = app.client else { return }
+        if app.me == nil { await app.refreshMe() }
         do {
             async let targets = client.terminalTargets()
             async let sessions = client.terminalSessions()
             self.targets = try await targets
             self.sessions = try await sessions.sessions
             error = nil
+            if app.supports("services"), let groups = try? await client.services() {
+                var map: [String: AppGroup] = [:]
+                for group in groups {
+                    for container in group.containers { map[container.id] = group }
+                }
+                apps = map
+            }
         } catch {
             self.error = error.localizedDescription
             app.handle(error)

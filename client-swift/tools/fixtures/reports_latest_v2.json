@@ -1,0 +1,131 @@
+{
+ "time": 1791415347.1752803,
+ "duration": 1.9,
+ "trigger": "scheduled",
+ "counts": {
+  "ok": 4,
+  "info": 0,
+  "warn": 2,
+  "crit": 1
+ },
+ "score": "crit",
+ "checks": [
+  {
+   "id": "res-cpu",
+   "group": "Resources",
+   "title": "CPU & memory",
+   "icon": "📊",
+   "status": "ok",
+   "summary": "Load is healthy (0.2), 2.0 GiB RAM free of 7.7 GiB.",
+   "category": "Stability",
+   "explain": "",
+   "actions": []
+  },
+  {
+   "id": "disk",
+   "group": "Resources",
+   "title": "Disk space",
+   "icon": "💾",
+   "status": "warn",
+   "summary": "Root filesystem 78% full (137 GB free).",
+   "recommendation": "Prune old Docker images: `docker image prune -a` frees ~6 GB.",
+   "category": "Stability",
+   "explain": "How full the server's main disk is. Above ~85 % databases and logs start failing in odd ways, and a full disk can stop every service at once.",
+   "actions": [
+    {
+     "kind": "open",
+     "target": "storage",
+     "label": "See what uses the space"
+    },
+    {
+     "kind": "job",
+     "job": "prune_images",
+     "label": "Remove unused images"
+    },
+    {
+     "kind": "assistant",
+     "label": "Ask the assistant",
+     "prompt": "The server disk is getting full (Root filesystem 78% full (137 GB free).). Find what takes the most space and suggest safe cleanups — do not delete anything without asking."
+    },
+    {
+     "kind": "mute",
+     "label": "Accept this"
+    }
+   ]
+  },
+  {
+   "id": "ssh-root",
+   "group": "SSH",
+   "title": "SSH root login",
+   "icon": "🔐",
+   "status": "ok",
+   "summary": "PermitRootLogin is disabled and password auth is off.",
+   "category": "Security",
+   "explain": "Whether someone can log in as root over SSH. Attackers try root first; turning it off removes the most guessed account.",
+   "actions": []
+  },
+  {
+   "id": "fail2ban",
+   "group": "SSH",
+   "title": "fail2ban",
+   "icon": "🛡️",
+   "status": "ok",
+   "summary": "Active — 3 IPs currently banned on the sshd jail.",
+   "category": "Security",
+   "explain": "fail2ban blocks addresses that keep failing to log in, which turns brute-force attempts into a few tries.",
+   "actions": []
+  },
+  {
+   "id": "updates",
+   "group": "Updates",
+   "title": "Container image updates",
+   "icon": "⬆️",
+   "status": "warn",
+   "summary": "2 images have newer versions (nextcloud, vaultwarden).",
+   "recommendation": "Review and apply from the Updates tab; snapshots let you roll back.",
+   "category": "Updates",
+   "explain": "",
+   "actions": [
+    {
+     "kind": "mute",
+     "label": "Accept this"
+    }
+   ]
+  },
+  {
+   "id": "backups",
+   "group": "Backups",
+   "title": "Volume backups",
+   "icon": "🗄️",
+   "status": "crit",
+   "summary": "No backup ran in the last 7 days for 'cloud' and 'vault'.",
+   "recommendation": "Set up a scheduled volume backup — this is your biggest risk.",
+   "category": "Backups",
+   "explain": "Whether this server's data is copied somewhere else on a schedule. Without backups, one failed disk loses everything.",
+   "actions": [
+    {
+     "kind": "assistant",
+     "label": "Ask the assistant",
+     "prompt": "This server has no backup set up. Suggest a simple, reliable backup for its Docker volumes and configs to an external disk or another server."
+    },
+    {
+     "kind": "mute",
+     "label": "Accept this"
+    }
+   ]
+  },
+  {
+   "id": "ports",
+   "group": "Network",
+   "title": "Exposed ports",
+   "icon": "🌐",
+   "status": "ok",
+   "summary": "Only 80/443 are public; everything else is bound to localhost.",
+   "category": "Security",
+   "explain": "Ports published on all interfaces are reachable from your network, and from the internet if your router forwards them. Internal services are safer behind the reverse proxy.",
+   "actions": []
+  }
+ ],
+ "points": 64,
+ "muted_count": 0
+}

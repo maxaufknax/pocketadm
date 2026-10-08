@@ -13,6 +13,10 @@ final class DashboardModel: ObservableObject {
     /// neither changes between two heartbeats.
     @Published var pendingUpdates = 0
     @Published var health: Severity?
+    @Published var healthPoints: Int?
+    @Published var drives: [Filesystem] = []
+    /// Minutes of history the chart shows (60 = the last hour).
+    @Published var range = 60
 
     private var ticker: Task<Void, Never>?
 
@@ -34,16 +38,21 @@ final class DashboardModel: ObservableObject {
         ticker = nil
     }
 
+    /// Long ranges change slowly and are large; they are fetched once a minute.
+    private var lastHistory = Date.distantPast
+    private var lastRange = 60
+
     func refresh(_ app: AppState) async {
         guard let client = app.client else { return }
         do {
-            async let system = client.system()
-            async let history = client.metricsHistory(minutes: 60)
-            self.system = try await system
-            // Bind first, then read `.points` — reaching through the async let
-            // binding in one expression is needlessly subtle.
-            let historyResult = try await history
-            self.history = historyResult.points
+            self.system = try await client.system()
+            let stale = Date().timeIntervalSince(lastHistory) > (range <= 60 ? 0 : 60)
+            if stale || range != lastRange {
+                let historyResult = try await client.metricsHistory(minutes: range)
+                self.history = historyResult.points
+                lastHistory = Date()
+                lastRange = range
+            }
             self.error = nil
         } catch {
             self.error = error.localizedDescription
@@ -57,7 +66,12 @@ final class DashboardModel: ObservableObject {
         await app.refreshAlerts()
         if let updates = try? await client.updates() { pendingUpdates = updates.pending.count }
         // A 404 here simply means no check has ever run.
-        health = (try? await client.latestReport())?.score
+        let report = try? await client.latestReport()
+        health = report?.score
+        healthPoints = report?.score100
+        if app.supports("storage") {
+            drives = ((try? await client.storage()) ?? []).filter { $0.kind != "boot" }
+        }
     }
 }
 
@@ -88,7 +102,7 @@ struct DashboardView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        NotificationsView()
+                        AlertsView()
                     } label: {
                         Image(systemName: app.unseenAlerts > 0 ? "bell.badge" : "bell")
                             .symbolRenderingMode(.hierarchical)
@@ -122,7 +136,9 @@ struct DashboardView: View {
 
                 if !model.history.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("Last hour")
+                        sectionTitle(model.range == 60 ? "Last hour"
+                                     : model.range == 360 ? "Last 6 hours"
+                                     : model.range == 1440 ? "Last 24 hours" : "Last 7 days")
                         historyChart
                     }
                 }
@@ -212,10 +228,11 @@ struct DashboardView: View {
     private func statusCard(_ system: SystemSnapshot) -> some View {
         VStack(spacing: 0) {
             NavigationLink {
-                NotificationsView()
+                AlertsView()
             } label: {
                 statusRow(symbol: "bell.fill", color: .red, title: "Alerts",
-                          value: app.unseenAlerts == 0 ? "None new" : "\(app.unseenAlerts) new",
+                          value: app.unseenAlerts == 0 ? (app.me?.watchEnabled == true ? "Watching" : "None new")
+                                                       : "\(app.unseenAlerts) new",
                           valueTint: app.unseenAlerts == 0 ? Theme.muted : Theme.danger)
             }
             Divider().padding(.leading, 60)
@@ -231,19 +248,51 @@ struct DashboardView: View {
                 ChecksView()
             } label: {
                 statusRow(symbol: "checkmark.shield.fill", color: .green, title: "Health",
-                          value: model.health?.label ?? "Not checked yet",
+                          value: healthText,
                           valueTint: model.health.map { $0 == .ok ? Theme.muted : $0.tint } ?? Theme.muted)
             }
             if let docker = system.docker {
                 Divider().padding(.leading, 60)
-                statusRow(symbol: "shippingbox.fill", color: .brown, title: "Containers",
-                          value: "\(docker.running) of \(docker.containers) running",
-                          valueTint: Theme.muted, chevron: false)
+                Button {
+                    app.selectedTab = .containers
+                } label: {
+                    statusRow(symbol: "shippingbox.fill", color: .brown, title: "Containers",
+                              value: "\(docker.running) of \(docker.containers) running",
+                              valueTint: docker.running < docker.containers ? Theme.warn : Theme.muted)
+                }
+            }
+            if !model.drives.isEmpty {
+                Divider().padding(.leading, 60)
+                NavigationLink {
+                    FilesHomeView()
+                } label: {
+                    statusRow(symbol: "internaldrive.fill", color: .gray, title: "Storage",
+                              value: storageText, valueTint: storageTint)
+                }
             }
         }
         .buttonStyle(PressableRowStyle())
         .background(Theme.bg2)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+    }
+
+    private var healthText: String {
+        guard let health = model.health else { return "Not checked yet" }
+        if let points = model.healthPoints, app.supports("health_v2") {
+            return "\(points)/100 · \(health == .ok ? "All clear" : health.label)"
+        }
+        return health.label
+    }
+
+    /// The fullest drive, the way you would say it: "SSD 53 % · T5 41 %".
+    private var storageText: String {
+        model.drives.prefix(2).map { "\($0.external ? "USB" : "Disk") \(Int($0.percent)) %" }
+            .joined(separator: " · ")
+    }
+
+    private var storageTint: Color {
+        let worst = model.drives.map(\.percent).max() ?? 0
+        return worst >= 90 ? Theme.danger : worst >= 80 ? Theme.warn : Theme.muted
     }
 
     private func statusRow(symbol: String, color: Color, title: String, value: String,
@@ -270,60 +319,8 @@ struct DashboardView: View {
     // MARK: - History
 
     private var historyChart: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Chart {
-                ForEach(model.history) { point in
-                    AreaMark(x: .value("Time", point.date), y: .value("CPU", point.cpu))
-                        .foregroundStyle(
-                            .linearGradient(
-                                colors: [Theme.accent.opacity(0.30), Theme.accent.opacity(0.0)],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .interpolationMethod(.monotone)
-                    LineMark(x: .value("Time", point.date), y: .value("CPU", point.cpu),
-                             series: .value("Series", "CPU"))
-                        .foregroundStyle(Theme.accent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .interpolationMethod(.monotone)
-                }
-                ForEach(model.history) { point in
-                    LineMark(x: .value("Time", point.date), y: .value("Memory", point.mem),
-                             series: .value("Series", "Memory"))
-                        .foregroundStyle(Color.purple)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .interpolationMethod(.monotone)
-                }
-            }
-            .chartYScale(domain: 0...100)
-            .chartYAxis {
-                AxisMarks(position: .leading, values: [0.0, 50.0, 100.0]) { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        Text("\(Int(value.as(Double.self) ?? 0))%")
-                    }
-                }
-            }
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 4)) {
-                    AxisGridLine()
-                    AxisValueLabel(format: .dateTime.hour().minute())
-                }
-            }
-            .frame(height: 170)
-
-            HStack(spacing: 16) {
-                legend(color: Theme.accent, label: "CPU")
-                legend(color: .purple, label: "Memory")
-            }
-        }
-        .card()
-    }
-
-    private func legend(color: Color, label: String) -> some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(.caption).foregroundStyle(Theme.muted)
+        HistoryCard(points: model.history, range: $model.range) {
+            Task { await model.refresh(app) }
         }
     }
 

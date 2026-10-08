@@ -1,0 +1,48 @@
+{
+ "path": "/tmp/tmp3x6wq9g1/srv",
+ "display": "/tmp/tmp3x6wq9g1/srv",
+ "parent": "",
+ "dirs": [
+  {
+   "name": "nextcloud",
+   "path": "/tmp/tmp3x6wq9g1/srv/nextcloud",
+   "display": "/tmp/tmp3x6wq9g1/srv/nextcloud",
+   "modified": 1791417146.9323246,
+   "mode": "drwxrwxr-x",
+   "owner": "maxaufknax",
+   "link": false
+  }
+ ],
+ "file_entries": [
+  {
+   "name": ".env",
+   "path": "/tmp/tmp3x6wq9g1/srv/.env",
+   "display": "/tmp/tmp3x6wq9g1/srv/.env",
+   "modified": 1791417146.9323246,
+   "mode": "-rw-rw-r--",
+   "owner": "maxaufknax",
+   "link": false,
+   "size": 4,
+   "text": true
+  },
+  {
+   "name": "notes.md",
+   "path": "/tmp/tmp3x6wq9g1/srv/notes.md",
+   "display": "/tmp/tmp3x6wq9g1/srv/notes.md",
+   "modified": 1791417146.9323246,
+   "mode": "-rw-rw-r--",
+   "owner": "maxaufknax",
+   "link": false,
+   "size": 8,
+   "text": true
+  }
+ ],
+ "files": 2,
+ "hidden": 1,
+ "roots": [
+  "/tmp/tmp3x6wq9g1/srv",
+  "/host"
+ ],
+ "free": 134351900672,
+ "truncated": false
+}

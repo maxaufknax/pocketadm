@@ -1,0 +1,22 @@
+{
+ "events": [
+  {
+   "t": 1791399147.1752803,
+   "action": "start",
+   "summary": "started",
+   "severity": "ok"
+  },
+  {
+   "t": 1791399107.1752803,
+   "action": "die",
+   "summary": "exited (exit code 0)",
+   "severity": "ok"
+  },
+  {
+   "t": 1791244347.1752803,
+   "action": "create",
+   "summary": "was created",
+   "severity": "ok"
+  }
+ ]
+}

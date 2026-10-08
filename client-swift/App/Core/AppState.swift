@@ -28,6 +28,33 @@ final class AppState: ObservableObject {
     /// poll rather than on its own timer.
     @Published private(set) var unseenAlerts = 0
 
+    /// The tab on screen. Screens elsewhere switch it — "Ask the assistant"
+    /// on an alert, "Open containers" on a health finding.
+    @Published var selectedTab: MainTab = AppState.screenshotTab.flatMap(MainTab.init(rawValue:)) ?? .dashboard
+
+    /// A question another screen hands to the assistant. The Assistant tab
+    /// picks it up, starts a fresh chat and puts it in the composer.
+    @Published var pendingPrompt: String?
+
+    /// A screen under More another tab asks to open.
+    @Published var pendingRoute: MoreRoute?
+
+    /// Ask the assistant about something, from anywhere in the app.
+    func ask(_ prompt: String) {
+        pendingPrompt = prompt
+        selectedTab = .assistant
+    }
+
+    /// Open a screen of the More tab from anywhere in the app.
+    func open(_ route: MoreRoute) {
+        pendingRoute = route
+        selectedTab = .more
+    }
+
+    /// Whether the signed-in server has a 0.24 feature — older servers get
+    /// the screens they can serve.
+    func supports(_ feature: String) -> Bool { me?.supports(feature) ?? false }
+
     private var token: String?
 
     private static let urlKey = "pocketadm.serverURL"
