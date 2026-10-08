@@ -1,0 +1,73 @@
+name: ios-check
+
+# Compiles the native iPhone app for the simulator on every push that touches
+# it — no signing, no Apple account, nothing uploaded. The App Store build
+# itself runs on Codemagic (codemagic.yaml, ios-native-release); this is the
+# quick "does it compile" gate, with the first compiler errors as annotations
+# on the commit.
+
+on:
+  push:
+    branches: [main, "release-*"]
+    paths: ["client-swift/**", ".github/workflows/ios-check.yml"]
+  pull_request:
+    paths: ["client-swift/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: client-swift
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the newest Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$XCODE" ] || XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen >/dev/null
+          mkdir -p Config
+          printf 'CURRENT_PROJECT_VERSION = 1\nPRODUCT_BUNDLE_IDENTIFIER = de.maxaufknax.pocketadm\n' > Config/Build.xcconfig
+          xcodegen generate
+
+      - name: Make sure the Metal toolchain is there
+        run: |
+          # SwiftTerm compiles a Metal shader (see codemagic.yaml)
+          xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain | tail -5
+
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project PocketADMNative.xcodeproj -scheme PocketADMNative \
+            -destination "generic/platform=iOS Simulator" -configuration Debug \
+            -skipPackagePluginValidation -skipMacroValidation CODE_SIGNING_ALLOWED=NO \
+            build > build.log 2>&1 || { tail -40 build.log; exit 1; }
+          grep -E "BUILD SUCCEEDED" build.log
+
+      - name: Compiler errors (1-10)
+        if: failure()
+        run: |
+          grep -E "^/.+:[0-9]+:[0-9]+: error: " build.log | sort -u > errors.txt || true
+          wc -l < errors.txt
+          sed -n '1,10p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'
+
+      - name: Compiler errors (11-20)
+        if: failure()
+        run: sed -n '11,20p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'
+
+      - name: Compiler errors (21-30)
+        if: failure()
+        run: sed -n '21,30p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'

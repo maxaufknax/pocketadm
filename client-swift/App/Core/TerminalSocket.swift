@@ -35,6 +35,9 @@ final class TerminalSocket: ObservableObject {
     private var attachedOnce = false
     private var attempts = 0
     private var away = false
+    /// The liveness check after coming back: pings sent and answered.
+    private var pingsSent = 0
+    private var pingsAnswered = 0
 
     /// The socket could not be opened at all (no ticket, no network).
     func fail(_ message: String) {
@@ -135,18 +138,20 @@ final class TerminalSocket: ObservableObject {
             open()
             return
         }
-        var answered = false
+        pingsSent += 1
+        let ping = pingsSent
         task.sendPing { [weak self] error in
             Task { @MainActor in
-                answered = true
-                guard let self, self.task === task, error != nil else { return }
+                guard let self, self.task === task else { return }
+                self.pingsAnswered = max(self.pingsAnswered, ping)
+                guard error != nil else { return }
                 self.attempts = 0
                 self.open()
             }
         }
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
-            guard let self, !answered, self.task === task else { return }
+            guard let self, self.pingsAnswered < ping, self.task === task else { return }
             self.attempts = 0
             self.open()
         }

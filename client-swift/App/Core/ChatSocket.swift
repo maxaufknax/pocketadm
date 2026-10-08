@@ -52,6 +52,9 @@ final class ChatSocket: ObservableObject {
     private var outbox: [String] = []
     /// Remembers the open chat per server, so a cold start reopens it.
     private var memoryKey = ""
+    /// The liveness check after coming back: pings sent and answered.
+    private var pingsSent = 0
+    private var pingsAnswered = 0
 
     // MARK: - Connection
 
@@ -200,11 +203,12 @@ final class ChatSocket: ObservableObject {
         }
         // A suspended app's socket can be dead without knowing it; a ping
         // that is not answered within three seconds means reconnect.
-        var answered = false
+        pingsSent += 1
+        let ping = pingsSent
         task.sendPing { [weak self] error in
             Task { @MainActor in
-                answered = true
                 guard let self, self.task === task else { return }
+                self.pingsAnswered = max(self.pingsAnswered, ping)
                 if error != nil {
                     self.attempts = 0
                     self.open()
@@ -215,7 +219,7 @@ final class ChatSocket: ObservableObject {
         }
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
-            guard let self, !answered, self.task === task else { return }
+            guard let self, self.pingsAnswered < ping, self.task === task else { return }
             self.attempts = 0
             self.open()
         }
