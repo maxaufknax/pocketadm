@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import time
+import uuid
 from pathlib import Path
 
 HOST = "/host" if os.path.isdir("/host") else ""
@@ -215,8 +216,9 @@ async def _host_exec(argv: list[str], stdin: str = "", timeout: int = 40) -> tup
     """Run a host binary inside a throwaway chroot-into-/host container."""
     if not _can_manage():
         raise RuntimeError(_manage_reason() or "Host management is not available.")
-    cmd = ["docker", "run", "--rm", "-i", "-v", "/:/host", "-e", "LANG=C",
-           HELPER_IMAGE, "chroot", "/host", *argv]
+    cmd = ["docker", "run", "--rm", "-i", "--label", "pocketadm.helper=host",
+           "--name", f"pocketadm-host-{uuid.uuid4().hex[:10]}",
+           "-v", "/:/host", "-e", "LANG=C", HELPER_IMAGE, "chroot", "/host", *argv]
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)

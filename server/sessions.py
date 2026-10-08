@@ -31,7 +31,7 @@ import os
 import time
 
 from . import (agents, ai, audit, chats, cmdpolicy, config, discovery, engines, permissions,
-               push, servermap)
+               push, servermap, uploads)
 
 # events that make up the replayable in-flight turn (see Session.live_events)
 _LIVE_KINDS = {"text", "thinking", "thinking_block", "tool_request",
@@ -87,7 +87,8 @@ class Session:
         self.plan: list[dict] = chat.get("plan") or []   # visible to-do panel
 
         self.subscribers: set[Client] = set()
-        self.inbox: list[str] = []            # queued user messages / steering
+        self.inbox: list[dict] = []           # queued user messages / steering
+        self._no_vision = False               # the model refused pictures: send paths instead
         self.pending: dict[str, asyncio.Future] = {}
         self.run_task: asyncio.Task | None = None
         self.running = False
@@ -224,16 +225,23 @@ class Session:
                     return removed
         return None
 
-    async def submit_user(self, text: str, context: str = "") -> None:
+    async def submit_user(self, text: str, context: str = "", images: list | None = None,
+                          attachments: list | None = None) -> None:
         text = (text or "").strip()
         if not text and not context:
             return
         # `context` (attached services/apps/files) is fed to the model as a
         # preamble but not shown in the transcript — the chip UI shows it instead.
         payload = (context.strip() + "\n\n" + text).strip() if context.strip() else text
-        self.inbox.append(payload)
+        # pictures uploaded from the phone (uploads.py) go to models that see
+        # images; only paths inside the uploads folder are accepted
+        images = [p for p in (images or []) if isinstance(p, str) and uploads.local_path(p)][:4]
+        shown = [{"name": str(a.get("name", ""))[:120], "kind": str(a.get("kind", ""))[:20]}
+                 for a in (attachments or []) if isinstance(a, dict) and a.get("name")][:12]
+        self.inbox.append({"content": payload, "images": images, "attachments": shown})
         # every device shows the (clean) message immediately (single source of truth)
-        await self.broadcast(type="user_echo", text=text, queued=self.running, live=False)
+        await self.broadcast(type="user_echo", text=text, queued=self.running,
+                             attachments=shown, live=False)
         if self.paused:
             # a message sent while paused both steers and resumes the agent
             self.resume_continue()
@@ -294,7 +302,15 @@ class Session:
 
     def _drain_inbox_into_history(self) -> None:
         while self.inbox:
-            self.messages.append({"role": "user", "content": self.inbox.pop(0)})
+            item = self.inbox.pop(0)
+            if isinstance(item, str):
+                item = {"content": item}
+            msg = {"role": "user", "content": item["content"]}
+            if item.get("images"):
+                msg["images"] = item["images"]
+            if item.get("attachments"):
+                msg["attachments"] = item["attachments"]
+            self.messages.append(msg)
 
     async def _agent_cycle(self) -> None:
         """One user turn: model + tools until the model stops calling tools.
@@ -321,14 +337,22 @@ class Session:
                 text_parts = []
                 tool_calls: list[dict] = []
                 thinking_blocks: list[dict] = []
-                async for kind, payload in ai.get_stream(
-                        cfg, self.messages, sysprompt, tool_names, self.thinking):
-                    if kind == "text":
-                        text_parts.append(payload)
-                        await self.broadcast(type="text", delta=payload)
-                    elif kind == "thinking":
-                        await self.broadcast(type="thinking", delta=payload)
-                    elif kind == "thinking_block":
+                try:
+                    stream = [item async for item in
+                              self._stream_once(cfg, sysprompt, tool_names, text_parts)]
+                except RuntimeError as e:
+                    if self._no_vision or text_parts or not ai.has_images(self.messages):
+                        raise
+                    # this model (or provider) does not take pictures: say where
+                    # they are instead, and keep doing so in this chat
+                    self._no_vision = True
+                    await self.broadcast(type="notice", live=False,
+                                         text="This model cannot look at pictures — it gets the "
+                                              "file path instead.", detail=str(e)[:200])
+                    stream = [item async for item in
+                              self._stream_once(cfg, sysprompt, tool_names, text_parts)]
+                for kind, payload in stream:
+                    if kind == "thinking_block":
                         thinking_blocks.append(payload)
                     elif kind == "tool_call":
                         tool_calls.append(payload)
@@ -338,7 +362,8 @@ class Session:
                         turn_usage["cache_read"] += payload.get("cache_read", 0)
                         turn_usage["cache_write"] += payload.get("cache_write", 0)
                 msg: dict = {"role": "assistant", "content": "".join(text_parts),
-                             "tool_calls": tool_calls}
+                             "tool_calls": tool_calls,
+                             "by": ai.answered_by(cfg["provider"], cfg["model"])}
                 if thinking_blocks:
                     msg["thinking_blocks"] = thinking_blocks
                 self.messages.append(msg)
@@ -370,6 +395,20 @@ class Session:
             except Exception:
                 pass
             raise
+
+    async def _stream_once(self, cfg: dict, sysprompt: str, tool_names: list, text_parts: list):
+        """One model call. Text and reasoning go to every device as they arrive
+        (text is also kept in `text_parts`, so a stop keeps what was said);
+        everything else is handed back for the turn to act on."""
+        async for kind, payload in ai.get_stream(cfg, self.messages, sysprompt, tool_names,
+                                                 self.thinking, vision=not self._no_vision):
+            if kind == "text":
+                text_parts.append(payload)
+                await self.broadcast(type="text", delta=payload)
+            elif kind == "thinking":
+                await self.broadcast(type="thinking", delta=payload)
+            else:
+                yield kind, payload
 
     async def _run_tool_with_approval(self, tc: dict) -> str:
         # Only the tools this mode offers can run. A model can name any tool in
@@ -442,14 +481,22 @@ class Session:
         self.session_usage["input"] += total_in
         self.session_usage["output"] += usage["output"]
         self.session_usage["turns"] += 1
+        # the CLI bills the user's own subscription: tokens are real, a price is
+        # not — except a Vibe model run on the Mistral API key, billed per use
+        cost = None
+        if self.provider == "mistral-vibe" and (self.model or "").startswith("key:"):
+            billed = {"provider": "mistral", "model": self.model[4:]}
+            cost = ai.estimate_cost("mistral", billed["model"], total_in, usage["output"])
+            ai._persist_usage(billed, {**usage, "input": total_in}, cost)
+            if cost:
+                self.session_usage["cost"] = round(self.session_usage.get("cost", 0.0) + cost, 6)
         self._persist()
         await self._safe_broadcast(type="chat_meta", id=self.chat_id,
                                    title=self.chat["title"], live=False)
-        # the CLI bills the user's own subscription: tokens are real, a price is not
+        by = ai.answered_by(self.provider, self.model)
         await self._safe_broadcast(
             type="usage", live=False,
-            turn={**usage, "input": total_in, "cost": None,
-                  "model": f"{engines.ENGINES[self.provider]['label']} · {self.model or 'default'}"},
+            turn={**usage, "input": total_in, "cost": cost, "model": by, "by": by},
             session=self.session_usage)
         if self._mutated:
             await self._report_new_services(before_ids)
@@ -605,7 +652,8 @@ class Session:
                                    title=self.chat["title"], live=False)
         await self._safe_broadcast(
             type="usage", live=False,
-            turn={**turn_usage, "input": total_in, "cost": cost, "model": cfg["model"]},
+            turn={**turn_usage, "input": total_in, "cost": cost, "model": cfg["model"],
+                  "by": ai.answered_by(cfg["provider"], cfg["model"])},
             session=self.session_usage)
 
     def _persist(self) -> None:
@@ -688,7 +736,9 @@ async def ws_chat(ws) -> None:
                     session = manager.open(msg.get("chat_id", ""))
                     session.attach(client)
                     await session.send_snapshot(client)
-                await session.submit_user(msg.get("text", ""), msg.get("context", ""))
+                await session.submit_user(msg.get("text", ""), msg.get("context", ""),
+                                          images=msg.get("images"),
+                                          attachments=msg.get("attachments"))
             elif t == "rewind":
                 # edit/retract a sent message: truncate history at that user
                 # message; with "text" set, immediately resend the edited version

@@ -213,7 +213,8 @@ def test_claude_streams_text_and_remembers_its_session(fake_clis):
     events = _turn(s, "hello")
     assert "".join(e["delta"] for e in events if e["type"] == "text") == "Checking the box."
     assert s.chat["engine_sessions"]["claude-code"] == "sess-new"
-    assert s.messages[-1] == {"role": "assistant", "content": "Checking the box.", "tool_calls": []}
+    assert s.messages[-1] == {"role": "assistant", "content": "Checking the box.", "tool_calls": [],
+                              "by": "Claude Code"}
     usage = next(e for e in events if e["type"] == "usage")
     assert usage["turn"]["input"] == 106 and usage["turn"]["output"] == 20
     assert usage["turn"]["cost"] is None, "a subscription has no per-token price"

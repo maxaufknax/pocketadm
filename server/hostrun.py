@@ -53,7 +53,11 @@ async def run(command: str, timeout: int = 60, cwd: str | None = None) -> tuple[
     """Execute a shell command on the host as root. Returns (exit_code, output)."""
     name = f"pocketadm-exec-{uuid.uuid4().hex[:10]}"
     script = command if not cwd else f"cd {_sq(cwd)} && {command}"
-    argv = ["docker", "run", "--rm", "-i", "--name", name, "--network", "host",
+    # --pid host: systemctl, ps and kill act on the host's processes. Without
+    # it systemd refuses the connection ("Failed to connect to bus") and the
+    # assistant could not manage a single service.
+    argv = ["docker", "run", "--rm", "-i", "--name", name, "--network", "host", "--pid", "host",
+            "--label", "pocketadm.helper=exec",
             "-v", "/:/host", "-e", "LANG=C.UTF-8", "-e", f"PATH={_PATH}",
             HELPER_IMAGE, "chroot", HOST, "/bin/bash", "-c", script]
     proc = await asyncio.create_subprocess_exec(
@@ -75,7 +79,8 @@ async def write_file(path: str, content: str) -> None:
               'if [ ! -e "$1" ]; then : > "$1" && '
               'chown --reference="$d" "$1" 2>/dev/null; fi; '
               'cat > "$1"')
-    argv = ["docker", "run", "--rm", "-i", "-v", "/:/host",
+    argv = ["docker", "run", "--rm", "-i", "--name", f"pocketadm-write-{uuid.uuid4().hex[:10]}",
+            "--label", "pocketadm.helper=write", "-v", "/:/host",
             HELPER_IMAGE, "chroot", HOST, "/bin/sh", "-c", script, "sh", path]
     proc = await asyncio.create_subprocess_exec(
         *argv, stdin=asyncio.subprocess.PIPE,

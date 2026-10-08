@@ -521,10 +521,128 @@ def watch_status() -> dict:
     }
 
 
+# ------------------------------------------------------------------ 0.26: inventory, notes, records
+
+_DEMO_DOMAINS = [
+    ("cloud.example.org", "nextcloud", 8081), ("tv.example.org", "jellyfin", 8096),
+    ("music.example.org", "navidrome", 4533), ("vault.example.org", "vaultwarden", 8222),
+    ("git.example.org", "gitea", 3002), ("status.example.org", "uptime-kuma", 3001),
+    ("grafana.example.org", "grafana", 3000), ("pocketadm.example.org", "helmsman", 8090),
+]
+
+_DEMO_UNITS = [
+    # unit, description, active, sub, enabled, custom, next, last, triggers
+    ("backup-nightly.service", "Nightly backup to the USB drive", "inactive", "dead", "static",
+     True, "", "", ""),
+    ("backup-nightly.timer", "Run the nightly backup at 03:00", "active", "waiting", "enabled",
+     True, "03:00 tonight", "03:00 today", "backup-nightly.service"),
+    ("minecraft.service", "Minecraft server (Paper)", "active", "running", "enabled", True, "", "", ""),
+    ("dyndns-update.timer", "Update the dynamic DNS record every 5 minutes", "active", "waiting",
+     "enabled", True, "in 3 min", "2 min ago", "dyndns-update.service"),
+    ("docker.service", "Docker Application Container Engine", "active", "running", "enabled",
+     False, "", "", ""),
+    ("ssh.service", "OpenBSD Secure Shell server", "active", "running", "enabled", False, "", "", ""),
+    ("fail2ban.service", "Fail2Ban Service", "active", "running", "enabled", False, "", "", ""),
+    ("wg-quick@wg0.service", "WireGuard via wg-quick(8) for wg0", "active", "exited", "enabled",
+     False, "", "", ""),
+    ("ufw.service", "Uncomplicated firewall", "active", "exited", "enabled", False, "", "", ""),
+]
+
+
+def _demo_unit(row: tuple) -> dict:
+    unit, desc, active, sub, enabled, custom, nxt, last, triggers = row
+    return {"unit": unit, "kind": "timer" if unit.endswith(".timer") else "service",
+            "description": desc, "active": active, "sub": sub, "enabled": enabled,
+            "result": "success", "since": "Mon 2026-10-05 08:12:44 UTC", "next_run": nxt,
+            "last_run": last, "triggers": triggers, "triggered_by": "",
+            "memory": 1_400_000_000 if unit.startswith("minecraft") else 0,
+            "custom": custom, "path": f"/etc/systemd/system/{unit}" if custom else ""}
+
+
+def inventory() -> dict:
+    stacks: dict[str, dict] = {}
+    for c in list_containers(True):
+        s = stacks.setdefault(c["compose_project"], {"project": c["compose_project"],
+                                                     "dir": f"/srv/{c['compose_project']}",
+                                                     "services": []})
+        s["services"].append({"name": c["name"], "state": c["state"], "health": c["health"],
+                              "image": c["image"], "ports": c["ports"]})
+    units = [_demo_unit(r) for r in _DEMO_UNITS]
+    return {
+        "time": time.time(),
+        "host": {"hostname": "demo-server", "os": "Ubuntu 24.04.1 LTS", "kernel": "6.8.0-45-generic",
+                 "arch": "x86_64", "cores": 8, "memory": 32 * 1024 ** 3, "uptime": 12 * 86400 + 3600},
+        "stacks": sorted(stacks.values(), key=lambda s: s["project"]),
+        "containers": [],
+        "domains": [{"domain": d, "target": f"http://{svc}:{port}", "host": svc, "port": port,
+                     "tls": True, "enabled": True, "source": "Caddy", "service": svc}
+                    for d, svc, port in _DEMO_DOMAINS],
+        "services": [u for u in units if u["kind"] == "service"],
+        "timers": [u for u in units if u["kind"] == "timer"],
+        "cron": [{"schedule": "*/15 * * * *", "user": "root",
+                  "command": "/usr/local/bin/check-certs --quiet", "file": "/etc/cron.d/check-certs"},
+                 {"schedule": "@reboot", "user": "admin", "command": "/home/admin/bin/notify-boot.sh",
+                  "file": "/var/spool/cron/crontabs/admin"}],
+        "drives": [{k: d.get(k) for k in ("mount", "kind", "fstype", "label", "model", "total",
+                                          "used", "free", "percent", "browsable")}
+                   for d in storage()["filesystems"]],
+    }
+
+
+def unit_detail(unit: str) -> dict:
+    row = next((r for r in _DEMO_UNITS if r[0] == unit), None)
+    if not row:
+        raise ValueError("No such unit in the demo")
+    d = _demo_unit(row)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 3600))
+    d["logs"] = "\n".join(f"{stamp} demo-server systemd[1]: {line}" for line in (
+        f"Starting {unit} - {row[1]}…", f"Started {unit} - {row[1]}.",
+        f"{unit}: Deactivated successfully." if row[2] == "inactive" else f"{unit}: running fine."))
+    return d
+
+
+def records(topic: str) -> str:
+    texts = {
+        "updates": "No image updates pending.\nUpdate runs in the last 7 days:\n- Tue 06.10 21:14 "
+                   "update apply: nextcloud:29-apache (started by admin)\nThose services now:\n- "
+                   "nextcloud (nextcloud:29-apache): running, healthy — Up 2 days",
+        "metrics": "2016 samples:\n- System disk used: now 62.1%, change +1.4% (+0.20%/day)",
+    }
+    return texts.get(topic, "This is the demo: records are sample data.")
+
+
+_DEMO_NOTES = [
+    ("Backups run nightly at 03:00 to the USB drive mounted at /mnt/backup "
+     "(backup-nightly.timer); keep 7 days.", "storage", ""),
+    ("Compose stacks live under /srv/<stack>; change a service there with "
+     "`docker compose up -d`, never with docker run.", "procedures", ""),
+    ("All public services go through Caddy with Let's Encrypt; new apps get a "
+     "subdomain of example.org.", "network", ""),
+    ("The owner prefers short answers and wants to approve every restart of Nextcloud.",
+     "preferences", ""),
+    ("Nextcloud data is on the system disk under /srv/nextcloud/data (about 180 GB).",
+     "services", "Nextcloud"),
+]
+
+
+def seed_notes() -> None:
+    from . import memory
+    if memory.FILE.exists():
+        return
+    now = time.time()
+    memory.replace_all([{"id": f"m{i:06x}", "text": text, "topic": topic, "source": "assistant",
+                         "created": now - (i + 2) * 86400, "updated": now - (i + 1) * 43200,
+                         "pinned": i == 0, **({"subject": subj} if subj else {})}
+                        for i, (text, topic, subj) in enumerate(_DEMO_NOTES)])
+    if memory.PREVIOUS.exists():
+        memory.PREVIOUS.unlink()
+
+
 def seed() -> None:
     """Idempotently plant sample content so the demo isn't empty. Safe to call
     on every startup — each store is only seeded when it is still empty."""
     try:
+        seed_notes()
         # a stable identity + skip the first-run wizard so the demo lands
         # straight on the dashboard (both survive a wiped volume — re-seeded here)
         if not config.get_server_name():

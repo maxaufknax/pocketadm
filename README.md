@@ -54,10 +54,12 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
   rules on top (reads that stay on the box run, anything touching the internet asks). Connect
   them under *More → AI accounts* and pick them in the model menu.
 
-- **✦ Vibe Code:** chat with an AI agent that works *directly on your server* via tools:
+- **✦ Assistant:** chat with an AI agent that works *directly on your server* via tools:
   `run_command`, `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`,
-  `fetch_url`, `integration_request` and a **persistent memory** it maintains about your server
-  (Claude-Code-style, editable under *Settings → Agent*). Modes: Chat / Plan / Agent / Auto with
+  `fetch_url`, `integration_request`, `pocketadm` (PocketADM's own records: updates and how they
+  ended, activity, metrics history, health) and **notes** it keeps about your server by topic
+  (`remember` / `forget`, editable, pinnable and tidied up under *AI accounts → Assistant
+  behaviour*). Attach pictures, files and server context to a message. Modes: Chat / Plan / Agent / Auto with
   per-action approval, extended-thinking streaming (💭), a stop button, a folder browser to pick
   the workspace, and collapsible tool/output cards. Any command the agent runs has an **“open in
   terminal”** button so you can watch it yourself. Bring your own key — **Anthropic, OpenRouter,
@@ -173,7 +175,7 @@ Prefer a prebuilt image? CI publishes a **multi-arch image (amd64 + arm64)** to
 | Tag | What you get |
 | --- | --- |
 | `:latest` | the newest commit on `main` |
-| `:0.25.0` | that exact release (versioned tags exist from v0.23.0 on) — **pin this** if you want to choose when to move |
+| `:0.26.0` | that exact release (versioned tags exist from v0.23.0 on) — **pin this** if you want to choose when to move |
 | `:0.23` | the newest 0.23.x patch |
 
 Pinning a version is the honest default for a server tool: `:latest` means a `docker compose
@@ -288,6 +290,9 @@ that is the point of a server manager, the same trust level as Portainer. So:
   drives — **2.0 / v0.24**
 - [x] **The watch as a conversation**, push notifications through a relay that never sees
   which server a phone belongs to, files you can manage, reconnecting chats — **2.0 / v0.25**
+- [x] **The server at a glance** (domains, systemd services and timers, cron, drives — found on
+  any server), an assistant that reads PocketADM's own records, notes instead of a memory text,
+  attachments in the chat, themes — **2.0 / v0.26**
 - [ ] Domain / reverse-proxy automation: choose "reachable at sub.domain.tld" at install
   time, PocketADM wires up the proxy + DNS (script first, AI agent as fallback)
 - [ ] Backups: scheduled, verifiable snapshots of volumes + configs (biggest gap)

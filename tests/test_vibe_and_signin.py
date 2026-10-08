@@ -3,7 +3,7 @@ and choosing which AI does what.
 
 The CLIs are fakes that speak the real protocols: Vibe's Agent Client
 Protocol (JSON-RPC over stdio, delegated browser sign-in included), Claude
-Code's `setup-token` dialogue in a terminal, Codex's device login."""
+Code's `auth login` over pipes, Codex's device login."""
 import asyncio
 import json
 import stat
@@ -103,29 +103,42 @@ while True:
         pass
 '''
 
-FAKE_CLAUDE_SETUP = r'''
-import sys, time
-if sys.argv[1:] == ["auth", "status", "--json"]:
-    print('{"loggedIn": false, "authMethod": "none"}'); sys.exit(0)
-if sys.argv[1:2] == ["auth"]:
+FAKE_CLAUDE = r'''
+import json, os, sys
+home = os.environ["HOME"]
+creds = os.path.join(home, ".claude", ".credentials.json")
+args = sys.argv[1:]
+if args == ["auth", "status", "--json"]:
+    if os.path.exists(creds):
+        print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}))
+        sys.exit(0)
+    print(json.dumps({"loggedIn": False, "authMethod": "none"})); sys.exit(1)
+if args == ["auth", "logout"]:
+    if os.path.exists(creds):
+        os.remove(creds)
     sys.exit(0)
-assert sys.argv[1:] == ["setup-token"], sys.argv
-print("\x1b[1mWelcome to Claude Code\x1b[0m")
-print("Browser didn't open? Use the url below to sign in:\n")
-url = "https://claude.ai/oauth/authorize?code=true&client_id=abc&response_type=code&state=s1"
-print("\x1b]8;;" + url + "\x07" + url + "\x1b]8;;\x07\n")
+if args[:1] == ["-p"]:
+    good = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").endswith("GOOD")
+    print(json.dumps({"type": "result", "is_error": not good,
+                      "result": "OK" if good else "Invalid bearer token"}))
+    sys.exit(0 if good else 1)
+assert args == ["auth", "login", "--claudeai"], args
+counter = os.path.join(home, "logins")
+n = int(open(counter).read()) + 1 if os.path.exists(counter) else 1
+open(counter, "w").write(str(n))
+state = "s%d" % n
+print("Opening browser to sign in\u2026")
+print("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true"
+      "&client_id=abc&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com"
+      "%2Foauth%2Fcode%2Fcallback&state=" + state, flush=True)
 sys.stdout.write("Paste code here if prompted > "); sys.stdout.flush()
-while True:
-    code = sys.stdin.readline().strip()
-    if code == "good#s1":
-        break
-    print("Invalid code. Please try again.")
-    sys.stdout.write("Paste code here if prompted > "); sys.stdout.flush()
-print("\n✓ Long-lived authentication token created successfully!\n")
-print("Your OAuth token (valid for 1 year):\n")
-print("sk-ant-oat01-" + "Ab3_-" * 20)
-print("\nStore this token securely.")
-time.sleep(0.2)
+code = sys.stdin.readline().strip()
+open(os.path.join(home, "pasted"), "a").write(code + "\n")
+if code == "good#" + state:
+    os.makedirs(os.path.dirname(creds), exist_ok=True)
+    open(creds, "w").write("{}")
+    print("Login successful."); sys.exit(0)
+print("Login failed: Request failed with status code 400"); sys.exit(1)
 '''
 
 FAKE_CODEX_LOGIN = r'''
@@ -155,7 +168,7 @@ def fakes(tmp_path, monkeypatch, clean_settings):
     home.mkdir()
     _make(bin_dir / "vibe-acp", FAKE_VIBE)
     _make(bin_dir / "vibe", "print('vibe 2.25.4')\n")
-    _make(bin_dir / "claude", FAKE_CLAUDE_SETUP)
+    _make(bin_dir / "claude", FAKE_CLAUDE)
     _make(bin_dir / "codex", FAKE_CODEX_LOGIN)
     monkeypatch.setattr(clis, "BIN_DIR", bin_dir)
     monkeypatch.setattr(clis.terminal, "PERSIST_HOME", home)
@@ -299,24 +312,86 @@ def test_mistral_sign_in_through_acp(fakes):
 
 
 def test_claude_sign_in_with_a_pasted_code(fakes):
+    """The real failure on a phone: a code the CLI rejects. The person must
+    see why, and get a fresh page — the old code was bound to the old one."""
+    home = fakes["home"]
+
     async def go():
         flow = await signin.start("claude-code")
         flow = await _wait(flow.id, {"waiting_code", "failed"})
         assert flow.state == "waiting_code", flow.error
-        assert flow.url.startswith("https://claude.ai/oauth/authorize?code=true")
-        await signin.submit_code(flow.id, "wrong")
+        assert flow.url.startswith("https://claude.com/cai/oauth/authorize?code=true")
+        assert flow.url.endswith("state=s1")
+
+        # half a code never reaches the CLI
+        await signin.submit_code(flow.id, "good")
+        await asyncio.sleep(0.3)
         flow = await _wait(flow.id, {"waiting_code"})
-        await asyncio.sleep(0.5)
-        assert "did not work" in signin.get(flow.id).message
-        await signin.submit_code(flow.id, "good#s1")
+        assert "# in the middle" in flow.message
+        assert not (home / "pasted").exists()
+
+        # a code from another page is caught before it is spent
+        await signin.submit_code(flow.id, "good#s7")
+        await asyncio.sleep(0.3)
+        flow = await _wait(flow.id, {"waiting_code"})
+        assert "older sign-in page" in flow.message
+
+        # Claude rejects a code: its reason, and a new page
+        await signin.submit_code(flow.id, "bad#s1")
+        await asyncio.sleep(0.3)
+        flow = await _wait(flow.id, {"waiting_code"})
+        assert "status code 400" in flow.message and "new now" in flow.message
+        assert flow.url.endswith("state=s2") and flow.attempt == 2
+
+        # the whole callback address works as well as the code
+        await signin.submit_code(
+            flow.id, " https://platform.claude.com/oauth/code/callback?code=good&state=s2 ")
         flow = await _wait(flow.id, {"done", "failed"})
         assert flow.state == "done", flow.error
+        assert "(Max)" in flow.message
+    config.set_engine_token("claude-code", "sk-ant-oat01-" + "old" * 10)
     asyncio.run(go())
-    token = config.get_engine_token("claude-code")
-    assert token.startswith("sk-ant-oat01-") and len(token) == len("sk-ant-oat01-") + 100
+    assert (home / "pasted").read_text().split() == ["bad#s1", "good#s2"]
+    # the CLI keeps the login; a stale pasted token must not shadow it
+    assert config.get_engine_token("claude-code") == ""
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in engines._env()
+    assert engines.signed_in("claude-code")
+    status = asyncio.run(accounts.engine_status("claude-code"))
+    assert status["signed_in"] and status["plan"] == "max"
+
+
+def test_claude_sign_in_with_a_setup_token(fakes):
+    """`claude setup-token` run on a laptop: paste the token instead of a code."""
+    async def go():
+        flow = await signin.start("claude-code")
+        flow = await _wait(flow.id, {"waiting_code", "failed"})
+        await signin.submit_code(flow.id, "sk-ant-oat01-" + "x" * 30 + "BAD")
+        await asyncio.sleep(0.3)
+        flow = await _wait(flow.id, {"waiting_code"})
+        assert "did not accept this token" in flow.message
+        good = "sk-ant-oat01-" + "Ab3_-" * 8 + "GOOD"
+        await signin.submit_code(flow.id, good)
+        flow = await _wait(flow.id, {"done", "failed"})
+        assert flow.state == "done", flow.error
+        return good
+    token = asyncio.run(go())
+    assert config.get_engine_token("claude-code") == token
     assert engines._env()["CLAUDE_CODE_OAUTH_TOKEN"] == token
     # the token never leaves the server
-    assert token not in json.dumps(signin.get(next(iter(signin.FLOWS))).as_dict())
+    assert all(token not in json.dumps(f.as_dict()) for f in signin.FLOWS.values())
+
+
+def test_claude_code_checks():
+    url = "https://claude.com/cai/oauth/authorize?code=true&state=abc"
+    assert signin.claude_code_problem("x#abc", url) == ""
+    assert "older" in signin.claude_code_problem("x#zzz", url)
+    assert "part of the code" in signin.claude_code_problem("xabc", url)
+    assert "API key" in signin.claude_code_problem("sk-ant-api03-" + "k" * 30, url)
+    assert signin.normalize_claude_code(' "a b#c" ') == "ab#c"
+    assert signin.normalize_claude_code(
+        "https://platform.claude.com/oauth/code/callback?code=A1&state=S2") == "A1#S2"
+    # Ink draws spaces as cursor moves: messages stay readable
+    assert signin.clean("Login\x1b[1Cfailed:\x1b[2Cno") == "Login failed:  no"
 
 
 def test_codex_device_sign_in(fakes):
@@ -334,8 +409,12 @@ def test_sign_out_removes_the_logins(fakes):
     _sign_in_vibe(fakes["home"])
     config.set_engine_token("claude-code", "sk-ant-oat01-" + "x" * 30)
     asyncio.run(signin.sign_out("mistral-vibe"))
+    creds = fakes["home"] / ".claude" / ".credentials.json"
+    creds.parent.mkdir(parents=True, exist_ok=True)
+    creds.write_text("{}")
     asyncio.run(signin.sign_out("claude-code"))
     assert signin.vibe_key() == "" and config.get_engine_token("claude-code") == ""
+    assert not creds.exists()
 
 
 # ------------------------------------------------------------------ accounts & routes
@@ -378,3 +457,125 @@ def test_one_shot_runs_through_an_engine_route(fakes):
     config.set_ai_route("insights", "mistral-vibe", "default")
     text = asyncio.run(ai.one_shot("Explain RUN: df -h", "be brief", feature="insights"))
     assert text == "Looking. Done."
+
+
+def test_removing_a_key_really_removes_it(fakes, monkeypatch):
+    """"Remove key" used to store its "-" as the key: the provider stayed
+    connected and could not be removed again."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config.set_keys({"openai": "sk-test-123"})
+    assert "openai" in config.configured_providers()
+    config.set_keys({"openai": "-"})
+    assert config.get_key("openai") == ""
+    assert "openai" not in config.settings["ai_keys"]
+    assert "openai" not in config.configured_providers()
+    # a placeholder an older version left behind does not count as a key
+    config.settings["ai_keys"]["openai"] = "-"
+    assert config.get_key("openai") == "" and "openai" not in config.configured_providers()
+    # "" keeps what is stored
+    config.set_keys({"mistral": "mk-1"})
+    config.set_keys({"mistral": ""})
+    assert config.get_key("mistral") == "mk-1"
+    # a key from the environment is reported as such (the app cannot remove it)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    assert config.key_from_env("openai") and config.get_key("openai") == "sk-env"
+
+
+def test_codex_not_logged_in_is_not_signed_in(fakes, monkeypatch):
+    _make(fakes["bin"] / "codex", "import sys\nprint('Not logged in')\n")
+    accounts._status_cache.clear()
+    status = asyncio.run(accounts.engine_status("codex"))
+    assert status["installed"] and not status["signed_in"]
+
+
+# ------------------------------------------------------------------ Vibe models
+
+_MISTRAL_LIST = [
+    {"id": "mistral-medium-latest", "name": "mistral-medium-latest",
+     "aliases": ["mistral-medium-3.5", "mistral-vibe-cli-latest"],
+     "capabilities": {"completion_chat": True, "function_calling": True}},
+    {"id": "mistral-vibe-cli-latest", "name": "mistral-medium-latest", "aliases": [],
+     "capabilities": {"completion_chat": True, "function_calling": True}},
+    {"id": "mistral-small-2603", "name": "mistral-small-2603", "aliases": ["mistral-small-latest"],
+     "capabilities": {"completion_chat": True, "function_calling": True}},
+    {"id": "zai-glm-5-3", "name": "zai-glm-5-3", "aliases": ["zai-glm-latest"],
+     "capabilities": {"completion_chat": True, "function_calling": True, "reasoning": True}},
+    {"id": "mistral-embed", "name": "mistral-embed", "aliases": [],
+     "capabilities": {"completion_chat": False, "function_calling": False}},
+    {"id": "voxtral-small-2507", "name": "voxtral-small-2507", "aliases": [],
+     "capabilities": {"completion_chat": True, "function_calling": True}},
+    {"id": "labs-leanstral-1-5", "name": "labs-leanstral-1-5", "aliases": [],
+     "capabilities": {"completion_chat": True, "function_calling": True}},
+]
+
+
+def test_mistral_model_rows():
+    from server import mistral_models as mm
+    rows = mm.chat_models(_MISTRAL_LIST)
+    assert [r["id"] for r in rows] == ["mistral-medium-latest", "zai-glm-5-3", "mistral-small-2603"]
+    assert rows[1]["name"] == "GLM 5.3" and rows[2]["name"] == "Mistral Small 4"
+    assert mm.display_name("mistral-large-4") == "Mistral Large 4"
+    assert mm.display_name("ministral-14b-2512") == "Ministral 14B (25.12)"
+    assert mm.display_name("devstral-small-2512") == "Devstral Small 2"
+    assert mm.covers(rows, "zai-glm-latest") and not mm.covers(rows, "mistral-large-4")
+
+
+def test_vibe_offers_login_models_and_key_models(fakes, monkeypatch):
+    from server import mistral_models
+    _sign_in_vibe(fakes["home"])
+    config.set_keys({"mistral": "api-key"})
+    login_rows = mistral_models.chat_models(_MISTRAL_LIST[:3])        # no GLM on the login
+    key_rows = mistral_models.chat_models(_MISTRAL_LIST)
+
+    async def fake_fetch(key, force=False):
+        return login_rows if key == "mk-test" else key_rows
+    monkeypatch.setattr(mistral_models, "fetch", fake_fetch)
+    rows = asyncio.run(engines.vibe_models())
+    ids = [r["id"] for r in rows]
+    assert ids == ["default", "mistral-small-2603", "key:zai-glm-5-3"]
+    assert rows[2]["billing"] == "api" and "billed" in rows[2]["hint"]
+    entry = next(e for e in asyncio.run(engines.providers_live()) if e["provider"] == "mistral-vibe")
+    assert [m["id"] for m in entry["models"]] == ids
+
+
+def test_vibe_env_picks_the_model_and_the_key():
+    assert engines.vibe_env("default") == {} and engines.vibe_env("default", "high") == {}
+    env = engines.vibe_env("mistral-small-2603", "high")
+    models = json.loads(env["VIBE_MODELS"])
+    assert env["VIBE_ACTIVE_MODEL"] == "mistral-small-2603" and models[0]["thinking"] == "high"
+    assert "MISTRAL_API_KEY" not in env
+    # a model that cannot reason is never sent a reasoning effort
+    assert "thinking" not in json.loads(engines.vibe_env("codestral-2508", "high")["VIBE_MODELS"])[0]
+    config.settings.setdefault("ai_keys", {})["mistral"] = "api-key-9"
+    env = engines.vibe_env("key:zai-glm-5-3")
+    assert env["VIBE_ACTIVE_MODEL"] == "zai-glm-5-3" and env["MISTRAL_API_KEY"] == "api-key-9"
+    config.settings["ai_keys"].pop("mistral")
+    with pytest.raises(RuntimeError):
+        engines.vibe_env("key:zai-glm-5-3")
+
+
+def test_vibe_runs_the_chosen_model_and_restarts_on_a_new_one(fakes, monkeypatch):
+    _sign_in_vibe(fakes["home"])
+    seen = []
+    real_spawn = engines._spawn
+
+    async def spy(argv, cwd, extra_env=None):
+        seen.append(dict(extra_env or {}))
+        return await real_spawn(argv, cwd, extra_env)
+    monkeypatch.setattr(engines, "_spawn", spy)
+    s = _session()
+    s.model = "mistral-small-2603"
+    _turn(s, "one RUN: echo hi|")
+    assert seen[-1]["VIBE_ACTIVE_MODEL"] == "mistral-small-2603"
+    first = s.chat["engine_sessions"]["mistral-vibe"]
+    assert s.messages[-1]["by"] == "Mistral Vibe · Mistral Small 4"
+    # same model: the session is resumed
+    _turn(s, "two RUN: echo hi|")
+    assert s.chat["engine_models"]["mistral-vibe"] == "mistral-small-2603"
+    # another model: a fresh session that gets the conversation as a transcript
+    s.model = "default"
+    _turn(s, "three RUN: echo hi|")
+    assert seen[-1] == {} and s.chat["engine_models"]["mistral-vibe"] == "default"
+    assert s.chat["engine_sessions"]["mistral-vibe"] == first     # the fake reuses its id
+    assert ai.answered_by("mistral-vibe", "key:zai-glm-5-3") == "Mistral Vibe · GLM 5.3 (API key)"
+    assert ai.answered_by("openrouter", "openrouter/free") == "OpenRouter · free router"

@@ -23,6 +23,7 @@ import shutil
 import signal
 import struct
 import termios
+import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -119,7 +120,10 @@ def _host_user_command(user: str) -> list[str]:
     # so files, sudo group membership and the host's docker.sock are all real.
     # (No --net host: it conflicts with --hostname on some Docker versions, and
     #  the correct maxaufknax@stream prompt matters more for portability.)
-    return ["docker", "run", "--rm", "-it", "--hostname", hostname,
+    # --pid host: `systemctl`, `ps`, `kill` and `htop` see the host, as on SSH
+    return ["docker", "run", "--rm", "-it", "--hostname", hostname, "--pid", "host",
+            "--name", f"pocketadm-term-{uuid.uuid4().hex[:10]}",
+            "--label", "pocketadm.helper=terminal",
             "-v", "/:/host", "-e", "LANG=C.UTF-8",
             HELPER_IMAGE, "chroot", "/host", "su", "-", user]
 

@@ -77,9 +77,11 @@ async def engine_status(engine: str) -> dict:
                 out["plan"] = data.get("subscriptionType", "") or ""
     elif engine == "codex" and installed:
         code, text = await _run([engines.binary(engine), "login", "status"])
-        if code == 0 and "logged in" in text.lower():
+        low = text.lower()
+        # "Not logged in" contains "logged in" too
+        if code == 0 and "logged in" in low and "not logged in" not in low:
             out.update(signed_in=True,
-                       detail="Signed in with your ChatGPT plan" if "chatgpt" in text.lower()
+                       detail="Signed in with your ChatGPT plan" if "chatgpt" in low
                        else "Signed in with an OpenAI API key")
     elif engine == "mistral-vibe":
         key = signin.vibe_key()
@@ -138,6 +140,7 @@ async def overview() -> dict:
         rows.append({
             **a,
             "key_set": a["key_provider"] in configured,
+            "key_from_env": config.key_from_env(a["key_provider"]),
             "can_subscribe": bool(engine),
             "cli_installed": st.get("installed", False),
             "cli_version": st.get("version", ""),

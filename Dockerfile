@@ -18,6 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server ./server
 COPY web ./web
 
+# `pocketadm` for the coding agents (Claude Code, Codex, Vibe): PocketADM's
+# records, the assistant's notes, and running a command on the host
+RUN printf '#!/bin/sh\nPYTHONPATH=/opt/helmsman exec python -m server.cli "$@"\n' \
+        > /usr/local/bin/pocketadm && chmod 0755 /usr/local/bin/pocketadm
+
 ENV HELMSMAN_DATA=/data
 VOLUME /data
 # 8080: plain HTTP for a reverse proxy on the same host (and the loopback port)

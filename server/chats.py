@@ -189,6 +189,19 @@ def title_from(text: str) -> str:
     return (t[:56] + "…") if len(t) > 56 else (t or DEFAULT_TITLE)
 
 
+CONTEXT_MARK = "[Attached context"
+
+
+def _without_context(content: str, m: dict) -> str:
+    """A message as the person wrote it: the context the app attached in
+    front of it (files, services …) shows as chips, not as text."""
+    if m.get("attachments") and content.startswith(CONTEXT_MARK):
+        cut = content.rfind("\n\n[/Attached context]\n\n")
+        if cut >= 0:
+            return content[cut + len("\n\n[/Attached context]\n\n"):]
+    return content
+
+
 def display_events(messages: list[dict]) -> list[dict]:
     """Flatten internal message history into render-ready events."""
     outputs = {m.get("tool_call_id"): m.get("content", "")
@@ -199,10 +212,13 @@ def display_events(messages: list[dict]) -> list[dict]:
         if role == "user":
             content = m.get("content")
             if isinstance(content, str) and content.strip():
-                events.append({"t": "user", "text": content})
+                event = {"t": "user", "text": _without_context(content, m)}
+                if m.get("attachments"):
+                    event["attachments"] = m["attachments"]
+                events.append(event)
         elif role == "assistant":
             if m.get("content"):
-                events.append({"t": "assistant", "text": m["content"]})
+                events.append({"t": "assistant", "text": m["content"], "by": m.get("by", "")})
             for tc in m.get("tool_calls", []) or []:
                 events.append({"t": "tool", "name": tc.get("name", "?"),
                                "args": tc.get("args", {}),

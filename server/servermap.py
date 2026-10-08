@@ -15,10 +15,10 @@ import os
 import shutil
 import time
 
-from . import dockerapi, hostuser, hostrun
+from . import dockerapi, hostuser, hostrun, records
 
 TTL = 600          # seconds; docker topology rarely changes faster
-MAX_CHARS = 5000
+MAX_CHARS = 9000
 
 _cache: dict = {"text": "", "ts": 0.0}
 
@@ -59,7 +59,9 @@ async def _build() -> str:
         lines.append("Host: " + " · ".join(host_bits))
 
     try:
-        containers = await dockerapi.list_containers(all_=True)
+        # the assistant's own command runners are not part of the server
+        containers = [c for c in await dockerapi.list_containers(all_=True)
+                      if not records.is_helper_name(c["name"]) and not c.get("helper")]
     except Exception:
         containers = []
     if containers:
@@ -87,6 +89,15 @@ async def _build() -> str:
             lines.append("Standalone containers (no compose project): "
                          + ", ".join(_svc(c, image=True)
                                      for c in sorted(loose, key=lambda x: x["name"])))
+
+    # domains, systemd units, timers, cron and drives — found on the host
+    try:
+        from . import inventory
+        lines += inventory.map_lines(await inventory.build())
+    except Exception:
+        pass
+    lines.append("PocketADM's own records (the `pocketadm` tool, or `pocketadm <topic>` in a "
+                 "shell): updates, activity, audit, health, metrics, storage, jobs, watch.")
 
     text = "\n".join(lines)
     if len(text) > MAX_CHARS:

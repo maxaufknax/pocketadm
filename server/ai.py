@@ -25,9 +25,11 @@ Modes:
   agent — full tools, destructive/write actions need approval   (default)
   auto  — full tools, everything auto-approved
 
-The agent has a persistent memory file (like Claude Code's CLAUDE.md):
-its content is injected into every system prompt and the agent can update
-it with the update_memory tool — so it learns about this server over time.
+The agent keeps notes about this server between conversations (memory.py):
+short facts by topic, shown in every system prompt, saved one at a time with
+the remember tool — so it learns about this server over time. PocketADM's own
+records (updates, activity, metrics, health …) are one `pocketadm` call away
+(records.py), and the server map lists what runs where (servermap.py).
 """
 import asyncio
 import difflib
@@ -39,7 +41,8 @@ from pathlib import Path
 
 import httpx
 
-from . import audit, chats, cmdpolicy, config, hostrun, integrations, localai, skills
+from . import (audit, chats, cmdpolicy, config, hostrun, integrations, localai, memory,
+               records, skills, uploads)
 
 MAX_TOOL_OUTPUT = 12000
 MAX_TURNS = 25
@@ -50,36 +53,41 @@ HARD_MAX_ITERATIONS = 300
 DEFAULT_WORKDIR = os.environ.get(
     "HELMSMAN_WORKDIR", "/host" if os.path.isdir("/host") else os.path.expanduser("~"))
 
-MEMORY_FILE = config.DATA_DIR / "agent-memory.md"
-MEMORY_MAX_CHARS = 6000
 
-SYSTEM_PROMPT = """You are Vibe Code, the built-in AI engineer of Helmsman, a self-hosted \
-server management app. You work directly on the user's server through tools.
+SYSTEM_PROMPT = """You are the assistant built into PocketADM, the owner's self-hosted server \
+manager. You work directly on their server through tools — you are its admin, on their behalf.
 
 Environment: {exec_note} Working directory: {workdir}. \
 The docker CLI controls the host's Docker engine.
 
-Guidelines:
-- Be concise; the user is often on a phone. Prefer short answers and small steps.
-- START from the server map, skills and memory below — they are live facts about THIS \
-server. Don't spend commands rediscovering what they already answer.
-- Read-only commands (docker ps/logs/inspect, ls, cat, grep, df …) run without asking; \
-mutating ones need the user's approval. Prefer one well-chosen command over many tiny \
-probes, and never smuggle a mutating step into a read-only-looking pipeline.
-- Inspect before you change: read files / list dirs / check state first.
-- Services managed by docker compose are changed via their stack directory (see server \
-map): edit there, then `docker compose build/up -d` in that directory. Never replace a \
-compose-managed container with a raw `docker run` — it breaks future updates.
-- Don't dump big or minified files into context: use grep, head, or targeted reads.
-- For any task with more than ~2 steps, call update_plan first to show the user a short \
-plan, and keep it updated (one step in_progress at a time) so they can follow along.
-- For destructive actions (rm, docker rm, overwriting configs), state what you are about to do first.
-- When you finish a task, summarize in 1-3 sentences what you changed.
-- Answer in the language the user writes in.
-- When you learn something durable about this server (layout, conventions, preferences), \
-save it with update_memory. When you work out a non-obvious PROCEDURE (a deploy path, a \
-tricky fix), save it as a skill with save_skill so next time it is one read_skill away. \
-Keep both short and current; the live server map wins over memory if they disagree.
+How you work:
+- Start from what is already known: the server map (stacks, domains, systemd units, timers, \
+drives), PocketADM's own records (the pocketadm tool: updates and how they ended, activity, \
+audit, health, metrics history, jobs), your notes and the skills below. They are facts about \
+THIS server — don't spend commands rediscovering them.
+- Prefer one well-chosen command over many small probes. Read-only commands run without asking; \
+anything that changes the server needs the owner's tap. Never hide a change in a \
+read-only-looking pipeline.
+- Verify before you claim. "It worked" needs evidence — an exit code, a container state, a log \
+line, a record. A job that started is not a job that succeeded; HTTP 200 on a request that \
+starts work says nothing about the result.
+- Inspect before you change, prefer reversible changes, and say what you are about to change \
+before a destructive step.
+- Compose services are changed in their stack directory (see the server map) with \
+`docker compose`; never replace one with a raw `docker run`. Host services are systemd units: \
+`systemctl status|restart`, `journalctl -u <unit>`.
+- Don't dump big or minified files: grep, head, targeted reads.
+- For anything with more than ~2 steps, show a short plan with update_plan and keep it current.
+- The owner is usually on a phone: lead with the answer, keep it short, use a small table or \
+list when it helps, no filler. Answer in the owner's language.
+- When you finish, say in 1–3 sentences what changed and how you checked it.
+
+Notes (your memory):
+- Save a durable fact with remember — one fact per call, short, with a topic. Never save \
+passwords, keys or tokens; note where a secret is kept instead.
+- A note that turned out wrong or outdated: correct it with remember(replaces=<id>) or drop it \
+with forget(<id>). The live server wins over a note.
+- A non-obvious procedure you worked out (a deploy path, a tricky fix): save_skill.
 {server_map_section}{skills_section}{memory_section}{mode_note}"""
 
 MODE_NOTES = {
@@ -249,17 +257,50 @@ TOOLS = [
         },
     },
     {
-        "name": "update_memory",
-        "description": "Update your persistent memory about this server (shown to you in "
-                       "every future session). mode 'append' adds a line/section, "
-                       "'replace' rewrites the whole memory.",
+        "name": "pocketadm",
+        "description": "Read PocketADM's own records about this server — faster and more "
+                       "reliable than digging through logs. Topics: " + "; ".join(
+                           f"{k} ({v})" for k, v in records.TOPICS.items()) +
+                       ". Use it first for questions like 'did the updates go well?', 'what "
+                       "happened today?', 'why is the disk filling up?'.",
         "parameters": {
             "type": "object",
             "properties": {
-                "content": {"type": "string"},
-                "mode": {"type": "string", "enum": ["append", "replace"]},
+                "topic": {"type": "string", "enum": list(records.TOPICS)},
+                "days": {"type": "number", "description": "how far back (default 1 for "
+                                                          "activity/audit, 7 otherwise)"},
+                "search": {"type": "string", "description": "only entries containing this "
+                                                            "(activity, audit)"},
             },
-            "required": ["content"],
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "remember",
+        "description": "Save one durable fact about this server or its owner to your notes "
+                       "(shown to you in every future conversation). One fact per call, at most "
+                       "two short sentences. Never passwords, keys or tokens. With replaces, "
+                       "correct an existing note by its id instead.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string"},
+                "topic": {"type": "string", "enum": memory.TOPIC_IDS},
+                "subject": {"type": "string", "description": "optional: the project or app the "
+                                                             "fact is about"},
+                "replaces": {"type": "string", "description": "id of a note this one corrects"},
+            },
+            "required": ["fact"],
+        },
+    },
+    {
+        "name": "forget",
+        "description": "Remove one of your notes by its id (when it is wrong, outdated or "
+                       "no longer relevant).",
+        "parameters": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
         },
     },
 ]
@@ -269,12 +310,12 @@ TOOLS = [
 # as into a POST body, so fetching from the internet asks first. Fetches that
 # stay on this network (localhost, a private address, a container name) still
 # run on their own — see cmdpolicy.url_is_local and sessions.py.
-SAFE_TOOLS = {"read_file", "list_dir", "search_files",
-              "update_memory", "update_plan", "read_skill", "save_skill"}
+SAFE_TOOLS = {"read_file", "list_dir", "search_files", "pocketadm",
+              "remember", "forget", "update_plan", "read_skill", "save_skill"}
 MODE_TOOLS = {
     "chat": [],
     "plan": ["run_command", "read_file", "list_dir", "search_files", "fetch_url",
-             "update_plan", "read_skill"],
+             "pocketadm", "update_plan", "read_skill"],
     "agent": [t["name"] for t in TOOLS],
     "auto": [t["name"] for t in TOOLS],
 }
@@ -301,14 +342,13 @@ def allowed_tools(mode: str) -> list[str]:
 # ------------------------------------------------------------- memory
 
 def read_memory() -> str:
-    try:
-        return MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
-    except OSError:
-        return ""
+    """The notes as Markdown (apps before 0.26 show memory as one text)."""
+    return memory.render_markdown()
 
 
 def save_memory(content: str) -> None:
-    MEMORY_FILE.write_text(content[:MEMORY_MAX_CHARS * 4])
+    """Text from an app before 0.26: every line or paragraph becomes a note."""
+    memory.replace_all(memory.parse_markdown(content, source="you"))
 
 
 # Approximate USD per 1M tokens (input, output) — for display only.
@@ -321,6 +361,8 @@ STATIC_PRICING = {
     # the specific releases first: lookup is by substring, in this order
     "mistral-large-2512": (0.5, 1.5), "mistral-large-3": (0.5, 1.5),
     "mistral-medium-3.5": (1.5, 7.5), "mistral-medium-3-5": (1.5, 7.5),
+    "mistral-medium-latest": (1.5, 7.5), "mistral-small-2603": (0.15, 0.6),
+    "zai-glm": (1.4, 4.4), "glm-5": (1.4, 4.4),
     "mistral-large": (2, 6), "mistral-medium": (0.4, 2), "mistral-small": (0.15, 0.6),
     "magistral-medium": (2, 5), "magistral-small": (0.5, 1.5),
     "codestral": (0.3, 0.9), "ministral-8b": (0.1, 0.1), "ministral-3b": (0.04, 0.04),
@@ -354,11 +396,12 @@ def system_prompt(workdir: str, mode: str, server_map: str = "") -> str:
         instr_section = ("\nStanding instructions from the server owner — follow them "
                          "unless they conflict with safety:\n<instructions>\n"
                          + instructions[:config.CUSTOM_INSTRUCTIONS_MAX] + "\n</instructions>\n")
-    memory = read_memory().strip()
+    notes = memory.prompt_block()
     memory_section = ""
-    if memory:
-        memory_section = ("\nYour memory about this server (from previous sessions):\n"
-                          "<memory>\n" + memory[:MEMORY_MAX_CHARS] + "\n</memory>\n")
+    if notes:
+        memory_section = ("\nYour notes about this server (from earlier conversations; each "
+                          "has an id for remember(replaces=…) and forget):\n"
+                          "<notes>\n" + notes + "\n</notes>\n")
     map_section = ""
     if server_map:
         map_section = ("\nServer map (live, auto-generated — trust it over older notes):\n"
@@ -508,15 +551,26 @@ async def execute_tool(name: str, args: dict, workdir: str) -> str:
             return await integrations.request(
                 args["integration"], args.get("method", "GET"),
                 args.get("path", ""), args.get("body", ""))
-        if name == "update_memory":
-            mode = args.get("mode", "append")
-            if mode == "replace":
-                save_memory(args["content"])
-            else:
-                current = read_memory()
-                save_memory((current.rstrip() + "\n" if current.strip() else "") +
-                            args["content"].strip() + "\n")
-            return f"Memory updated ({mode}), now {len(read_memory())} chars."
+        if name == "pocketadm":
+            return _truncate(await records.query(args.get("topic", "overview"),
+                                                 days=args.get("days") or 0,
+                                                 search=str(args.get("search") or "")))
+        if name == "remember":
+            try:
+                note, what = memory.add(args.get("fact", ""), topic=args.get("topic", ""),
+                                        subject=args.get("subject", ""),
+                                        replaces=args.get("replaces", ""))
+            except ValueError as e:
+                return f"Not saved: {e}"
+            return {"added": f"Saved as note {note['id']}.",
+                    "updated": f"Already known — note {note['id']} refreshed.",
+                    "replaced": f"Note {note['id']} corrected."}[what]
+        if name == "forget":
+            return ("Note removed." if memory.forget(args.get("id", ""))
+                    else "No note with that id.")
+        if name == "update_memory":           # older chats replayed with the old tool
+            note, _ = memory.add(args.get("content", ""))
+            return f"Saved as note {note['id']}."
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Error: {type(e).__name__}: {e}"
@@ -529,8 +583,12 @@ def _tool_audit_detail(name: str, args: dict) -> str:
         return f"{args.get('method', 'GET')} {args.get('integration', '')}{args.get('path', '')}"
     if name in ("write_file", "edit_file"):
         return args.get("path", "")
-    if name == "update_memory":
-        return args.get("mode", "append") + " memory"
+    if name in ("remember", "update_memory"):
+        return (args.get("fact") or args.get("content") or "")[:200]
+    if name == "forget":
+        return "note " + str(args.get("id", ""))
+    if name == "pocketadm":
+        return str(args.get("topic", ""))
     return (args.get("path") or "")[:200]
 
 
@@ -792,14 +850,49 @@ def _filter_tools(tool_names: list) -> list[dict]:
     return [t for t in TOOLS if t["name"] in names] + [t for t in tool_names if isinstance(t, dict)]
 
 
+def has_images(messages: list) -> bool:
+    return any(m.get("role") == "user" and m.get("images") for m in messages)
+
+
+def _image_note(paths: list[str]) -> str:
+    return ("\n\n[Attached picture" + ("s" if len(paths) > 1 else "") + ": " + ", ".join(paths)
+            + " — this model cannot see it; open it with your tools or ask the user what it shows.]")
+
+
+def _pictures(m: dict, vision: bool) -> tuple[list[tuple[str, str]], str]:
+    """A user message's pictures as (media type, base64) for models that see
+    images, else a note naming where they are."""
+    paths = m.get("images") or []
+    if not paths:
+        return [], ""
+    if not vision:
+        return [], _image_note(paths)
+    import base64
+    out, missing = [], []
+    for path in paths[:4]:
+        loaded = uploads.load_image(path)
+        if loaded:
+            out.append((loaded[0], base64.b64encode(loaded[1]).decode()))
+        else:
+            missing.append(path)
+    return out, (_image_note(missing) if missing else "")
+
+
 async def stream_anthropic(cfg: dict, messages: list, sysprompt: str,
-                           tool_names: list[str], thinking: str = "off"):
+                           tool_names: list[str], thinking: str = "off", vision: bool = True):
     tools = [{"name": t["name"], "description": t["description"],
               "input_schema": t["parameters"]} for t in _filter_tools(tool_names)]
     api_messages = []
     for m in messages:
         if m["role"] == "user":
-            api_messages.append({"role": "user", "content": m["content"]})
+            pictures, note = _pictures(m, vision)
+            if pictures:
+                api_messages.append({"role": "user", "content": [
+                    *({"type": "image", "source": {"type": "base64", "media_type": media,
+                                                    "data": data}} for media, data in pictures),
+                    {"type": "text", "text": m["content"] + note}]})
+            else:
+                api_messages.append({"role": "user", "content": m["content"] + note})
         elif m["role"] == "assistant":
             blocks = []
             for tb in m.get("thinking_blocks", []):
@@ -943,7 +1036,7 @@ def _openai_reasoning_model(model: str) -> bool:
 
 
 async def stream_openai(cfg: dict, messages: list, sysprompt: str,
-                        tool_names: list[str], thinking: str = "off"):
+                        tool_names: list[str], thinking: str = "off", vision: bool = True):
     tools = [{"type": "function", "function": {
         "name": t["name"], "description": t["description"], "parameters": t["parameters"]}}
         for t in _filter_tools(tool_names)]
@@ -960,7 +1053,14 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
             api_messages.append({"role": "tool", "tool_call_id": m["tool_call_id"],
                                  "content": m["content"]})
         else:
-            api_messages.append({"role": "user", "content": m["content"]})
+            pictures, note = _pictures(m, vision)
+            if pictures:
+                api_messages.append({"role": "user", "content": [
+                    {"type": "text", "text": m["content"] + note},
+                    *({"type": "image_url", "image_url": {"url": f"data:{media};base64,{data}"}}
+                      for media, data in pictures)]})
+            else:
+                api_messages.append({"role": "user", "content": m["content"] + note})
     # Anthropic models routed through OpenRouter honour explicit cache_control
     # breakpoints (other providers there cache automatically).
     if cfg["provider"] == "openrouter" and "claude" in cfg["model"].lower():
@@ -1032,10 +1132,10 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
 
 
 def get_stream(cfg: dict, messages: list, sysprompt: str, tool_names: list[str],
-               thinking: str = "off"):
+               thinking: str = "off", vision: bool = True):
     if cfg["provider"] == "anthropic":
-        return stream_anthropic(cfg, messages, sysprompt, tool_names, thinking)
-    return stream_openai(cfg, messages, sysprompt, tool_names, thinking)
+        return stream_anthropic(cfg, messages, sysprompt, tool_names, thinking, vision)
+    return stream_openai(cfg, messages, sysprompt, tool_names, thinking, vision)
 
 
 # ------------------------------------------------------------ model list
@@ -1047,8 +1147,8 @@ CURATED = {
                    "openai/gpt-5.2", "google/gemini-3.1-pro-preview",
                    "google/gemini-3-flash", "deepseek/deepseek-chat-v3.1",
                    "mistralai/mistral-large-2512", "qwen/qwen3-coder"],
-    "mistral": ["mistral-large-latest", "mistral-medium-latest",
-                "magistral-medium-latest", "codestral-latest", "ministral-8b-latest"],
+    "mistral": ["mistral-medium-latest", "mistral-large-latest", "mistral-small-latest",
+                "codestral-latest", "ministral-8b-latest"],
 }
 _model_cache: dict = {"time": 0, "result": None}
 
@@ -1079,21 +1179,12 @@ async def list_models() -> list[dict]:
                         curated = [by_id.pop(mid) for mid in CURATED["anthropic"] if mid in by_id]
                         models = (curated + list(by_id.values()))[:40]
                 elif provider == "mistral":
-                    r = await client.get("https://api.mistral.ai/v1/models",
-                                         headers={"Authorization": f"Bearer {key}"})
-                    if r.status_code == 200:
-                        # the endpoint lists embedding/moderation/ocr models too;
-                        # keep chat-capable ones (the coding/instruct/reasoning
-                        # families), tool-calling is a given across that set
-                        chat = ("mistral-large", "mistral-medium", "mistral-small",
-                                "magistral", "codestral", "ministral", "pixtral",
-                                "devstral", "open-mistral", "open-mixtral")
-                        live = [{"id": m["id"], "name": m["id"]}
-                                for m in r.json().get("data", [])
-                                if m["id"].lower().startswith(chat)]
-                        by_id = {m["id"]: m for m in live}
-                        curated = [by_id.pop(mid) for mid in CURATED["mistral"] if mid in by_id]
-                        models = (curated + sorted(by_id.values(), key=lambda m: m["id"]))[:30]
+                    # one row per model that chats and calls tools (GLM and
+                    # Devstral included), named the way people know them
+                    from . import mistral_models
+                    models = [{"id": m["id"], "name": m["name"], "tools": True,
+                               "hint": m["hint"]}
+                              for m in await mistral_models.fetch(key)][:30]
                 elif provider == "openrouter":
                     r = await client.get("https://openrouter.ai/api/v1/models")
                     if r.status_code == 200:
@@ -1235,6 +1326,34 @@ def usage_series(days: int = 30) -> dict:
     return {"days": series, "models": model_list, "total": total,
             "range_days": days, "today": summ["today"], "month": summ["month"],
             "priced": any(m["cost"] for m in model_list) or total["cost"] > 0}
+
+
+_PROVIDER_LABELS = {"anthropic": "Claude API", "openai": "OpenAI API", "mistral": "Mistral API",
+                    "openrouter": "OpenRouter", "ollama": "Local model"}
+
+
+def answered_by(provider: str, model: str) -> str:
+    """Who wrote an answer, for the line under it: "Mistral Vibe · GLM 5.3",
+    "OpenRouter · free router", "Mistral API · Mistral Medium 3.5"."""
+    from . import engines, mistral_models
+    model = model or ""
+    if provider in engines.ENGINES:
+        label = engines.ENGINES[provider]["label"]
+        if not model or model == "default":
+            return label
+        if provider == "mistral-vibe":
+            via_key = model.startswith("key:")
+            name = mistral_models.display_name(model[4:] if via_key else model)
+            return f"{label} · {name}" + (" (API key)" if via_key else "")
+        return f"{label} · {model.capitalize()}"
+    label = _PROVIDER_LABELS.get(provider, provider)
+    if model == "openrouter/free":
+        name = "free router"
+    elif provider == "mistral":
+        name = mistral_models.display_name(model)
+    else:
+        name = model.split("/")[-1]
+    return f"{label} · {name}" if name else label
 
 
 def _route(feature: str) -> dict:

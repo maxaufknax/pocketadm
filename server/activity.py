@@ -230,6 +230,12 @@ def docker_event(e: dict) -> dict | None:
     attrs = (e.get("Actor") or {}).get("Attributes") or {}
     name = attrs.get("name") or (e.get("Actor") or {}).get("ID", "")[:12]
     t = e.get("time") or time.time()
+    if typ == "container" and (attrs.get("pocketadm.helper") or name.startswith(
+            ("pocketadm-exec-", "pocketadm-write-", "pocketadm-host-", "pocketadm-term-"))):
+        return None                 # the assistant's command runners, a terminal tab
+    if typ == "volume" and action == "destroy" and attrs.get("driver") == "local" \
+            and len((e.get("Actor") or {}).get("ID", "")) == 64:
+        return None                 # the anonymous volume of a removed helper
     if typ == "container":
         if action == "health_status":
             status = (e.get("Action") or "").split(":")[-1].strip()

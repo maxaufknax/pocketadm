@@ -15,7 +15,8 @@ from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
                servicegroups, sessions, skills, snapshots, sysinfo, terminal, termsessions,
                tls, updates)
-from . import accounts, activity, channel, files, push, signin, watch
+from . import (accounts, activity, channel, files, inventory, memory, push, signin,
+               suggestions, uploads, watch)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -233,7 +234,10 @@ async def ws_ticket():
 
 FEATURES = ["services", "container_live", "activity", "storage", "files_v2", "watch",
             "accounts", "routes", "chat_manage", "health_v2", "update_details_v2",
-            "watch_channel", "push", "files_manage", "chat_presence", "update_explain_v2"]
+            "watch_channel", "push", "files_manage", "chat_presence", "update_explain_v2",
+            # 0.26: notes instead of one memory text, the server inventory with
+            # systemd units, suggestions from the server's state, Vibe models
+            "notes", "inventory", "units", "suggestions", "vibe_models", "chat_attachments"]
 
 
 @app.get("/api/me", dependencies=[authed])
@@ -281,7 +285,8 @@ _image_refs: dict = {}   # container id -> the image it was created from (servic
 
 
 async def _annotated_containers() -> tuple[list[dict], list[dict]]:
-    result = await dockerapi.list_containers()
+    # PocketADM's own command runners and terminal shells are not services
+    result = [c for c in await dockerapi.list_containers() if not c.get("helper")]
     await servicegroups.resolve_images(result, _image_refs)
     groups = servicegroups.annotate(result)
     return result, groups
@@ -1118,7 +1123,7 @@ async def ai_set_route(body: RouteBody):
 async def ai_models():
     # API providers, then the coding-agent CLIs installed on this server
     # (Claude Code, Codex), which run on their own login — see engines.py
-    return {"providers": await ai.list_models() + engines.providers(),
+    return {"providers": await ai.list_models() + await engines.providers_live(),
             "default": config.get_ai_default()}
 
 
@@ -1964,6 +1969,126 @@ class MemoryBody(BaseModel):
 async def set_agent_memory(body: MemoryBody):
     ai.save_memory(body.memory)
     return {"ok": True}
+
+
+# ------------------------------------------------------- notes (0.26)
+
+@app.get("/api/agent/notes", dependencies=[authed])
+async def agent_notes():
+    return memory.overview()
+
+
+class NoteBody(BaseModel):
+    text: str = ""
+    topic: str = ""
+    subject: str | None = None
+    pinned: bool | None = None
+
+
+@app.post("/api/agent/notes", dependencies=[authed])
+async def add_agent_note(body: NoteBody):
+    try:
+        note, what = memory.add(body.text, topic=body.topic, subject=body.subject or "",
+                                source="you", pinned=bool(body.pinned))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit.record("agent_note", target=note["id"], detail=what)
+    return {**memory.overview(), "note": note, "result": what}
+
+
+@app.patch("/api/agent/notes/{note_id}", dependencies=[authed])
+async def edit_agent_note(note_id: str, body: NoteBody):
+    try:
+        note = memory.edit(note_id, text=body.text or None, topic=body.topic or None,
+                           pinned=body.pinned, subject=body.subject)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not note:
+        raise HTTPException(404, "No such note")
+    return {**memory.overview(), "note": note}
+
+
+@app.delete("/api/agent/notes/{note_id}", dependencies=[authed])
+async def delete_agent_note(note_id: str):
+    if not memory.forget(note_id):
+        raise HTTPException(404, "No such note")
+    audit.record("agent_note_delete", target=note_id)
+    return memory.overview()
+
+
+@app.post("/api/agent/notes/tidy", dependencies=[authed])
+async def tidy_agent_notes():
+    result = await memory.tidy()
+    audit.record("agent_notes_tidy", detail=f"{result['before']} → {result['after']} notes")
+    return {**memory.overview(), "tidy": result}
+
+
+@app.post("/api/agent/notes/undo", dependencies=[authed])
+async def undo_agent_notes():
+    if not memory.undo():
+        raise HTTPException(409, "Nothing to undo")
+    return memory.overview()
+
+
+@app.post("/api/agent/notes/clear", dependencies=[authed])
+async def clear_agent_notes():
+    memory.clear()
+    audit.record("agent_notes_clear")
+    return memory.overview()
+
+
+# ------------------------------------------------------- server inventory (0.26)
+
+@app.get("/api/inventory", dependencies=[authed])
+async def server_inventory(refresh: bool = False):
+    """Everything on the server at a glance: stacks, domains, systemd units and
+    timers, cron jobs, drives — discovered, not configured."""
+    return await inventory.build(force=refresh)
+
+
+@app.get("/api/system/units/{unit}", dependencies=[authed])
+async def system_unit(unit: str, lines: int = 120):
+    try:
+        return await inventory.unit_detail(unit, lines)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/system/units/{unit}/{action}", dependencies=[authed])
+async def system_unit_action(unit: str, action: str):
+    if not inventory.valid_unit(unit) or action not in inventory.UNIT_ACTIONS:
+        raise HTTPException(400, "Unknown unit or action")
+    result = await inventory.unit_action(unit, action)
+    audit.record("unit_" + action, target=unit, status="ok" if result["ok"] else "error",
+                 detail=result["output"][:200])
+    if not result["ok"]:
+        raise HTTPException(500, result["output"] or f"systemctl {action} failed")
+    return {**result, **(await inventory.unit_detail(unit, 60))}
+
+
+@app.post("/api/chat/upload", dependencies=[authed])
+async def chat_upload(request: Request, name: str):
+    """A file attached in the assistant chat (the body is the file). Stored
+    where every assistant can open it; see uploads.py."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > uploads.MAX_BYTES:
+            raise HTTPException(413, f"Files can be up to {uploads.MAX_BYTES // (1024 * 1024)} MB.")
+    if not data:
+        raise HTTPException(400, "The file is empty.")
+    try:
+        result = await asyncio.to_thread(uploads.save, name, bytes(data))
+    except (OSError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    audit.record("chat_upload", target=result["path"], detail=f"{result['size']} bytes")
+    return result
+
+
+@app.get("/api/ai/suggestions", dependencies=[authed])
+async def ai_suggestions():
+    """What to ask the assistant now, from the server's state (no AI call)."""
+    return {"suggestions": await suggestions.build()}
 
 
 @app.get("/api/agent/instructions", dependencies=[authed])

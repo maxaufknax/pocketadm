@@ -69,6 +69,10 @@ async def list_containers(all_: bool = True) -> list[dict]:
             # container, or relative bind mounts would resolve under /host.
             "compose_dir": labels.get("com.docker.compose.project.working_dir", ""),
             "created": c.get("Created", 0),
+            # PocketADM's own command runners and terminal shells (hostrun,
+            # terminal.py): plumbing, not a service of the server
+            "helper": bool(labels.get("pocketadm.helper"))
+                      or str(c.get("Command", "")).startswith("chroot /host"),
             "mounts_docker_sock": any(
                 m.get("Source") == "/var/run/docker.sock" for m in c.get("Mounts", [])),
         })

@@ -5,12 +5,28 @@ server-side and survive the phone locking its screen. Clients follow
 progress via a chunked text stream and can re-attach at any time.
 """
 import asyncio
+import json
 import secrets
 import time
 from typing import AsyncIterator, Awaitable, Callable
 
 _jobs: dict[str, "Job"] = {}
 MAX_JOBS = 40
+HISTORY_KEEP = 300      # finished jobs kept on disk, for "how did the update go?"
+
+
+def _remember(job: "Job") -> None:
+    """Keep a finished job's outcome after a restart (records.py reads it)."""
+    from . import config
+    path = config.DATA_DIR / "jobs-history.jsonl"
+    try:
+        with open(path, "a") as fh:
+            fh.write(json.dumps(job.as_dict(tail=30)) + "\n")
+        lines = path.read_text(errors="replace").splitlines()
+        if len(lines) > HISTORY_KEEP * 1.5:
+            path.write_text("\n".join(lines[-HISTORY_KEEP:]) + "\n")
+    except OSError:
+        pass
 
 
 class Job:
@@ -45,6 +61,7 @@ class Job:
         self.status = "done" if ok else "error"
         self.finished = time.time()
         self._event.set()
+        _remember(self)
 
     def as_dict(self, tail: int = 40) -> dict:
         return {"id": self.id, "title": self.title, "kind": self.kind,

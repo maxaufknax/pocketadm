@@ -3,6 +3,64 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.26.0 — The server at a glance · an assistant that knows it · notes · attachments · themes
+
+**The server at a glance.** `GET /api/inventory` finds what an admin keeps in their head, on any
+server: the domains and the service each leads to (read from the reverse proxy that is actually
+running — Nginx Proxy Manager's database, a Caddyfile, Traefik labels, nginx sites), the systemd
+services and timers someone set up (plus SSH, Docker, the firewall and other infrastructure, and
+anything that failed) with their state and next run, cron jobs, compose stacks with their
+folders, and the drives. `GET /api/system/units/{unit}` shows a unit with its journal,
+`POST /api/system/units/{unit}/{start|stop|restart|enable|disable}` acts on it (audited).
+
+**An assistant that knows the server.** It reads PocketADM's own records instead of guessing:
+the new `pocketadm` tool answers "did my updates go well?" from the update runs, their jobs (now
+kept after a restart) and the state of the updated services; "why is the disk filling up?" from
+the metrics history with its trend and the biggest jumps; and covers activity, audit, health,
+storage and the watch. The server map now lists domains, systemd units, timers, cron and drives.
+The system prompt says PocketADM, asks for evidence before "it worked", and names how host
+services are handled. Commands the assistant runs on the host share the host's processes now,
+so `systemctl` and `journalctl` work (they could not reach systemd before); the assistant's own
+command runners and terminal shells no longer show up as containers or fill the activity feed.
+
+**Claude Code, Codex and Vibe get the same knowledge**: the server map, the notes, the saved
+how-tos and the owner's instructions, and a `pocketadm` command in the container for the records,
+for notes and for running a command on the host (`pocketadm host '<command>'`, judged by the same
+read-only rules).
+
+**Notes instead of one memory text.** The assistant's memory was a growing Markdown file. It is
+a list of short facts now, each with a topic, an optional subject, who wrote it and when it was
+last confirmed: `remember` saves one fact (a near-identical one refreshes the existing note instead
+of duplicating it, a correction names the note it replaces), `forget` drops one, notes with
+credentials are refused. The prompt carries them grouped by topic, pinned and recent first,
+within a budget. "Tidy up" merges duplicates and drops what is outdated, with one undo. The old
+file is converted once. `GET/POST /api/agent/notes`, `PATCH/DELETE /api/agent/notes/{id}`,
+`POST /api/agent/notes/{tidy|undo|clear}`; `/api/agent/memory` still reads and writes the text.
+
+**Attachments in the chat.** `POST /api/chat/upload` stores a picture or file from the phone where
+every assistant can open it (`/var/lib/pocketadm/uploads`, kept 30 days). Pictures go to models
+that see images (Claude, OpenAI, Mistral and OpenRouter formats); a model that refuses them gets
+the path instead, and the turn goes on. Context attached to a message shows as chips, not as text.
+
+**Subscriptions.** Signing in to Claude runs `claude auth login` instead of driving the
+terminal UI of `setup-token`: the server could not read Claude Code's answer once its loading
+animation had filled the buffer, so every rejected code looked like "no reaction", and the next
+paste hit a sign-in page that Claude Code had already replaced. Now a code is checked before it is
+spent (both halves, from the current page), Claude's reason is shown, a fresh page comes with it,
+and a token made with `claude setup-token` elsewhere can be pasted instead. Mistral Vibe runs any
+model the Vibe sign-in reaches, and — billed per use — the ones only the Mistral API key reaches
+(GLM, Mistral Large); the Mistral API provider lists GLM too, by names people know.
+
+**Fixed:** "Remove key" stored its `-` as the key itself, so a provider looked connected forever
+(the placeholder is cleaned up on start); Codex counted "Not logged in" as signed in. Every answer
+records who wrote it; suggestions for the assistant come from the server's state
+(`GET /api/ai/suggestions`).
+
+**iPhone app 2.0** (new build): Server overview; themes (Midnight, Ocean, Aurora, Forest, Sunset,
+Terminal, Nord, Paper, Arctic, Rosé); assistant behaviour with notes, how-tos, the server map and
+instructions; attachments; model choice for Vibe; the model under each answer; a clearer Claude
+sign-in.
+
 ## v0.25.0 — The watch as a conversation · push · files you manage · notes that say what changes
 
 **The watch is a conversation now.** Its messages form one channel, newest at the bottom like

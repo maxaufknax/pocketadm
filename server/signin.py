@@ -6,10 +6,14 @@ prompts expect a browser on the same machine. Each CLI has a way that works
 across devices; this module drives it and hands the phone the one step only a
 person can do:
 
-  * Claude Code — `claude setup-token`: the CLI prints a claude.ai link, the
-    person signs in and copies the code the page shows, the CLI turns it into a
-    long-lived token. PocketADM keeps the token (settings, never sent back out)
-    and gives it to every Claude Code run as CLAUDE_CODE_OAUTH_TOKEN.
+  * Claude Code — `claude auth login --claudeai`, through plain pipes: the CLI
+    prints a claude.com link, the person signs in and copies the code the page
+    shows, PocketADM hands it to the CLI on stdin and the CLI stores the login
+    itself (exit code 0). A code that does not work is answered with the CLI's
+    own reason and a fresh link, because the code was bound to the old one.
+    A token made elsewhere with `claude setup-token` can be pasted instead;
+    PocketADM keeps that one (settings, never sent back out) and gives it to
+    every Claude Code run as CLAUDE_CODE_OAUTH_TOKEN.
   * Codex — `codex login --device-auth`: a link and a one-time code to type
     there; the CLI notices on its own when the sign-in is done.
   * Mistral Vibe — the Agent Client Protocol's delegated browser sign-in
@@ -32,6 +36,7 @@ import secrets
 import struct
 import termios
 import time
+import urllib.parse
 
 from . import audit, clis, config, engines
 
@@ -42,6 +47,8 @@ FLOWS: dict[str, "Flow"] = {}
 CLI_FOR = {"claude-code": "claude", "codex": "codex", "mistral-vibe": "mistral"}
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+# terminal UIs (Ink) move the cursor instead of printing spaces
+_CURSOR_RIGHT = re.compile(r"\x1b\[(\d*)C")
 _OSC8 = re.compile(r"\x1b\]8;[^;]*;([^\x07\x1b]+)(?:\x07|\x1b\\)")
 _URL = re.compile(r"https://[^\s\"'<>\x1b\x07]+")
 _CLAUDE_TOKEN = re.compile(r"sk-ant-oat\d*-[A-Za-z0-9_\-]{20,}")
@@ -64,17 +71,20 @@ class Flow:
         self.proc: asyncio.subprocess.Process | None = None
         self.master: int | None = None
         self.output = ""
+        self.seen = 0               # characters read in total (output keeps the tail)
+        self.attempt = 1
         self.code_event = asyncio.Event()
         self.code = ""
 
     def as_dict(self) -> dict:
         return {"id": self.id, "engine": self.engine, "state": self.state, "url": self.url,
                 "user_code": self.user_code, "message": self.message, "error": self.error,
-                "needs_code": self.state == "waiting_code",
+                "needs_code": self.state == "waiting_code", "attempt": self.attempt,
                 "expires": self.expires, "label": engines.ENGINES[self.engine]["label"]}
 
 
 def clean(text: str) -> str:
+    text = _CURSOR_RIGHT.sub(lambda m: " " * int(m.group(1) or 1), text)
     return _ANSI.sub("", text).replace("\r", "")
 
 
@@ -221,6 +231,7 @@ async def _read_pty(flow: Flow, wait: float = 0.3) -> str:
         except OSError:
             break
     text = "".join(chunks)
+    flow.seen += len(text)
     flow.output = (flow.output + text)[-20000:]
     return text
 
@@ -230,63 +241,166 @@ def _write_pty(flow: Flow, text: str) -> None:
         os.write(flow.master, text.encode())
 
 
-# prompts a fresh Claude Code may show before the sign-in link
-_CONTINUE = re.compile(r"(press enter|enter to continue|choose the text style|"
-                       r"select.*(theme|style)|dark mode|let's get started)", re.I)
+_CLAUDE_KEY = re.compile(r"sk-ant-api\d*-[A-Za-z0-9_\-]{20,}")
+_LOGIN_FAILED = re.compile(r"(?:login failed|oauth error|error)\s*:\s*(.+)", re.I)
+
+
+def claude_code_problem(code: str, url: str) -> str:
+    """Why a pasted Claude code cannot work, before the CLI spends it — or "".
+
+    The page shows `CODE#STATE`. Claude Code needs both halves, and the state
+    names the sign-in page the code came from: a code from an older page fails
+    on Anthropic's side with nothing but "status code 400"."""
+    if _CLAUDE_KEY.search(code):
+        return ("That is an API key, not a sign-in code. Paste it under API key on the "
+                "previous screen instead.")
+    if "#" not in code:
+        return ("That is only part of the code. Tap Copy Code on Claude's page — the "
+                "whole code has a # in the middle.")
+    state = code.rsplit("#", 1)[1].strip()
+    wanted = (urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("state") or [""])[0]
+    if wanted and state and state != wanted:
+        return ("That code belongs to an older sign-in page. Open the sign-in page again "
+                "and copy the code it shows now.")
+    return ""
+
+
+def normalize_claude_code(text: str) -> str:
+    """What people paste: the code, the code in quotes, or the whole callback
+    address (…/oauth/code/callback?code=X&state=Y)."""
+    text = (text or "").strip().strip("'\"` ")
+    if text.startswith("http"):
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(text).query)
+        code, state = (query.get("code") or [""])[0], (query.get("state") or [""])[0]
+        if code and state:
+            return f"{code}#{state}"
+    return "".join(text.split())
+
+
+async def _claude_login(flow: Flow) -> None:
+    """Start `claude auth login --claudeai` and wait for its sign-in link."""
+    if flow.proc and flow.proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            flow.proc.kill()
+    env = engines._env()
+    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)       # a stale token would shadow the new login
+    env.update({"BROWSER": "/bin/false", "NO_COLOR": "1"})
+    flow.proc = await asyncio.create_subprocess_exec(
+        engines.binary("claude-code"), "auth", "login", "--claudeai",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT, env=env, cwd=str(clis.terminal.PERSIST_HOME))
+    said: list[str] = []
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        try:
+            line = await asyncio.wait_for(flow.proc.stdout.readline(),
+                                          max(0.5, deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            break
+        if not line:
+            break
+        text = clean(line.decode("utf-8", "replace"))
+        said.append(text.strip())
+        url = find_url(text, ("oauth/authorize",))
+        if url and "authorize" in url:
+            flow.url = url
+            return
+    tail = " ".join(" ".join(said).split())[-300:]
+    raise RuntimeError("Claude Code did not hand out a sign-in link." + (f" It said: {tail}" if tail else ""))
+
+
+async def _claude_logged_in() -> dict:
+    """`claude auth status --json`, as the CLI sees its stored login."""
+    code, text = await _run([engines.binary("claude-code"), "auth", "status", "--json"])
+    try:
+        return json.loads(text[text.index("{"):])
+    except ValueError:
+        return {}
+
+
+async def _claude_token(flow: Flow, token: str) -> bool:
+    """A long-lived token made with `claude setup-token` somewhere else: check it
+    with a one-line request, keep it if Claude answers."""
+    flow.state, flow.message = "verifying", "Checking the token with Claude …"
+    env = engines._env()
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            engines.binary("claude-code"), "-p", "Reply with the single word OK.",
+            "--max-turns", "1", "--output-format", "json",
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT, env=env, cwd=str(clis.terminal.PERSIST_HOME))
+        out, _ = await asyncio.wait_for(proc.communicate(), 120)
+    except (OSError, asyncio.TimeoutError):
+        flow.state, flow.message = "waiting_code", "Claude did not answer in time. Try the token again."
+        return False
+    text = out.decode("utf-8", "replace")
+    try:
+        result = json.loads(text[text.index("{"):])
+    except ValueError:
+        result = {}
+    if proc.returncode == 0 and not result.get("is_error"):
+        config.set_engine_token("claude-code", token)
+        flow.state, flow.message = "done", "Claude is connected."
+        return True
+    reason = str(result.get("result") or " ".join(clean(text).split()))[-200:]
+    flow.state = "waiting_code"
+    flow.message = "Claude did not accept this token" + (f": {reason}" if reason else ".")
+    return False
 
 
 async def _claude(flow: Flow) -> None:
     flow.state = "starting"
     flow.message = "Asking Claude Code for a sign-in link …"
-    flow.proc, flow.master = await _spawn_pty([engines.binary("claude-code"), "setup-token"])
-    nudges = 0
-    while flow.proc.returncode is None and time.time() < flow.expires:
-        await _read_pty(flow)
-        plain = clean(flow.output)
-        token = _CLAUDE_TOKEN.search(plain)
-        if token:
-            config.set_engine_token("claude-code", token.group(0))
-            flow.state, flow.message = "done", "Claude is connected."
+    await _claude_login(flow)
+    flow.state = "waiting_code"
+    flow.message = "Sign in on the page that opens, then copy the code it shows and paste it here."
+    while time.time() < flow.expires:
+        try:
+            await asyncio.wait_for(flow.code_event.wait(), 5)
+        except asyncio.TimeoutError:
+            if flow.proc and flow.proc.returncode is not None and flow.state == "waiting_code":
+                # the CLI gave up waiting (it has its own timeout): a fresh link
+                await _claude_login(flow)
+                flow.attempt += 1
+            continue
+        flow.code_event.clear()
+        code, flow.code = normalize_claude_code(flow.code), ""
+        if _CLAUDE_TOKEN.fullmatch(code):
+            if await _claude_token(flow, code):
+                return
+            continue
+        problem = claude_code_problem(code, flow.url)
+        if problem:
+            flow.state, flow.message = "waiting_code", problem
+            continue
+        try:
+            flow.proc.stdin.write((code + "\n").encode())
+            await flow.proc.stdin.drain()
+            out = await asyncio.wait_for(flow.proc.stdout.read(), 120)
+            await asyncio.wait_for(flow.proc.wait(), 10)
+        except (OSError, ConnectionError, asyncio.TimeoutError):
+            out = b""
+        said = " ".join(clean(out.decode("utf-8", "replace")).replace("Paste code here if prompted >", "").split())
+        if flow.proc.returncode == 0:
+            # the CLI stores its own login now; an older pasted token must not shadow it
+            config.set_engine_token("claude-code", "")
+            status = await _claude_logged_in()
+            if status and not status.get("loggedIn"):
+                raise RuntimeError("Claude Code reported success but is not signed in. " + said[-200:])
+            plan = str(status.get("subscriptionType") or "")
+            flow.state = "done"
+            flow.message = "Claude is connected" + (f" ({plan.capitalize()})." if plan else ".")
             return
-        if not flow.url:
-            url = find_url(flow.output, ("oauth/authorize", "claude.ai", "anthropic.com"))
-            if url and "authorize" in url:
-                flow.url = url
-                flow.state = "waiting_code"
-                flow.message = ("Sign in on the page that opens, then copy the code it shows "
-                                "and paste it here.")
-            elif _CONTINUE.search(plain[-600:]) and nudges < 6:
-                nudges += 1
-                _write_pty(flow, "\r")
-                await asyncio.sleep(0.5)
-        if flow.code_event.is_set():
-            flow.code_event.clear()
-            before = len(flow.output)
-            _write_pty(flow, flow.code + "\r")
-            flow.code = ""
-            for _ in range(60):                      # up to ~20 s for the exchange
-                await _read_pty(flow)
-                fresh = clean(flow.output[before:])
-                if _CLAUDE_TOKEN.search(clean(flow.output)):
-                    break
-                if re.search(r"(invalid|expired|error|failed)", fresh, re.I):
-                    flow.state = "waiting_code"
-                    flow.message = "That code did not work. Copy the newest code from the page and try again."
-                    break
-                if flow.proc.returncode is not None:
-                    break
-            else:
-                flow.state = "waiting_code"
-                flow.message = "Claude Code did not react to the code. Paste it once more."
-        await asyncio.sleep(0.2)
-    await _read_pty(flow)
-    token = _CLAUDE_TOKEN.search(clean(flow.output))
-    if token:
-        config.set_engine_token("claude-code", token.group(0))
-        flow.state, flow.message = "done", "Claude is connected."
-        return
-    tail = " ".join(clean(flow.output).split())[-300:]
-    raise RuntimeError("Claude Code did not finish the sign-in." + (f" It said: {tail}" if tail else ""))
+        found = _LOGIN_FAILED.search(said)
+        reason = (found.group(1) if found else said or "no reason given").strip()[:200]
+        # The code was spent on, and bound to, that sign-in page: start a fresh one.
+        await _claude_login(flow)
+        flow.attempt += 1
+        flow.state = "waiting_code"
+        flow.message = (f"Claude did not accept that code ({reason}). The sign-in page is new now: "
+                        "open it again, sign in, and paste the code it shows.")
+    raise RuntimeError("The sign-in took too long. Start it again.")
 
 
 async def _codex(flow: Flow) -> None:

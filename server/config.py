@@ -4,7 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
-VERSION = "0.25.0"
+VERSION = "0.26.0"
 
 DATA_DIR = Path(os.environ.get("HELMSMAN_DATA", "/data")).resolve()
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -49,6 +49,13 @@ if "ai_api_key" in settings and "ai_keys" not in settings:
     settings.pop("ai_base_url", None)
     save_settings(settings)
 
+# Before 0.26 "Remove key" stored its "-" clear sign as the key itself, so the
+# provider looked connected forever. Drop those placeholders.
+if any(str(v).strip() in ("", "-") for v in (settings.get("ai_keys") or {}).values()):
+    settings["ai_keys"] = {p: v for p, v in settings["ai_keys"].items()
+                           if str(v).strip() not in ("", "-")}
+    save_settings(settings)
+
 
 def get_secret() -> bytes:
     """Signing secret for session tokens, generated on first run."""
@@ -63,21 +70,35 @@ def get_secret() -> bytes:
 PROVIDERS = ("anthropic", "openrouter", "openai", "mistral")
 
 
+CLEAR_KEY = "-"     # what the apps send to remove a stored key
+
+
 def get_key(provider: str) -> str:
     """API key for a provider. Env var wins over UI-stored settings."""
     if os.environ.get("AI_PROVIDER") == provider and os.environ.get("AI_API_KEY"):
         return os.environ["AI_API_KEY"]
     env = os.environ.get(f"{provider.upper()}_API_KEY", "")
-    return env or settings.get("ai_keys", {}).get(provider, "")
+    stored = str(settings.get("ai_keys", {}).get(provider, "") or "").strip()
+    return env or ("" if stored == CLEAR_KEY else stored)
+
+
+def key_from_env(provider: str) -> bool:
+    """A key set in the container's environment: the apps cannot remove it."""
+    return bool(os.environ.get(f"{provider.upper()}_API_KEY")
+                or (os.environ.get("AI_PROVIDER") == provider and os.environ.get("AI_API_KEY")))
 
 
 def set_keys(keys: dict[str, str]) -> None:
+    """provider -> key; "" leaves a stored key alone, "-" removes it."""
     stored = settings.setdefault("ai_keys", {})
     for prov, key in keys.items():
-        if prov in PROVIDERS and key:
-            stored[prov] = key
-        elif prov in PROVIDERS and key == "-":  # "-" clears a key
+        if prov not in PROVIDERS:
+            continue
+        key = (key or "").strip()
+        if key == CLEAR_KEY:
             stored.pop(prov, None)
+        elif key:
+            stored[prov] = key
     save_settings(settings)
 
 

@@ -703,7 +703,29 @@ def _segment_read_only(segment: str) -> bool:
     if cmd in ("bash", "sh", "zsh", "dash"):
         m = re.search(r"(?:^|\s)-\w*c\s+(['\"])(.*)\1", outer, re.S)
         return bool(m) and is_read_only(m.group(2))
+    if cmd == "pocketadm":
+        sub = (args[0].lower() if args else "")
+        if sub in _POCKETADM_READ:
+            return True             # its records and notes; notes are not the server
+        if sub == "host":
+            # the shell splits the words, the CLI joins them with spaces and
+            # hands that to bash -c on the host: judge exactly that string
+            try:
+                words = _strip_wrappers(shlex.split(outer, posix=True)) or []
+            except ValueError:
+                return False
+            inner = words[words.index("host") + 1:] if "host" in words else []
+            while inner and inner[0].startswith("--timeout"):
+                inner = inner[2:] if inner[0] == "--timeout" else inner[1:]
+            return bool(inner) and is_read_only(" ".join(inner))
+        return False
     return False
+
+
+# `pocketadm` subcommands that only read (records, notes, the map) or touch
+# the assistant's own notes — see server/cli.py
+_POCKETADM_READ = {"overview", "updates", "activity", "audit", "health", "metrics", "storage",
+                   "jobs", "watch", "notes", "map", "remember", "forget", "-h", "--help"}
 
 
 def is_read_only(command: str) -> bool:
