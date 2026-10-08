@@ -142,6 +142,7 @@ struct ToolCall: Hashable {
     static let readOnlyTools: Set<String> = [
         "read_file", "list_dir", "search_files", "fetch_url", "update_plan",
         "read_skill", "docker_ps", "container_logs", "system_info",
+        "pocketadm", "remember", "forget",
     ]
 
     var symbol: String {
@@ -152,6 +153,8 @@ struct ToolCall: Hashable {
         case "list_dir", "search_files":      return "folder"
         case "fetch_url":                     return "globe"
         case "update_plan":                   return "checklist"
+        case "pocketadm":                     return "clock.arrow.circlepath"
+        case "remember", "forget":            return "brain.head.profile"
         default:                              return isWrite ? "wrench.and.screwdriver" : "eye"
         }
     }
@@ -486,7 +489,8 @@ enum ChatProtocol {
     /// `{"command":"docker ps -a","timeout":60}` is unreadable; the command
     /// itself is the whole point.
     static func headline(tool: String, args: [String: Any]) -> String {
-        let preferred = ["command", "path", "file", "url", "query", "pattern", "name"]
+        let preferred = ["command", "path", "file", "url", "query", "pattern", "name",
+                         "fact", "topic", "id"]
         for key in preferred {
             if let value = args[key] as? String, !value.isEmpty {
                 return value

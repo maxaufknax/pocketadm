@@ -51,7 +51,7 @@ struct ToolGroup: Identifiable, Hashable {
     static func kind(of tool: String) -> String {
         switch tool {
         case "run_command":                      return "command"
-        case "read_file", "read_skill":          return "read"
+        case "read_file", "read_skill", "pocketadm": return "read"
         case "write_file", "edit_file":          return "change"
         case "list_dir", "search_files":         return "search"
         case "fetch_url":                        return "fetch"
