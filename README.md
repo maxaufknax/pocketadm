@@ -19,22 +19,33 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
 - **The watch:** an AI agent that keeps an eye on the server like a colleague — rounds every
   few hours, an investigation within minutes when something breaks (a crashed container, a
   failed unit, a filling disk, the internet dropping), a weekly look back — and writes only
-  when it is worth knowing, in plain sentences with the next step one tap away. Quiet hours,
-  daily limits, muted topics, pauses and a monthly budget are enforced in code; it can only
-  read. Messages land in the app, and optionally in ntfy and a Matrix room (Element).
+  when it is worth knowing: a short message with the details one tap away and the next step as
+  a button. Its messages form a **conversation** in the app: ask it anything ("why is the disk
+  so full?"), or tell it to be quiet about a topic or to pause, and it answers there. Quiet
+  hours, daily limits, muted topics, pauses and a monthly budget are enforced in code; it can
+  only read. Messages arrive as **push notifications** on the iPhone, and optionally in ntfy
+  and a Matrix room (Element).
 
 - **AI accounts:** connect your **Claude, ChatGPT or Mistral subscription from the phone** —
   PocketADM drives the provider's own CLI sign-in (Claude Code's `setup-token`, Codex's device
   login, Mistral Vibe's delegated sign-in) — or add API keys; then choose which AI runs the
   assistant, the watch and the explanations.
 
-- **Activity, live:** Docker events, SSH logins and failed attempts, sudo, apt, kernel
-  out-of-memory kills, drives plugged in, systemd failures, internet outages and every action
-  taken in PocketADM, as one live feed.
+- **Activity, live:** what happens on the server — Docker events, SSH logins and failed
+  attempts, sudo, apt, kernel out-of-memory kills, drives plugged in, systemd failures, internet
+  outages — and, as its own half, everything done in and through PocketADM.
 
-- **Files & drives:** every drive with how full it is (USB disks recognised), every folder
-  including hidden files, folder sizes, search, and previews or downloads of any file —
-  PocketADM's own credentials stay unreadable.
+- **Files like an editor's explorer:** opens on `/` (or the folders a server allows), folders
+  unfold in place, every drive on top with how full it is. Text files open in an editor (the
+  previous version is kept for an undo, and a file changed meanwhile is never overwritten),
+  everything else in a preview; upload from Files or Photos, create, rename, move, copy, unpack,
+  download a folder as a zip, change permissions, delete — system folders and PocketADM's own
+  credentials stay protected.
+
+- **Update notes that say what changes:** the installed and the new version (read from the
+  image's labels or its own `*_VERSION` variables), only the upstream releases in between —
+  release candidates left out, a rebuild of the same version called one — and an AI summary of
+  just those changes with the risk and a recommendation.
   
 - **Coding agents on your subscription:** run **Claude Code**, **Codex** or **Mistral Vibe**
   from the Assistant / Vibe chat, signed in with your own Claude, ChatGPT or Mistral plan — no
@@ -162,7 +173,7 @@ Prefer a prebuilt image? CI publishes a **multi-arch image (amd64 + arm64)** to
 | Tag | What you get |
 | --- | --- |
 | `:latest` | the newest commit on `main` |
-| `:0.24.0` | that exact release (versioned tags exist from v0.23.0 on) — **pin this** if you want to choose when to move |
+| `:0.25.0` | that exact release (versioned tags exist from v0.23.0 on) — **pin this** if you want to choose when to move |
 | `:0.23` | the newest 0.23.x patch |
 
 Pinning a version is the honest default for a server tool: `:latest` means a `docker compose
@@ -275,7 +286,8 @@ that is the point of a server manager, the same trust level as Portainer. So:
 - [x] **The watch** (an agent that writes only when it is worth knowing), **AI accounts**
   (subscriptions connected from the phone), **Mistral Vibe** engine, apps view, live activity,
   drives — **2.0 / v0.24**
-- [ ] Push notifications (APNs) for alerts and approvals in the iPhone app
+- [x] **The watch as a conversation**, push notifications through a relay that never sees
+  which server a phone belongs to, files you can manage, reconnecting chats — **2.0 / v0.25**
 - [ ] Domain / reverse-proxy automation: choose "reachable at sub.domain.tld" at install
   time, PocketADM wires up the proxy + DNS (script first, AI agent as fallback)
 - [ ] Backups: scheduled, verifiable snapshots of volumes + configs (biggest gap)

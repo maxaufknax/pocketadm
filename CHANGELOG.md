@@ -3,6 +3,51 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.25.0 — The watch as a conversation · push · files you manage · notes that say what changes
+
+**The watch is a conversation now.** Its messages form one channel, newest at the bottom like
+a chat in Element: short (one to three sentences, the background behind "Details"), with the
+next step as a button. Write to it — "why is the disk so full?", "stop telling me about the
+backups for a week", "be quiet tonight" — and it answers there, looking with its read-only
+tools first, and mutes, pauses or remembers when asked. It still cannot change anything; it
+says what the step is and hands it to the assistant. Turning the watch on retires the old
+Sentinel digests and greets once. `GET /api/watch/channel`, `POST /api/watch/chat`.
+
+**Push notifications.** The iPhone app registers its Apple push token with a small relay next
+to the website (`push-relay/`, `pocketadm.com/push`) and hands the server a random relay id.
+The server sends through the relay; the relay holds the Apple key, servers never see a device
+token, the relay never learns which server a phone belongs to and keeps nothing of a message.
+Previews can be turned off. What arrives: the watch's messages (from a chosen importance on),
+and the assistant when it waits for your OK, finishes or stops on an error while nobody has the
+chat open — the app says "away" before iOS suspends it. Where push cannot deliver, the app
+falls back to background refresh. `GET/POST/PATCH/DELETE /api/push/devices`, `POST /api/push/test`.
+
+**Update notes that say what changes.** Versions come from the image's own `*_VERSION`
+variables when the OCI label is missing (Redis, nginx, PostgreSQL …); without any version, the
+releases are chosen by build date; release candidates stay out unless the update is one; the
+same version rebuilt is said to be a rebuild without asking a model. The summary covers only
+those changes — up to four points, the risk, a recommendation — in the phone's language, and
+is cached per image digest and language.
+
+**Files you can manage.** Save text files (the previous version is kept for an undo; a file
+that changed since it was opened is never overwritten without asking), upload, create files
+and folders, rename, move, copy, unpack zip and tar archives, download a folder as a zip,
+change permissions and delete — new files belong to whoever owns the folder. System folders,
+the roots, home folders and PocketADM's own credentials cannot be deleted or moved; `/proc`,
+`/sys` and `/dev` are never written. `GET /api/fs/start` says where to open: `/` when
+PocketADM sees the whole server, otherwise its folders.
+
+**Also:** chats report whether the agent is still working or waiting (`/api/chats`), file reads
+carry their modification time and whether they may be changed, folders that are drives of their
+own are marked, the activity titles cover file and watch actions, and a time-of-day dependent
+test of the watch is stable now.
+
+**iPhone app 2.0** (same version, new build): reconnecting chats — leaving the app no longer
+ends in "Disconnected", the run and a pending approval come back — and the terminal re-attaches
+the same way; Markdown with tables, headings, lists, checklists, quotes and code blocks; the
+watch's channel with a reply field and notifications; activity in two halves (the server,
+PocketADM); a file explorer that opens on `/`; a new icon.
+
 ## v0.24.0 — The watch · AI accounts · apps · live activity
 
 **The watch replaces the digests.** The Sentinel loops sent a report every few hours whether

@@ -1,9 +1,12 @@
 import SwiftUI
+import UIKit
+import UserNotifications
 
 /// How the watch behaves: which AI it thinks with, how often it looks, when
 /// it stays quiet, where its messages go and what it should know.
 struct WatchSettingsView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var push: PushManager
 
     @State private var status: WatchStatus?
     @State private var draft = WatchSettings()
@@ -100,8 +103,10 @@ struct WatchSettingsView: View {
                 Text("0 means no limit. When the budget runs out it stops its rounds but still reacts to incidents only if money is left.")
             }
 
+            PhoneNotificationsSection()
+
             Section {
-                Picker("Push to your phone", selection: $draft.pushMin) {
+                Picker("Send to ntfy and Matrix", selection: $draft.pushMin) {
                     Text("Critical only").tag("critical")
                     Text("Important and critical").tag("important")
                     Text("Everything").tag("info")
@@ -111,9 +116,9 @@ struct WatchSettingsView: View {
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
             } header: {
-                Text("Notifications")
+                Text("Elsewhere")
             } footer: {
-                Text("Messages always appear under Alerts. With ntfy they also arrive as push notifications.")
+                Text("Optional: the same messages in the ntfy app or a Matrix room (Element).")
             }
 
             Section {
@@ -329,5 +334,126 @@ struct WatchSettingsView: View {
     private func forget() async {
         guard let client = app.client else { return }
         status = try? await client.clearWatchMemory()
+    }
+}
+
+
+/// Notifications on this iPhone: on or off, from which importance, the
+/// assistant, previews — and whether real push reaches this phone or the
+/// messages come with background refresh.
+struct PhoneNotificationsSection: View {
+    @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var push: PushManager
+    @State private var testing = false
+    /// The answer to the last tap, shown under the section (a toast on a
+    /// form section would draw on every row).
+    @State private var note: String?
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(get: { push.allowed && push.wanted },
+                                 set: { on in Task { await toggle(on) } })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Notifications on this iPhone")
+                    Text(stateLine)
+                        .font(.footnote)
+                        .foregroundStyle(stateTint)
+                }
+            }
+            .disabled(app.me?.demo == true)
+
+            if push.authorization == .denied {
+                Button("Allow notifications in Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+
+            if push.allowed && push.wanted {
+                Picker("Watch messages", selection: Binding(get: { push.minimum },
+                                                            set: { push.minimum = $0; sync() })) {
+                    Text("All").tag("info")
+                    Text("Important and critical").tag("important")
+                    Text("Critical only").tag("critical")
+                }
+                Toggle("When the assistant needs you", isOn: Binding(get: { push.assistant },
+                                                                    set: { push.assistant = $0; sync() }))
+                Toggle("Show the message text", isOn: Binding(get: { push.preview },
+                                                             set: { push.preview = $0; sync() }))
+                Button {
+                    Task { await test() }
+                } label: {
+                    HStack {
+                        Text("Send a test notification")
+                        if testing { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(testing)
+            }
+        } header: {
+            Text("This iPhone")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                if let note { Text(note).foregroundStyle(Theme.accent) }
+                Text("Messages always appear in the watch's channel. With the text hidden, a notification only says that there is news.")
+            }
+        }
+    }
+
+    private var stateLine: String {
+        if push.authorization == .denied { return "Turned off in the iOS settings" }
+        guard push.allowed && push.wanted else { return "The watch's messages and the assistant waiting for your OK" }
+        if push.pushActive { return "Push is on — messages arrive right away" }
+        if !app.supports("push") { return "This server sends no push yet — background refresh brings messages, a few minutes late" }
+        if push.relayID != nil && !push.relayReady {
+            return "Push is not live on the relay yet — background refresh brings messages, a few minutes late"
+        }
+        if let error = push.lastError, !error.isEmpty { return "Background refresh only (\(error))" }
+        return "Setting up…"
+    }
+
+    private var stateTint: Color {
+        if push.authorization == .denied { return Theme.warn }
+        return push.pushActive ? Theme.accent2 : Theme.muted
+    }
+
+    private func toggle(_ on: Bool) async {
+        if on {
+            if push.authorization == .denied, let url = URL(string: UIApplication.openSettingsURLString) {
+                _ = await UIApplication.shared.open(url)
+                return
+            }
+            if await push.enable() { note = "Notifications are on." }
+        } else {
+            await push.disable()
+        }
+    }
+
+    private func sync() {
+        Task { await push.registerWithServer() }
+    }
+
+    private func test() async {
+        testing = true
+        defer { testing = false }
+        if push.pushActive, let client = app.client {
+            do {
+                try await client.testPush()
+                note = "Sent — it should arrive in a moment."
+            } catch {
+                note = error.localizedDescription
+            }
+        } else {
+            let content = UNMutableNotificationContent()
+            content.title = "Test notification"
+            content.body = "This is how the watch's messages look on this iPhone."
+            content.sound = .default
+            content.userInfo = ["pocketadm": ["kind": "watch"]]
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content,
+                                                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false))
+            try? await UNUserNotificationCenter.current().add(request)
+            note = "Lock the phone — it arrives in three seconds."
+        }
     }
 }

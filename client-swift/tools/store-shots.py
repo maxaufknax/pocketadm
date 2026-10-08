@@ -9,8 +9,8 @@ look of the hand-made 1.x store images. One set per language, at 1284 x 2778
 
     python3 tools/store-shots.py RAW_DIR OUT_DIR [--locales en-US,de-DE]
 
-RAW_DIR holds raw-<tab>.png (dashboard, assistant, containers, terminal,
-more); OUT_DIR/<locale>/01-dashboard.png … are written. Pillow is the only
+RAW_DIR holds raw-<name>.png (dashboard, assistant, watch, files, containers,
+terminal); OUT_DIR/<locale>/01-dashboard.png … are written. Pillow is the only
 dependency; the fonts (Inter, SIL OFL) ship in AppStore/fonts.
 """
 from __future__ import annotations
@@ -32,17 +32,19 @@ CAPTIONS = {
         ("dashboard", ["Your server,", "{in your pocket.}"], ""),
         ("assistant", ["An {AI agent}", "that works on", "your server"],
          "+ your own key or Claude / Codex plan"),
+        ("watch", ["A {watch} that", "writes when", "it matters"], "and answers when you ask it"),
+        ("files", ["Every {file},", "like in an editor"], ""),
         ("containers", ["Every {container},", "one tap away"], ""),
         ("terminal", ["A {real terminal},", "wherever you are"], ""),
-        ("more", ["Updates, apps", "and {health checks}"], ""),
     ],
     "de-DE": [
         ("dashboard", ["Dein Server,", "{in deiner Tasche.}"], ""),
         ("assistant", ["Ein {KI-Agent},", "der auf deinem", "Server arbeitet"],
          "+ eigener Key oder Claude-/Codex-Abo"),
+        ("watch", ["Ein {Wächter},", "der schreibt, wenn", "es wichtig ist"], "und antwortet, wenn du fragst"),
+        ("files", ["Jede {Datei},", "wie im Editor"], ""),
         ("containers", ["Jeder {Container},", "nur einen Tipp entfernt"], ""),
         ("terminal", ["Ein {echtes Terminal},", "wo immer du bist"], ""),
-        ("more", ["Updates, Apps", "und {Health-Checks}"], ""),
     ],
 }
 

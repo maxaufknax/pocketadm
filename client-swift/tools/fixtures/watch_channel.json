@@ -1,0 +1,135 @@
+{
+    "messages": [
+        {
+            "id": "m1695936c15",
+            "t": 1791197817.4989355,
+            "role": "watch",
+            "text": "I am keeping an eye on this server now. I write when something is worth knowing \u2014 usually rarely, and only critical things at night. Ask me anything here.",
+            "detail": "",
+            "title": "The watch is on",
+            "importance": "info",
+            "topic": "",
+            "kind": "system",
+            "actions": [],
+            "feedback": "",
+            "reply_to": ""
+        },
+        {
+            "id": "m7e03136cb4",
+            "t": 1791284217.4989355,
+            "role": "watch",
+            "text": "Nextcloud was down for four minutes at 14:02 \u2014 its database ran out of connections. It recovered on its own when the cron job finished.",
+            "detail": "MariaDB logged \"Too many connections\" 312 times between 14:02 and 14:06. If it happens again, raise max_connections from 100 to 200 in the MariaDB config.",
+            "title": "Nextcloud was down briefly",
+            "importance": "critical",
+            "topic": "nextcloud-down",
+            "kind": "incident",
+            "actions": [
+                {
+                    "kind": "container",
+                    "label": "Open nextcloud",
+                    "target": "nextcloud"
+                }
+            ],
+            "feedback": "",
+            "reply_to": ""
+        },
+        {
+            "id": "me7ebb66739",
+            "t": 1791385017.4989355,
+            "role": "watch",
+            "text": "The disk fills up in about six weeks at this pace \u2014 mostly Jellyfin's transcode cache.",
+            "detail": "Root is at 78% and grew by 2.1 GB a day this week. Clearing /var/lib/jellyfin/transcodes frees about 9 GB.",
+            "title": "Disk full in about six weeks",
+            "importance": "info",
+            "topic": "disk-trend",
+            "kind": "observe",
+            "actions": [
+                {
+                    "kind": "open",
+                    "label": "Storage",
+                    "target": "storage"
+                }
+            ],
+            "feedback": "",
+            "reply_to": ""
+        },
+        {
+            "id": "md89c98d04c",
+            "t": 1791388617.4989355,
+            "role": "user",
+            "text": "Is it safe to delete the transcode cache?",
+            "detail": "",
+            "title": "",
+            "importance": "info",
+            "topic": "",
+            "kind": "chat",
+            "actions": [],
+            "feedback": "",
+            "reply_to": ""
+        },
+        {
+            "id": "m9694ce8931",
+            "t": 1791388657.4989355,
+            "role": "watch",
+            "text": "Yes \u2014 Jellyfin rebuilds it when someone watches something. Nothing is playing right now, so now is a good time.",
+            "detail": "",
+            "title": "",
+            "importance": "info",
+            "topic": "",
+            "kind": "chat",
+            "actions": [
+                {
+                    "kind": "container",
+                    "label": "Open jellyfin",
+                    "target": "jellyfin"
+                }
+            ],
+            "feedback": "",
+            "reply_to": ""
+        },
+        {
+            "id": "m6059698f09",
+            "t": 1791449817.4989355,
+            "role": "watch",
+            "text": "The vault backup has not run for a week: the backup container exits right away because its target drive is not mounted.",
+            "detail": "backup-runner exited with code 1 every night since Tuesday (\"/mnt/backup: no such device\"). Plug the USB drive back in, then run `docker start backup-runner`.",
+            "title": "No vault backup for a week",
+            "importance": "important",
+            "topic": "backup",
+            "kind": "incident",
+            "actions": [
+                {
+                    "kind": "container",
+                    "label": "Open backup-runner",
+                    "target": "backup-runner"
+                },
+                {
+                    "kind": "open",
+                    "label": "Health",
+                    "target": "checks"
+                }
+            ],
+            "feedback": "",
+            "reply_to": ""
+        }
+    ],
+    "more": false,
+    "unread": 1,
+    "read": 1791446217.4989355,
+    "replying": false,
+    "status": {
+        "enabled": true,
+        "paused": false,
+        "running": false,
+        "quiet_now": false,
+        "route": {
+            "provider": "mistral",
+            "model": "mistral-medium-latest",
+            "label": "Mistral API",
+            "usable": true
+        },
+        "next_round": 1791464990.186116,
+        "last_round": 1791454190.186116
+    }
+}

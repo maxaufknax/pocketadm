@@ -6,7 +6,7 @@ about the backups for a week") live in one timeline, newest at the bottom — a
 chat with someone who looks after the server, like a bot in a Matrix room.
 
     {"id", "t", "role": "watch" | "user" | "system", "text", "detail", "title",
-     "importance", "topic", "kind", "actions", "feedback", "reply_to"}
+     "importance", "topic", "kind", "actions", "feedback", "reply_to", "steps"}
 
 The store is a small JSON file next to the other state. The first time it is
 read it takes over the watch's earlier messages from the notifications, so an
@@ -78,7 +78,7 @@ def add(role: str, text: str, **fields) -> dict:
     msg = {"id": "m" + secrets.token_hex(5), "t": round(time.time(), 3),
            "role": role if role in ROLES else "system", "text": (text or "").strip()[:6000],
            "detail": "", "title": "", "importance": "info", "topic": "", "kind": "",
-           "actions": [], "feedback": "", "reply_to": ""}
+           "actions": [], "feedback": "", "reply_to": "", "steps": []}
     for key, value in fields.items():
         if key in msg and key not in ("id", "t", "role") and value is not None:
             msg[key] = value

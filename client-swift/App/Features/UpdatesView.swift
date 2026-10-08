@@ -502,6 +502,17 @@ struct UpdateDetailSheet: View {
                             : (update.latestVersion.isEmpty ? "newer \(update.tag.isEmpty ? "build" : update.tag)" : update.latestVersion),
                           built: remote?.created.isEmpty == false ? remote!.created : update.latestCreated)
         }
+        .overlay(alignment: .bottom) {
+            if detail?.rebuild == true {
+                Text("Same version, rebuilt image")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.muted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.bg3, in: Capsule())
+                    .offset(y: 8)
+            }
+        }
         .card()
     }
 
@@ -553,7 +564,7 @@ struct UpdateDetailSheet: View {
         if app.me?.aiConfigured == true {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Label("In plain words", systemImage: "sparkles")
+                    Label("What changes", systemImage: "sparkles")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.muted)
                     Spacer()
@@ -563,12 +574,17 @@ struct UpdateDetailSheet: View {
                     MarkdownText(text: explanation, font: .subheadline)
                 } else if let explainError {
                     Text(explainError).font(.footnote).foregroundStyle(Theme.danger)
+                    Button("Try again") { Task { await explain() } }
+                        .font(.footnote.weight(.semibold))
+                } else if explaining {
+                    Text("Reading the release notes of the versions this update brings…")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.muted)
                 } else {
-                    Button(explaining ? "Reading the release notes…" : "What changes for me, and is it risky?") {
+                    Button("What changes for me, and is it risky?") {
                         Task { await explain() }
                     }
                     .font(.subheadline.weight(.semibold))
-                    .disabled(explaining)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -633,21 +649,38 @@ struct UpdateDetailSheet: View {
         }
     }
 
+    /// The phone's language for the summary ("" = English).
+    private var language: String {
+        let lang = Locale.current.language.languageCode?.identifier ?? ""
+        return lang == "en" ? "" : lang
+    }
+
     private func load() async {
         guard let client = app.client else { loading = false; return }
         defer { loading = false }
         // Release notes come from GitHub and are best-effort; the sheet is
         // useful without them, so a failure is silent.
-        detail = try? await client.updateDetail(image: update.image)
+        if app.supports("update_explain_v2") {
+            detail = try? await client.updateDetail(image: update.image, lang: language)
+        } else {
+            detail = try? await client.updateDetail(image: update.image)
+        }
+        if let cached = detail?.explanation, !cached.isEmpty {
+            explanation = cached
+        } else if app.supports("update_explain_v2"), app.me?.aiConfigured == true, app.me?.demo != true {
+            // a 0.25 server summarises only what changes, and caches it: worth
+            // doing without being asked
+            await explain()
+        }
     }
 
     private func explain() async {
-        guard let client = app.client else { return }
+        guard let client = app.client, !explaining else { return }
         explaining = true
+        explainError = nil
         defer { explaining = false }
         do {
-            let lang = Locale.current.language.languageCode?.identifier ?? ""
-            explanation = try await client.explainUpdate(image: update.image, lang: lang == "en" ? "" : lang)
+            explanation = try await client.explainUpdate(image: update.image, lang: language)
         } catch {
             explainError = error.localizedDescription
         }

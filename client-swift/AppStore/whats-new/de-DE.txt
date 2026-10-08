@@ -1,12 +1,13 @@
-PocketADM 2.0 ist eine neue App: von Grund auf als native iPhone-App gebaut.
+PocketADM 2.0 ist eine neue App: von Grund auf als native iPhone-App gebaut – mit neuem Icon.
 
-• Der Wächter: Eine KI schaut alle paar Stunden und sofort nach einem Ausfall auf deinen Server und schreibt dir nur, wenn es sich lohnt – in ganzen Sätzen, mit dem nächsten Schritt einen Tipp entfernt. Nachts still, nie mehr als ein paar Nachrichten am Tag, auf Wunsch auch per Push oder in Element (Matrix).
-• Deine KI-Abos an einem Ort: Claude, ChatGPT und Mistral mit einem Tipp verbinden, ohne Terminal – und wählen, welche KI chattet, wacht und erklärt.
-• Apps statt Container-Listen: Zusammengehörige Container erscheinen als eine App mit eindeutigen Namen. Container-Seiten mit Live-Auslastung, Shell, Prozessen, Verlauf und Live-Logs.
-• Health mit Punktzahl, verständlichen Erklärungen und Aktionen zum Beheben – Bekanntes lässt sich akzeptieren.
-• Dateien und Laufwerke: jeder Ordner, auch externe Festplatten, mit Belegung, Ordnergrößen, Suche und Vorschau.
-• Aktivität live: Container, SSH-Logins, Pakete, Internet-Ausfälle und alles, was in PocketADM passiert.
-• Der Assistent fasst Befehlsfolgen zusammen, zeigt den Plan dauerhaft oben, Chats lassen sich suchen, anheften, umbenennen und teilen.
-• Updates erklären sich: installierte und neue Version, was sich ändert und was beim Update kurz ausfällt.
+• Der Wächter als Chat: Eine KI behält deinen Server im Blick und schreibt dir kurze Nachrichten, wenn es sich lohnt – mit Details auf Antippen und dem nächsten Schritt als Knopf. Frag sie alles („Warum ist die Platte so voll?“) oder sag ihr, worüber sie schweigen soll. Ihre Nachrichten kommen als Mitteilung aufs iPhone.
+• Der Assistent bleibt dran: Verlässt du die App, läuft die Sitzung auf dem Server weiter. Kommst du zurück, ist alles wieder da, auch eine offene Freigabe. Wartet er auf dein OK, bekommst du eine Mitteilung.
+• Tabellen, Überschriften, Listen und Code werden im Chat sauber dargestellt.
+• Dateien wie in einem Editor: Start in „/“, Ordner klappen auf, Laufwerke oben. Textdateien bearbeiten (mit Rückgängig), Fotos und Dateien hochladen, umbenennen, verschieben, kopieren, entpacken, als ZIP laden, Rechte ändern, löschen.
+• Updates sagen, was sich ändert: nur die Neuerungen zwischen deiner und der neuen Version, kurz, mit Risiko und Empfehlung.
+• Aktivität in zwei Teilen: was auf dem Server passiert, und was in PocketADM getan wurde.
+• Health kompakter: Punktzahl, Bereiche auf einen Blick, die Lösung direkt in der Zeile.
+• Deine KI-Abos an einem Ort: Claude, ChatGPT und Mistral mit einem Tipp verbinden, ohne Terminal.
+• Apps statt Container-Listen, Container-Seiten mit Live-Auslastung, Shell, Prozessen und Live-Logs.
 
-Die neuen Funktionen brauchen PocketADM 0.24 auf dem Server: Führe dazu den Installer erneut aus.
+Die neuen Funktionen brauchen PocketADM 0.25 auf dem Server: Führe dazu den Installer erneut aus.

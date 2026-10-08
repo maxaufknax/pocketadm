@@ -318,7 +318,10 @@ STATIC_PRICING = {
     "gpt-5.2": (1.75, 14), "gpt-5-mini": (0.25, 2), "gpt-5": (1.25, 10),
     "gemini-3.1-pro": (2, 12), "gemini-3-flash": (0.3, 2.5),
     "deepseek": (0.5, 1.5),
-    "mistral-large": (2, 6), "mistral-medium": (0.4, 2), "mistral-small": (0.1, 0.3),
+    # the specific releases first: lookup is by substring, in this order
+    "mistral-large-2512": (0.5, 1.5), "mistral-large-3": (0.5, 1.5),
+    "mistral-medium-3.5": (1.5, 7.5), "mistral-medium-3-5": (1.5, 7.5),
+    "mistral-large": (2, 6), "mistral-medium": (0.4, 2), "mistral-small": (0.15, 0.6),
     "magistral-medium": (2, 5), "magistral-small": (0.5, 1.5),
     "codestral": (0.3, 0.9), "ministral-8b": (0.1, 0.1), "ministral-3b": (0.04, 0.04),
 }

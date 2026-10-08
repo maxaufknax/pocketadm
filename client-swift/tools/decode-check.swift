@@ -367,6 +367,35 @@ expect("activity stream lines decode",
        ActivityEvent.fromStreamLine("data: {\"id\":\"a\",\"t\":1,\"category\":\"security\",\"kind\":\"ssh.login\",\"title\":\"x\",\"severity\":\"warn\"}")?.severity == .warn
        && ActivityEvent.fromStreamLine(": ping") == nil)
 
+// MARK: - Server 0.25 responses
+
+print("")
+print("Server 0.25 responses:")
+check("watch_channel", WatchChannelPage.self) {
+    !$0.messages.isEmpty && $0.messages.contains { $0.isUser } && $0.messages.contains { !$0.detail.isEmpty }
+        && $0.messages.contains { $0.severity == .crit } && $0.status?.enabled == true
+        && $0.messages.contains { !$0.actions.isEmpty }
+}
+check("push_status", PushStatus.self) { $0.relay.hasPrefix("https://") }
+check("fs_start", FSStart.self) { $0.wholeServer && $0.display == "/" && !$0.path.isEmpty }
+check("fs_read_v2", FileContent.self) { $0.modified > 0 && $0.writable && $0.content.contains("|") }
+check("fs_v3", FSListing.self) { $0.dirs.contains { $0.drive?.kind == "external" } }
+check("chats_v3", ChatIndex.self) { !$0.chats.isEmpty && $0.chats.allSatisfy { !$0.running || !$0.id.isEmpty } }
+inline("push device", """
+{"id":"a1b2c3d4","name":"iPhone","platform":"ios","added":1,"min":"important","assistant":true,
+ "preview":false,"last_ok":1791400000,"last_error":""}
+""", PushDevice.self) { $0.min == "important" && !$0.preview && $0.lastOK > 0 }
+inline("channel chat answer", """
+{"message":{"id":"m1","t":2,"role":"user","text":"why?","kind":"chat"},"replying":true}
+""", ChannelChatResponse.self) { $0.replying && $0.message?.isUser == true }
+inline("update detail with a cached summary", """
+{"image":"nginx:alpine","local":{"version":"1.31.6"},"remote":{"version":"1.31.6","digest":"sha256:d"},
+ "releases":[],"label":"Nginx","rebuild":true,"explanation":"- Same version"}
+""", UpdateDetail.self) { $0.rebuild && $0.explanation == "- Same version" }
+inline("file change", """
+{"path":"/host/srv/a.yml","display":"/srv/a.yml","size":12,"modified":1.5,"mode":"-rw-r--r--","owner":"max","version":"1791-ab12"}
+""", FSChange.self) { $0.version == "1791-ab12" && $0.display == "/srv/a.yml" }
+
 // MARK: - Reconnecting mid-run (0.25)
 
 print("")

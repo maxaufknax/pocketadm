@@ -1,7 +1,8 @@
-# The five App Store images (tools/store-shots.py lays them out): dark, like the
+# The App Store images (tools/store-shots.py lays them out): dark, like the
 # store canvas they sit on.
 raw-dashboard  dark dashboard
 raw-assistant  dark assistant
+raw-watch      dark more       alerts
+raw-files      dark more       files
 raw-containers dark containers
-raw-terminal   dark terminal session
-raw-more       dark more
+raw-terminal   dark terminal   session

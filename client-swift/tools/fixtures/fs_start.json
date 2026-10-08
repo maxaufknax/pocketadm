@@ -1,0 +1,8 @@
+{
+    "path": "/data/demo-fs",
+    "display": "/",
+    "roots": [
+        "/data/demo-fs"
+    ],
+    "whole_server": true
+}

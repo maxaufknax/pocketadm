@@ -6,6 +6,8 @@ so a public demo instance can show the full UI without touching a real host.
 import random
 import time
 
+from . import config
+
 _NOW = time.time()
 
 CONTAINERS = [
@@ -169,6 +171,81 @@ def engine_info() -> dict:
             "images": len(cs) + 4, "version": "27.0 (demo)", "os": "Demo Linux"}
 
 
+DEMO_FS = config.DATA_DIR / "demo-fs"
+
+
+def _png(width: int, height: int) -> bytes:
+    """A small sunset gradient as a PNG — no imaging library needed."""
+    import struct
+    import zlib
+    rows = b""
+    for y in range(height):
+        t = y / max(height - 1, 1)
+        r, g, b = int(255 - 70 * t), int(140 - 90 * t), int(60 + 110 * t)
+        rows += b"\x00" + bytes((r, g, b)) * width
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
+
+_DEMO_TREE = {
+    "etc/hostname": "homeserver\n",
+    "etc/hosts": "127.0.0.1 localhost\n127.0.1.1 homeserver\n192.168.1.10 homeserver.lan\n",
+    "etc/fstab": ("UUID=8c1e-root  /            ext4  defaults        0 1\n"
+                  "UUID=3F2A-EFI   /boot/efi    vfat  umask=0077      0 1\n"
+                  "UUID=b7d1-usb   /mnt/backup  ext4  defaults,nofail 0 2\n"),
+    "etc/docker/daemon.json": '{\n  "log-driver": "json-file",\n  "log-opts": {"max-size": "10m", "max-file": "3"}\n}\n',
+    "etc/systemd/system/backup.service": ("[Unit]\nDescription=Nightly volume backup\n\n[Service]\nType=oneshot\n"
+                                          "ExecStart=/srv/backup/backup.sh\n"),
+    "etc/systemd/system/backup.timer": "[Timer]\nOnCalendar=*-*-* 02:30\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n",
+    "home/admin/.bashrc": "alias dps='docker ps --format \"table {{.Names}}\\t{{.Status}}\"'\nexport EDITOR=nano\n",
+    "home/admin/notes.md": ("# Homeserver notes\n\n| Service | URL | Notes |\n| --- | --- | --- |\n"
+                            "| Nextcloud | cloud.example.com | files, calendar |\n"
+                            "| Jellyfin | media.example.com | transcodes on the iGPU |\n"
+                            "| Vaultwarden | vault.example.com | VPN only |\n\n"
+                            "## To do\n\n- [x] Move backups to the USB drive\n- [ ] Raise MariaDB max_connections\n"),
+    "home/admin/scripts/cleanup.sh": "#!/bin/sh\n# frees the Jellyfin transcode cache\nrm -rf /srv/jellyfin/cache/transcodes/*\n",
+    "srv/README.md": "Every service lives in its own folder with a docker-compose.yml.\n",
+    "srv/nextcloud/docker-compose.yml": ("services:\n  nextcloud:\n    image: nextcloud:31-apache\n    restart: unless-stopped\n"
+                                         "    volumes:\n      - ./data:/var/www/html\n    env_file: .env\n"
+                                         "  db:\n    image: mariadb:11\n    restart: unless-stopped\n"),
+    "srv/nextcloud/.env": "MYSQL_DATABASE=nextcloud\nMYSQL_USER=nextcloud\nMYSQL_PASSWORD=change-me\n",
+    "srv/jellyfin/docker-compose.yml": ("services:\n  jellyfin:\n    image: jellyfin/jellyfin:latest\n"
+                                        "    devices:\n      - /dev/dri:/dev/dri\n    volumes:\n      - ./config:/config\n"
+                                        "      - /mnt/backup/media:/media:ro\n"),
+    "srv/vaultwarden/docker-compose.yml": ("services:\n  vaultwarden:\n    image: vaultwarden/server:latest\n"
+                                           "    ports:\n      - 127.0.0.1:8081:80\n"),
+    "srv/backup/backup.sh": "#!/bin/bash\nset -e\ntar --zstd -cf /mnt/backup/nightly/$(date +%F).tar.zst /srv\n",
+    "var/log/syslog": "".join(f"Oct  8 0{h}:1{h} homeserver systemd[1]: Started backup.service - Nightly volume backup.\n"
+                              for h in range(2, 8)),
+    "var/log/auth.log": ("Oct  8 07:58:12 homeserver sshd[2210]: Accepted publickey for admin from 192.168.1.20\n"
+                         "Oct  8 08:03:41 homeserver sshd[2299]: Failed password for root from 203.0.113.9\n"),
+    "mnt/backup/nightly/README.txt": "Nightly archives of /srv, kept for 14 days.\n",
+    "mnt/backup/media/README.txt": "Movies and music for Jellyfin.\n",
+}
+
+
+def seed_files() -> None:
+    """A believable little server to browse in the demo: /etc, /home, /srv,
+    logs and a USB backup drive — instead of the demo container's insides."""
+    marker = DEMO_FS / ".seeded-v1"
+    if marker.exists():
+        return
+    for rel, content in _DEMO_TREE.items():
+        path = DEMO_FS / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    pictures = DEMO_FS / "home/admin/Pictures"
+    pictures.mkdir(parents=True, exist_ok=True)
+    (pictures / "sunset.png").write_bytes(_png(240, 160))
+    for rel in ("opt", "root", "tmp", "mnt/backup/nightly", "srv/jellyfin/config", "srv/nextcloud/data"):
+        (DEMO_FS / rel).mkdir(parents=True, exist_ok=True)
+    for day in range(1, 8):
+        (DEMO_FS / f"mnt/backup/nightly/2026-10-0{day}.tar.zst").write_bytes(b"\x28\xb5\x2f\xfd" + b"\0" * 2048)
+    marker.write_text("1")
+
+
 def storage() -> dict:
     gb = 1024 ** 3
     rows = [
@@ -179,11 +256,13 @@ def storage() -> dict:
         ("/boot/efi", "/dev/nvme0n1p1", "vfat", "", "Samsung SSD 980", "nvme0n1", "nvme", False,
          "boot", 1 * gb, int(0.04 * gb)),
     ]
+    root = str(DEMO_FS)
     return {"filesystems": [
-        {"mount": m, "path": m, "device": dev, "fstype": fs, "label": label, "model": model,
+        {"mount": m, "path": root if m == "/" else root + m, "device": dev, "fstype": fs,
+         "label": label, "model": model,
          "disk": disk, "transport": tr, "removable": rem, "external": kind == "external",
          "kind": kind, "total": total, "used": used, "free": total - used,
-         "percent": round(100 * used / total, 1), "browsable": False}
+         "percent": round(100 * used / total, 1), "browsable": kind != "boot"}
         for m, dev, fs, label, model, disk, tr, rem, kind, total, used in rows]}
 
 
@@ -452,6 +531,12 @@ def seed() -> None:
             config.set_server_name("PocketADM Demo")
         if not config.get_onboarded():
             config.set_onboarded()
+
+        # the file browser shows the sample server, as if it were the host
+        seed_files()
+        from . import files
+        files.HOST = str(DEMO_FS)
+        config.settings["workspaces"] = [str(DEMO_FS)]
 
         chats_dir = config.DATA_DIR / "chats"
         chats_dir.mkdir(exist_ok=True)

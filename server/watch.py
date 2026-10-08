@@ -397,6 +397,16 @@ async def context_text(kind: str, incidents: list[dict]) -> str:
     except Exception:
         pass
     try:
+        from . import files
+        drives = (await asyncio.to_thread(files.storage)).get("filesystems", [])
+        shown = [f"{d['mount']} ({', '.join(x for x in (d.get('model') or d.get('label'), 'USB' if d.get('external') else '', d.get('fstype')) if x)}) "
+                 f"{d['percent']:.0f}% full, {d['free'] // 10**9} GB free"
+                 for d in drives if d.get("kind") != "boot"]
+        if shown:
+            parts.append("Drives: " + "; ".join(shown[:8]))
+    except Exception:
+        pass
+    try:
         hist = metrics.history(60)
         pings = [p["ping"] for p in hist if "ping" in p]
         if pings:
@@ -675,7 +685,8 @@ async def deliver(decision: dict, kind: str, trace: list, state: dict, s: dict) 
     agents.annotate_notification(notif["id"], kind="watch", importance=importance, topic=topic,
                                  run=kind, actions=actions)
     msg = channel.add("watch", text, detail=detail, title=title, importance=importance,
-                      topic=topic, kind=kind, actions=actions, notification=notif["id"])
+                      topic=topic, kind=kind, actions=actions, notification=notif["id"],
+                      steps=_steps_for_channel(trace))
     state.setdefault("sent", []).append({"t": time.time(), "importance": importance,
                                          "topic": topic, "text": text[:300], "id": notif["id"],
                                          "message": msg["id"]})
@@ -795,9 +806,12 @@ async def run(kind: str = "observe", incidents: list[dict] | None = None,
 
 # ------------------------------------------------------------------ the channel: answering
 
-CHAT_PROMPT = """Your job now: the user wrote to you in your channel. Answer them directly — one \
-to five short sentences in the same plain style; a list only when they ask for one. When the \
-answer needs facts from the server, look first with your read-only tools; never guess numbers. \
+CHAT_PROMPT = """Your job now: the user wrote to you in your channel. Answer exactly what they asked, \
+directly — one to five short sentences in the same plain style; a list only when they ask for one. \
+Give the concrete numbers they asked for (from the context below or your tools). When the answer \
+needs facts from the server, look first with your read-only tools; never guess, and never say \
+something is missing or not running unless a tool showed it — if a check came back empty, say what \
+you checked. \
 When they ask you to be quieter, to stop reporting something or to pause, do it with mute_topic, \
 unmute_topic or pause_watch and confirm in one sentence. When they ask you to change something on \
 the server, you cannot: name the step and say that the assistant (PocketADM's agent, which asks \
@@ -964,9 +978,14 @@ async def answer() -> dict | None:
     trace: list = []
     try:
         latest = "\n".join(m["text"] for m in pending)
+        # the conversation first, the current facts after it: they are newer
+        # than anything said in the channel, and an answer that contradicts
+        # them (even one of your own from earlier) has to be corrected
         prompt = (f"It is {local_now(s).strftime('%A %d.%m. %H:%M')}.\n\n"
-                  "What PocketADM already knows:\n" + await context_text("chat", [])
-                  + "\n\nYour channel with the user so far (oldest first):\n" + _conversation_text()
+                  "Your channel with the user so far (oldest first):\n" + _conversation_text()
+                  + "\n\nThe server right now (newer than everything above — where it contradicts "
+                    "something said earlier, including by you, these facts win and you correct "
+                    "yourself):\n" + await context_text("chat", [])
                   + f"\n\nAnswer the user's latest message:\n{latest}")
         engine = route["provider"] in engines.ENGINES
         runner = _chat_engine if engine else _chat_api
@@ -984,13 +1003,24 @@ async def answer() -> dict | None:
     text = clean_text(text) or "I could not put an answer together — ask me again?"
     links = [a for a in actions_for(text, "") if a["kind"] != "assistant"
              or re.search(r"assist", text, re.I)]
-    msg = channel.add("watch", text, kind="chat", reply_to=pending[-1]["id"], actions=links)
+    msg = channel.add("watch", text, kind="chat", reply_to=pending[-1]["id"], actions=links,
+                      steps=_steps_for_channel(trace))
     channel.replying.clear()
     push.notify("Watch", text, kind="watch", importance="info", thread="watch",
                 data={"message": msg["id"]})
     if any(m["role"] == "user" and m["t"] > started for m in channel.conversation(40)):
         asyncio.ensure_future(answer())
     return msg
+
+
+def _steps_for_channel(trace: list) -> list[dict]:
+    """What the watch looked at, for "What it checked" under a message."""
+    out = []
+    for step in trace[:12]:
+        out.append({"tool": str(step.get("tool", ""))[:40],
+                    "detail": str(step.get("detail", ""))[:200],
+                    "output": str(step.get("output", ""))[:300]})
+    return out
 
 
 def welcome() -> dict | None:

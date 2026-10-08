@@ -637,6 +637,14 @@ struct FileExplorerView: View {
             drives = ((try? await client.storage()) ?? []).filter { $0.kind != "boot" && $0.browsable }
         }
         started = true
+        // Screenshot runs: a tree with something open in it
+        if AppState.screenshotRoute == "files", !root.isEmpty {
+            for name in ["srv", "nextcloud"] {
+                if let node = tree.rows(under: root).first(where: { $0.node.isDir && $0.node.name == name })?.node {
+                    await tree.toggle(node.path, app: app)
+                }
+            }
+        }
     }
 
     private func reroot(_ path: String, display: String) async {

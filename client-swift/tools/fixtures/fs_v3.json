@@ -1,0 +1,30 @@
+{
+    "path": "/data/demo-fs/mnt",
+    "display": "/mnt",
+    "parent": "/data/demo-fs",
+    "dirs": [
+        {
+            "name": "backup",
+            "path": "/data/demo-fs/mnt/backup",
+            "display": "/mnt/backup",
+            "modified": 1791457790.432191,
+            "mode": "drwxr-xr-x",
+            "owner": "root",
+            "link": false,
+            "drive": {
+                "kind": "external",
+                "percent": 43.2,
+                "label": "Backup",
+                "free": 568009424896
+            }
+        }
+    ],
+    "file_entries": [],
+    "files": 0,
+    "hidden": 0,
+    "roots": [
+        "/data/demo-fs"
+    ],
+    "free": 133965115392,
+    "truncated": false
+}

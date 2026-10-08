@@ -1,0 +1,12 @@
+{
+    "path": "/data/demo-fs/home/admin/notes.md",
+    "display": "/home/admin/notes.md",
+    "size": 306,
+    "modified": 1791457790.431191,
+    "mode": "-rw-r--r--",
+    "owner": "root",
+    "writable": true,
+    "binary": false,
+    "truncated": false,
+    "content": "# Homeserver notes\n\n| Service | URL | Notes |\n| --- | --- | --- |\n| Nextcloud | cloud.example.com | files, calendar |\n| Jellyfin | media.example.com | transcodes on the iGPU |\n| Vaultwarden | vault.example.com | VPN only |\n\n## To do\n\n- [x] Move backups to the USB drive\n- [ ] Raise MariaDB max_connections\n"
+}

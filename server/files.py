@@ -74,7 +74,9 @@ def display(path: str) -> str:
 
 def roots() -> list[str]:
     out: list[str] = []
-    for r in config.get_workspaces() + [ai.DEFAULT_WORKDIR]:
+    # the demo browses only its sample server, not the container around it
+    extra = [] if config.DEMO else [ai.DEFAULT_WORKDIR]
+    for r in config.get_workspaces() + extra:
         rp = os.path.realpath(r)
         if os.path.isdir(rp) and rp not in out:
             out.append(rp)
@@ -354,7 +356,12 @@ def mount_points() -> dict[str, dict]:
         return _mounts_cache["value"]
     value = {}
     try:
-        for fs in storage()["filesystems"]:
+        if config.DEMO:
+            from . import demodata
+            source = demodata.storage()
+        else:
+            source = storage()
+        for fs in source["filesystems"]:
             if fs["mount"] != "/":
                 value[fs["mount"]] = {"kind": fs["kind"], "percent": fs["percent"],
                                       "label": fs["label"] or fs["model"], "free": fs["free"]}

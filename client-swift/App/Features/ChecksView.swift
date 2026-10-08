@@ -73,6 +73,7 @@ struct ChecksView: View {
     @State private var route: MoreRoute?
     @State private var job: PendingJob?
     @State private var toast: Toast?
+    @State private var historyOpen = false
 
     var body: some View {
         Group {
@@ -151,7 +152,7 @@ struct ChecksView: View {
                     }
                 }
 
-                categoryChips(report)
+                areaGrid(report)
 
                 if analysing || analysis != nil {
                     analysisCard
@@ -159,37 +160,28 @@ struct ChecksView: View {
 
                 let attention = filtered(report.needsAttention)
                 if !attention.isEmpty {
-                    section(title: "Needs you", count: attention.count) {
-                        ForEach(attention) { check in
-                            CheckRow(check: check) { selected = check }
+                    section(title: category.map { "\($0) · needs you" } ?? "Needs you", count: attention.count) {
+                        ForEach(Array(attention.enumerated()), id: \.element.id) { index, check in
+                            if index > 0 { Divider().padding(.leading, 48) }
+                            CheckRow(check: check, quick: quickAction(for: check).map { action in
+                                { Task { await perform(action, on: check) } }
+                            }) { selected = check }
                         }
                     }
                 } else if category == nil {
                     allClear
                 }
 
+                // everything that does not need you, folded: open it when you want to read it
                 let info = filtered(report.informational)
-                if !info.isEmpty {
-                    collapsible(title: "Good to know", count: info.count, startOpen: attention.isEmpty) {
-                        ForEach(info) { check in
-                            CheckRow(check: check) { selected = check }
-                        }
-                    }
-                }
-
                 let accepted = filtered(report.accepted)
-                if !accepted.isEmpty {
-                    collapsible(title: "Accepted by you", count: accepted.count, startOpen: false) {
-                        ForEach(accepted) { check in
-                            CheckRow(check: check) { selected = check }
-                        }
-                    }
-                }
-
                 let passing = filtered(report.passing)
-                if !passing.isEmpty {
-                    collapsible(title: "Passing", count: passing.count, startOpen: false) {
-                        ForEach(passing) { check in
+                if !(info.isEmpty && accepted.isEmpty && passing.isEmpty) {
+                    collapsible(title: attention.isEmpty ? "Details" : "Everything else",
+                                count: info.count + accepted.count + passing.count,
+                                startOpen: category != nil && attention.isEmpty) {
+                        ForEach(Array((info + accepted + passing).enumerated()), id: \.element.id) { index, check in
+                            if index > 0 { Divider().padding(.leading, 48) }
                             CheckRow(check: check) { selected = check }
                         }
                     }
@@ -216,14 +208,14 @@ struct ChecksView: View {
         let tint: Color = score >= 85 ? .green : score >= 60 ? .orange : Theme.danger
         return HStack(spacing: 18) {
             ZStack {
-                Circle().stroke(tint.opacity(0.18), lineWidth: 10)
+                Circle().stroke(tint.opacity(0.18), lineWidth: 8)
                 Circle()
                     .trim(from: 0, to: max(0.02, Double(score) / 100))
-                    .stroke(tint.gradient, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .stroke(tint.gradient, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 0) {
                     Text("\(score)")
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .font(.system(size: 25, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.text)
                         .contentTransition(.numericText())
                     Text("of 100")
@@ -231,7 +223,7 @@ struct ChecksView: View {
                         .foregroundStyle(Theme.muted)
                 }
             }
-            .frame(width: 96, height: 96)
+            .frame(width: 78, height: 78)
             .animation(.smooth, value: score)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -296,35 +288,53 @@ struct ChecksView: View {
         ("Assistant", "sparkles", .purple),
     ]
 
-    private func categoryChips(_ report: Report) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Self.areas, id: \.0) { area in
-                    let checks = report.checks.filter { $0.category == area.0 }
-                    if !checks.isEmpty {
-                        let worst = checks.filter { !$0.muted }.map(\.status).min { $0.weight < $1.weight } ?? .ok
-                        Button {
-                            withAnimation(.snappy) { category = category == area.0 ? nil : area.0 }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: area.1)
-                                    .font(.caption)
-                                Text(area.0)
-                                    .font(.subheadline.weight(.medium))
-                                Circle()
-                                    .fill(worst == .ok || worst == .info ? Color.green : worst.tint)
-                                    .frame(width: 7, height: 7)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .foregroundStyle(category == area.0 ? Theme.onAccent : Theme.text)
-                            .background(category == area.0 ? area.2 : Theme.bg2, in: Capsule())
+    /// The areas at a glance — each tile says whether anything there needs
+    /// you, and filters the page to it on a tap.
+    private func areaGrid(_ report: Report) -> some View {
+        let shown = Self.areas.filter { area in report.checks.contains { $0.category == area.0 } }
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(shown, id: \.0) { area in
+                let checks = report.checks.filter { $0.category == area.0 }
+                let open = checks.filter { !$0.muted && ($0.status == .warn || $0.status == .crit) }
+                let worst = open.map(\.status).min { $0.weight < $1.weight }
+                Button {
+                    withAnimation(.snappy) { category = category == area.0 ? nil : area.0 }
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: area.1)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(category == area.0 ? Theme.onAccent : area.2)
+                            Spacer(minLength: 0)
+                            Image(systemName: worst == nil ? "checkmark.circle.fill" : worst!.symbol)
+                                .font(.caption)
+                                .foregroundStyle(category == area.0 ? Theme.onAccent
+                                                 : (worst?.tint ?? Color.green))
                         }
-                        .buttonStyle(.plain)
+                        Text(area.0)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(category == area.0 ? Theme.onAccent : Theme.text)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Text(open.isEmpty ? "OK" : open.count == 1 ? "1 to look at" : "\(open.count) to look at")
+                            .font(.caption2)
+                            .foregroundStyle(category == area.0 ? Theme.onAccent.opacity(0.85) : Theme.muted)
+                            .lineLimit(1)
                     }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(category == area.0 ? area.2 : Theme.bg2,
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
+                .buttonStyle(.plain)
             }
         }
+    }
+
+    /// The one thing to do about a finding, right on its row: the first action
+    /// that is not "accept" or "dismiss".
+    private func quickAction(for check: Report.Check) -> AlertAction? {
+        check.actions.first { !["mute", "unmute", "dismiss"].contains($0.kind) }
     }
 
     // MARK: - Sections
@@ -372,7 +382,20 @@ struct ChecksView: View {
     private func historyCard(_ reports: [ReportSummary]) -> some View {
         let recent = Array(reports.prefix(20))
         return VStack(alignment: .leading, spacing: 10) {
-            SectionCaption(text: "Over time")
+            Button {
+                withAnimation(.snappy) { historyOpen.toggle() }
+            } label: {
+                HStack {
+                    SectionCaption(text: "Over time")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
+                        .rotationEffect(.degrees(historyOpen ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             if recent.contains(where: { $0.points != nil }) {
                 Chart(recent) { summary in
                     LineMark(x: .value("When", summary.date),
@@ -388,8 +411,9 @@ struct ChecksView: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: [0, 50, 100])
                 }
-                .frame(height: 110)
+                .frame(height: historyOpen ? 110 : 56)
             }
+            if historyOpen {
             ForEach(reports.prefix(6)) { summary in
                 Button {
                     Task { await model.open(summary.file, app: app) }
@@ -414,6 +438,7 @@ struct ChecksView: View {
                     }
                     .padding(.vertical, 6)
                 }
+            }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -529,39 +554,66 @@ struct CollapsibleCard<Content: View>: View {
     }
 }
 
-/// One finding, compact: its state, its title, the one line that matters.
+/// One finding, compact: its state, its title, the one line that matters —
+/// and, where there is one, the thing to do about it right on the row.
 struct CheckRow: View {
     let check: Report.Check
+    var quick: (() -> Void)? = nil
     let open: () -> Void
 
     var body: some View {
-        Button(action: open) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: check.muted ? "checkmark.circle" : check.status.symbol)
-                    .foregroundStyle(check.muted ? Theme.muted : check.status.tint)
-                    .font(.body)
-                    .frame(width: 22)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(check.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Theme.text)
-                    Text(check.muted && !check.mutedNote.isEmpty ? check.mutedNote : check.summary)
-                        .font(.caption)
-                        .foregroundStyle(Theme.muted)
-                        .lineLimit(2)
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: open) {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: check.muted ? "checkmark.circle" : check.status.symbol)
+                        .foregroundStyle(check.muted ? Theme.muted : check.status.tint)
+                        .font(.body)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(check.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Text(check.muted && !check.mutedNote.isEmpty ? check.mutedNote : check.summary)
+                            .font(.caption)
+                            .foregroundStyle(Theme.muted)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
                 }
-                Spacer(minLength: 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if let quick, let action = check.actions.first(where: { !["mute", "unmute", "dismiss"].contains($0.kind) }) {
+                Button(action: quick) {
+                    Text(Self.shortLabel(action))
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(check.status.tint.opacity(0.14), in: Capsule())
+                        .foregroundStyle(check.status.tint)
+                }
+                .buttonStyle(.borderless)
+            } else {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color(uiColor: .tertiaryLabel))
-                    .padding(.top, 3)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(PressableRowStyle())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    /// "Ask the assistant to fix it" fits a row as "Fix it".
+    static func shortLabel(_ action: AlertAction) -> String {
+        switch action.kind {
+        case "assistant": return "Fix it"
+        case "copy":      return "Copy fix"
+        case "job":       return action.label.count <= 14 ? action.label : "Run"
+        default:          return action.label.count <= 14 ? action.label : "Open"
+        }
     }
 }
 

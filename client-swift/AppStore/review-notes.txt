@@ -9,10 +9,14 @@ CAMERA: used only to scan the pairing QR code a PocketADM server prints at the e
 
 ASSISTANT: an AI agent that works on the user's own server with the user's own API key or coding-agent subscription (Claude Code, Codex, Mistral Vibe). The demo is read-only, so its Assistant tab shows a recorded sample session; sending a message there explains that the demo cannot run the agent.
 
-ALERTS AND AI ACCOUNTS: More → Alerts & watch shows sample messages of the watch, a background agent that checks the user's own server with the user's own AI. More → AI accounts shows how a subscription or an API key is connected; in the read-only demo these screens can be viewed but not changed. Signing in to Claude, ChatGPT or Mistral happens on the provider's own website and only connects the user's own server.
+WATCH AND AI ACCOUNTS: More → Watch shows the channel of the watch, a background agent that checks the user's own server with the user's own AI, with sample messages. Writing to it is disabled in the read-only demo. More → AI accounts shows how a subscription or an API key is connected; in the demo these screens can be viewed but not changed. Signing in to Claude, ChatGPT or Mistral happens on the provider's own website and only connects the user's own server.
+
+NOTIFICATIONS AND BACKGROUND REFRESH: the app asks for notification permission only when the user taps "Turn on notifications" (Watch screen, or More → Watch → settings). Notifications carry messages from the user's own server: its watch, and the assistant waiting for an approval. Push notifications are delivered through PocketADM's relay at pocketadm.com/push, which stores only the push token; where push is not available, background app refresh fetches new messages from the user's server and shows them as local notifications. The demo does not send notifications.
+
+FILES: browsing and opening files works in the demo; creating, uploading, editing and deleting are refused because the demo is read-only.
 
 TERMINAL: in the demo, opening any shell shows a simulated, read-only shell (try ls, docker ps, free, df, cat readme.txt); nothing is executed. On a user's own server it is a real terminal.
 
 APP TRANSPORT SECURITY: arbitrary loads are allowed because PocketADM connects only to servers the user adds, which are often local addresses (192.168.x.x, .local hosts) or VPN addresses. New servers use HTTPS with their own certificate; the app trusts such a certificate only when its key matches the fingerprint in the pairing QR code the user scanned. No traffic goes anywhere other than the servers the user adds.
 
-The app collects no personal data.
+The app collects no personal data. The push token is used only to deliver notifications.

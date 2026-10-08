@@ -1,12 +1,13 @@
-PocketADM 2.0 is a new app: rebuilt from the ground up as a native iPhone app.
+PocketADM 2.0 is a new app: rebuilt from the ground up as a native iPhone app — with a new icon.
 
-• The watch: an AI looks at your server every few hours and right after anything breaks, and writes to you only when it is worth knowing — in plain sentences, with the next step one tap away. Quiet at night, never more than a few messages a day, and optionally as push notifications or in Element (Matrix).
-• Your AI subscriptions in one place: connect Claude, ChatGPT and Mistral with a tap, no terminal — and choose which AI chats, watches and explains.
-• Apps instead of container lists: containers that belong together appear as one app, each with a name you can tell apart. Container pages with live usage, a shell, processes, history and live logs.
-• Health with a score, plain explanations and one-tap fixes — and a way to accept what is intentional.
-• Files and drives: every folder, external disks included, with how full they are, folder sizes, search and previews.
-• Live activity: containers, SSH logins, packages, internet outages and everything that happens in PocketADM.
-• The assistant folds runs of commands into one line, keeps its plan in view, and chats can be searched, pinned, renamed and shared.
-• Updates explain themselves: the installed and the new version, what changes, and what is briefly down while it updates.
+• The watch, as a chat: an AI keeps an eye on your server and sends short messages when something is worth knowing — details on a tap, the next step as a button. Ask it anything ("why is the disk so full?") or tell it what to stay quiet about. Its messages arrive as notifications.
+• The assistant stays with you: leave the app and the session keeps running on the server; come back and everything is there, a pending approval included. When it waits for your OK, you get a notification.
+• Tables, headings, lists and code look right in the chat.
+• Files like an editor: start at "/", folders unfold in place, drives on top. Edit text files (with undo), upload photos and files, rename, move, copy, unpack, download as a zip, change permissions, delete.
+• Updates say what changes: only what is new between your version and the next one, short, with the risk and a recommendation.
+• Activity in two halves: what happens on the server, and what was done in PocketADM.
+• A more compact Health: the score, the areas at a glance, the fix right on the row.
+• Your AI subscriptions in one place: connect Claude, ChatGPT and Mistral with a tap, no terminal.
+• Apps instead of container lists; container pages with live usage, a shell, processes and live logs.
 
-The newest features need PocketADM 0.24 on the server: run the installer again to update it.
+The newest features need PocketADM 0.25 on the server: run the installer again to update it.
