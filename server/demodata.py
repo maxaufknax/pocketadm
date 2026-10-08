@@ -259,6 +259,7 @@ def accounts() -> dict:
 # a reviewer sees the whole product alive — without any live model or host.
 
 import json  # noqa: E402
+import secrets  # noqa: E402
 import time  # noqa: E402
 
 from . import config  # noqa: E402
@@ -360,6 +361,61 @@ def _seed_notifications() -> list[dict]:
                     "steps": [{"tool": "run_command", "detail": "docker ps -a --filter name=backup",
                                "output": "backup-runner  Exited (1) 2 hours ago", "ms": 140}]})
     return out
+
+
+def seed_channel() -> None:
+    """The watch's channel in the demo: what it wrote on its own, and a short
+    exchange with the user — refreshed when it has grown stale."""
+    from . import channel
+    try:
+        data = json.loads(channel.CHANNEL_FILE.read_text())
+        newest = max((m.get("t", 0) for m in data.get("messages", [])), default=0)
+        if data.get("messages") and time.time() - newest < 3 * 86400:
+            return
+    except (OSError, ValueError):
+        pass
+    now = time.time()
+
+    def msg(ago, role, text, **fields):
+        base = {"id": "m" + secrets.token_hex(5), "t": now - ago, "role": role, "text": text,
+                "detail": "", "title": "", "importance": "info", "topic": "", "kind": "observe",
+                "actions": [], "feedback": "", "reply_to": ""}
+        base.update(fields)
+        return base
+
+    messages = [
+        msg(3 * 86400, "watch", "I am keeping an eye on this server now. I write when something is "
+            "worth knowing — usually rarely, and only critical things at night. Ask me anything here.",
+            kind="system", title="The watch is on"),
+        msg(2 * 86400, "watch", "Nextcloud was down for four minutes at 14:02 — its database ran "
+            "out of connections. It recovered on its own when the cron job finished.",
+            detail="MariaDB logged \"Too many connections\" 312 times between 14:02 and 14:06. "
+                   "If it happens again, raise max_connections from 100 to 200 in the MariaDB config.",
+            title="Nextcloud was down briefly", importance="critical", topic="nextcloud-down",
+            kind="incident", actions=[{"kind": "container", "label": "Open nextcloud", "target": "nextcloud"}]),
+        msg(20 * 3600, "watch", "The disk fills up in about six weeks at this pace — mostly "
+            "Jellyfin's transcode cache.",
+            detail="Root is at 78% and grew by 2.1 GB a day this week. Clearing "
+                   "/var/lib/jellyfin/transcodes frees about 9 GB.",
+            title="Disk full in about six weeks", topic="disk-trend",
+            actions=[{"kind": "open", "label": "Storage", "target": "storage"}]),
+        msg(19 * 3600, "user", "Is it safe to delete the transcode cache?", kind="chat"),
+        msg(19 * 3600 - 40, "watch", "Yes — Jellyfin rebuilds it when someone watches something. "
+            "Nothing is playing right now, so now is a good time.", kind="chat",
+            actions=[{"kind": "container", "label": "Open jellyfin", "target": "jellyfin"}]),
+        msg(2 * 3600, "watch", "The vault backup has not run for a week: the backup container "
+            "exits right away because its target drive is not mounted.",
+            detail="backup-runner exited with code 1 every night since Tuesday (\"/mnt/backup: no "
+                   "such device\"). Plug the USB drive back in, then run `docker start backup-runner`.",
+            title="No vault backup for a week", importance="important", topic="backup",
+            kind="incident", actions=[{"kind": "container", "label": "Open backup-runner",
+                                       "target": "backup-runner"},
+                                      {"kind": "open", "label": "Health", "target": "checks"}]),
+    ]
+    try:
+        channel.CHANNEL_FILE.write_text(json.dumps({"messages": messages, "read": now - 3 * 3600}))
+    except OSError:
+        pass
 
 
 def watch_status() -> dict:

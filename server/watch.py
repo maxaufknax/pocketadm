@@ -19,9 +19,12 @@ budget, and no second message on a topic within twelve hours unless it got
 worse. The agent can only read — every command passes the same read-only gate
 as the Sentinel loops (agents.sentinel_may_run).
 
-Messages land in the app's Alerts screen and, if set up, in ntfy and a Matrix
-room (Element). The agent runs on whatever AI the user chose for it (the
-"watch" route): an API key, a local model, or a subscription through its CLI.
+Messages land in the watch's channel in the app (channel.py) — a conversation
+the user can answer, ask questions in and tell the watch to be quieter — as a
+push notification on the phones that asked for one (push.py), and, if set up,
+in ntfy and a Matrix room (Element). The agent runs on whatever AI the user
+chose for it (the "watch" route): an API key, a local model, or a subscription
+through its CLI.
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from . import accounts, activity, agents, ai, audit, config, engines
+from . import accounts, activity, agents, ai, audit, channel, config, engines, push
 
 STATE_FILE = config.DATA_DIR / "watch_state.json"
 
@@ -97,6 +100,7 @@ def public_settings() -> dict:
 
 def update_settings(changes: dict) -> dict:
     current = settings()
+    was_on = bool(current.get("enabled"))
     for key, value in changes.items():
         if key not in DEFAULTS or key in ("mutes", "paused_until"):
             continue
@@ -121,7 +125,21 @@ def update_settings(changes: dict) -> dict:
             current[key] = DEFAULTS[key]
     config.settings["watch"] = current
     config.save_settings(config.settings)
+    if current["enabled"] and not was_on:
+        _replace_digests()
+        welcome()
     return public_settings()
+
+
+def _replace_digests() -> None:
+    """The watch replaces the Sentinel digests: once it is on, the old loops
+    stop (their settings stay, so turning one back on is a tap)."""
+    loops = config.settings.get("agent_loops") or []
+    if any(loop.get("enabled") for loop in loops):
+        for loop in loops:
+            loop["enabled"] = False
+        config.settings["agent_loops"] = loops
+        config.save_settings(config.settings)
 
 
 def load_state() -> dict:
@@ -276,12 +294,15 @@ runs this server for themselves (and maybe family or a few users); they are not 
 a sysadmin. They want to understand what is going on and whether they need to do something.
 
 How you write:
-- {language}, informal and direct — like a short message from a capable friend who looks after \
-the server.
-- Plain prose. No headings, no markdown symbols like # or **, no tables, no emojis, no greeting, \
-no sign-off.
-- Short: usually 2–4 sentences. The most important thing first, then cause or context, then — \
-only if needed — what to do. Commands to copy in `backticks`.
+- {language}, informal and direct — like a chat message from a capable friend who looks after \
+the server. It arrives as a push notification, so it has to make sense on a lock screen.
+- Plain prose. No headings, no markdown symbols like # or **, no lists, no tables, no emojis, no \
+greeting, no sign-off.
+- Short: one to three sentences, at most about 50 words. The most important thing first, then \
+the cause in a few words, then — only if needed — the one thing to do. Commands to copy in \
+`backticks`.
+- Background that does not fit (exact numbers, the log line, the steps) goes into the separate \
+detail field — the user opens it when they want more. Never repeat the message there.
 - Concrete numbers, times and comparisons ("since 14:20", "three times the usual") instead of \
 vague words.
 - Vary how you start and phrase things; do not repeat what the user already knows.
@@ -328,20 +349,25 @@ DECISION_TEXT = """
 When you are done, end your reply with exactly one line of JSON and nothing after it:
 {"decision": "notify" or "silent", "importance": "critical" or "important" or "info", \
 "topic": "<short-topic-key like disk-root or nextcloud-down>", \
-"title": "<at most 8 words>", "message": "<the message text>", "remember": "<optional note \
-for your future self, or empty>"}
+"title": "<at most 6 words>", "message": "<the message: one to three short sentences>", \
+"detail": "<optional background, or empty>", "remember": "<optional note for your future \
+self, or empty>"}
 """
 
 DECISION_TOOLS = [
     {"name": "notify",
      "description": "Send the user a message and end this run.",
      "parameters": {"type": "object", "properties": {
-         "text": {"type": "string", "description": "The finished message: plain prose, short, "
-                                                   "no headings, no emojis."},
+         "text": {"type": "string", "description": "The finished message: one to three short "
+                                                   "sentences of plain prose, no headings, no "
+                                                   "emojis."},
+         "detail": {"type": "string", "description": "Optional background the user can open: "
+                                                     "numbers, the log line, the steps. Empty "
+                                                     "when the message says it all."},
          "importance": {"type": "string", "enum": list(IMPORTANCE)},
          "topic": {"type": "string", "description": "Short topic key, e.g. disk-root, backup, "
                                                     "nextcloud-down"},
-         "title": {"type": "string", "description": "At most 8 words."}},
+         "title": {"type": "string", "description": "At most 6 words."}},
          "required": ["text", "importance", "topic"]}},
     {"name": "stay_silent",
      "description": "Send nothing and end this run.",
@@ -490,6 +516,7 @@ def parse_decision(text: str) -> dict:
             "topic": str(data.get("topic") or "general")[:60],
             "title": str(data.get("title") or "")[:80],
             "text": str(data.get("message") or "").strip(),
+            "detail": str(data.get("detail") or "").strip(),
             "remember": str(data.get("remember") or "")[:300]}
 
 
@@ -549,6 +576,7 @@ async def _run_api(route: dict, kind: str, prompt: str, trace: list) -> tuple[di
             name, args = tc["name"], tc.get("args") or {}
             if name == "notify":
                 decision = {"decision": "notify", "text": str(args.get("text", "")),
+                            "detail": str(args.get("detail", "")),
                             "importance": args.get("importance", "info"),
                             "topic": str(args.get("topic") or "general")[:60],
                             "title": str(args.get("title") or "")[:80]}
@@ -633,21 +661,31 @@ def actions_for(text: str, topic: str) -> list[dict]:
 
 async def deliver(decision: dict, kind: str, trace: list, state: dict, s: dict) -> dict:
     text = clean_text(decision.get("text", ""))
+    detail = clean_text(decision.get("detail", ""))
+    if detail and detail.strip() == text.strip():
+        detail = ""
     importance = decision.get("importance", "info")
     topic = decision.get("topic", "general")
     title = title_of({**decision, "text": text})
-    notif = agents.add_notification("watch", STATUS_OF.get(importance, "info"), title, text,
+    actions = actions_for(text + " " + detail, topic)
+    body = text + (f"\n\n{detail}" if detail else "")
+    notif = agents.add_notification("watch", STATUS_OF.get(importance, "info"), title, body,
                                     steps=trace)
     notif.pop("_repeat", None)
     agents.annotate_notification(notif["id"], kind="watch", importance=importance, topic=topic,
-                                 run=kind, actions=actions_for(text, topic))
+                                 run=kind, actions=actions)
+    msg = channel.add("watch", text, detail=detail, title=title, importance=importance,
+                      topic=topic, kind=kind, actions=actions, notification=notif["id"])
     state.setdefault("sent", []).append({"t": time.time(), "importance": importance,
-                                         "topic": topic, "text": text[:300], "id": notif["id"]})
+                                         "topic": topic, "text": text[:300], "id": notif["id"],
+                                         "message": msg["id"]})
     activity.push("app", "watch.message", "Watch: " + title, detail=text[:300],
                   severity={"critical": "crit", "important": "warn"}.get(importance, "info"),
                   source="watch")
+    push.notify(title, text, kind="watch", importance=importance, thread="watch",
+                data={"message": msg["id"]})
     if RANK.get(importance, 0) >= RANK.get(s.get("push_min", "important"), 1):
-        await push_external(s, title, text, importance)
+        await push_external(s, title, body, importance)
     return notif
 
 
@@ -753,6 +791,226 @@ async def run(kind: str = "observe", incidents: list[dict] | None = None,
     state.setdefault("runs", []).append(record)
     save_state(state)
     return record
+
+
+# ------------------------------------------------------------------ the channel: answering
+
+CHAT_PROMPT = """Your job now: the user wrote to you in your channel. Answer them directly — one \
+to five short sentences in the same plain style; a list only when they ask for one. When the \
+answer needs facts from the server, look first with your read-only tools; never guess numbers. \
+When they ask you to be quieter, to stop reporting something or to pause, do it with mute_topic, \
+unmute_topic or pause_watch and confirm in one sentence. When they ask you to change something on \
+the server, you cannot: name the step and say that the assistant (PocketADM's agent, which asks \
+before every change) can do it. When they tell you something to keep in mind ("Minecraft is \
+stopped on purpose"), use remember and say that you will."""
+
+CHAT_TOOLS = [
+    {"name": "mute_topic",
+     "description": "Stop messages about a topic for a while.",
+     "parameters": {"type": "object", "properties": {
+         "topic": {"type": "string", "description": "The topic key or a word in it, e.g. backup, "
+                                                    "disk-root, nextcloud"},
+         "days": {"type": "number", "description": "How long, in days. Default 7."},
+         "note": {"type": "string", "description": "Why, in a few words."}},
+         "required": ["topic"]}},
+    {"name": "unmute_topic",
+     "description": "Report a muted topic again.",
+     "parameters": {"type": "object", "properties": {"topic": {"type": "string"}},
+                    "required": ["topic"]}},
+    {"name": "pause_watch",
+     "description": "Pause all messages except critical ones for some hours; 0 resumes.",
+     "parameters": {"type": "object", "properties": {"hours": {"type": "number"}},
+                    "required": ["hours"]}},
+    DECISION_TOOLS[2],          # remember
+]
+
+ENGINE_CHAT_TEXT = """
+Write your answer as plain text. To also mute a topic, pause yourself or keep a note, end with \
+exactly one line of JSON and nothing after it, for example {"mute": "backup", "days": 7} or \
+{"unmute": "backup"} or {"pause_hours": 8} or {"remember": "Minecraft is stopped on purpose"}.
+"""
+
+_ACTION_LINE = re.compile(r"\n?\s*(\{[^{}]*\"(?:mute|unmute|pause_hours|remember)\"[^{}]*\})\s*$")
+
+
+def _chat_action(name: str, args: dict) -> str:
+    """The few things the user may ask the watch itself to do — all about the
+    watch, none about the server."""
+    if name == "mute_topic":
+        topic = str(args.get("topic") or "").strip()
+        if not topic:
+            return "no topic given"
+        days = float(args.get("days") or 7)
+        mute(topic, max(1.0, min(days, 90.0)) * 24, str(args.get("note") or "asked in the channel"))
+        return f"muted '{topic}' for {days:g} days"
+    if name == "unmute_topic":
+        mute(str(args.get("topic") or ""), 0)
+        return "unmuted"
+    if name == "pause_watch":
+        hours = max(0.0, min(float(args.get("hours") or 0), 24 * 14))
+        pause(int(hours * 60))
+        return f"paused for {hours:g} hours" if hours else "resumed"
+    if name == "remember":
+        _remember(str(args.get("text", "")))
+        return "noted"
+    return "unknown"
+
+
+def _conversation_text(limit: int = 16) -> str:
+    lines = []
+    for m in channel.conversation(limit):
+        who = "You" if m["role"] == "watch" else "User"
+        line = f"{who} ({_clock(m['t'])}): {m['text']}"
+        if m.get("detail"):
+            line += f"\n   [detail you gave: {m['detail'][:500]}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+async def _chat_api(route: dict, prompt: str, trace: list) -> tuple[str, float]:
+    cfg = ai._cfg_for(route["provider"], route["model"])
+    s = settings()
+    language = LANGUAGES.get((s.get("lang") or "en")[:2].lower(), s.get("lang") or "English")
+    sysprompt = SYSTEM.format(language=f"Write in {language}") + "\n" + CHAT_PROMPT
+    messages: list[dict] = [{"role": "user", "content": prompt}]
+    usage = {"input": 0, "output": 0}
+    tools = READ_TOOLS + CHAT_TOOLS
+    answer = ""
+    for _ in range(MAX_STEPS):
+        text_parts, calls, blocks = [], [], []
+        async for what, payload in ai.get_stream(cfg, messages, sysprompt, tools):
+            if what == "text":
+                text_parts.append(payload)
+            elif what == "tool_call":
+                calls.append(payload)
+            elif what == "thinking_block":
+                blocks.append(payload)
+            elif what == "usage":
+                usage["input"] += payload["input"]
+                usage["output"] += payload["output"]
+        msg: dict = {"role": "assistant", "content": "".join(text_parts), "tool_calls": calls}
+        if blocks:
+            msg["thinking_blocks"] = blocks
+        messages.append(msg)
+        if "".join(text_parts).strip():
+            answer = "".join(text_parts)
+        if not calls:
+            break
+        for tc in calls:
+            name, args = tc["name"], tc.get("args") or {}
+            if name in ("mute_topic", "unmute_topic", "pause_watch", "remember"):
+                out = _chat_action(name, args)
+                trace.append({"tool": name, "detail": agents._args_summary(name, args), "output": out})
+            elif agents.sentinel_may_run(name, args):
+                t0 = time.time()
+                out = await ai.execute_tool(name, args, ai.DEFAULT_WORKDIR)
+                trace.append({"tool": name, "detail": agents._args_summary(name, args),
+                              "output": str(out)[:400], "ms": int((time.time() - t0) * 1000)})
+            else:
+                out = agents.SENTINEL_BLOCKED
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(out)})
+    cost = ai.estimate_cost(cfg["provider"], cfg["model"], usage["input"], usage["output"]) or 0.0
+    ai._persist_usage(cfg, usage, cost)
+    return answer, cost
+
+
+async def _chat_engine(route: dict, prompt: str, trace: list) -> tuple[str, float]:
+    s = settings()
+    language = LANGUAGES.get((s.get("lang") or "en")[:2].lower(), s.get("lang") or "English")
+    result = await engines.run_headless(
+        route["provider"],
+        SYSTEM.format(language=f"Write in {language}") + "\n" + CHAT_PROMPT + "\n" + ENGINE_CHAT_TEXT
+        + "\n\n" + prompt, model=route.get("model", ""), mode="plan", timeout=600)
+    trace.extend(result.get("steps", [])[:30])
+    text = result.get("text", "")
+    match = _ACTION_LINE.search(text)
+    if match:
+        text = text[:match.start()].rstrip()
+        try:
+            data = json.loads(match.group(1))
+        except ValueError:
+            data = {}
+        if data.get("mute"):
+            _chat_action("mute_topic", {"topic": data["mute"], "days": data.get("days", 7)})
+        if data.get("unmute"):
+            _chat_action("unmute_topic", {"topic": data["unmute"]})
+        if "pause_hours" in data:
+            _chat_action("pause_watch", {"hours": data.get("pause_hours") or 0})
+        if data.get("remember"):
+            _chat_action("remember", {"text": data["remember"]})
+    return text, 0.0
+
+
+async def answer() -> dict | None:
+    """Reply to what the user wrote in the channel since the watch last spoke.
+    One answer at a time; a question sent meanwhile is answered right after."""
+    if channel.replying:
+        return None
+    pending = channel.unanswered()
+    if not pending:
+        return None
+    route = config.get_ai_route("watch")
+    if not route.get("provider") or not accounts.usable(route["provider"]):
+        return channel.add("system", "No AI is connected for the watch yet. Choose one in its "
+                                     "settings, then ask again.", kind="chat")
+    s = settings()
+    state = load_state()
+    left = budget_left(s, state)
+    if left is not None and left <= 0:
+        return channel.add("system", "The watch has used up this month's budget. Raise it in the "
+                                     "watch settings to keep chatting.", kind="chat")
+    started = time.time()
+    channel.replying.update(since=started, to=pending[-1]["id"])
+    trace: list = []
+    try:
+        latest = "\n".join(m["text"] for m in pending)
+        prompt = (f"It is {local_now(s).strftime('%A %d.%m. %H:%M')}.\n\n"
+                  "What PocketADM already knows:\n" + await context_text("chat", [])
+                  + "\n\nYour channel with the user so far (oldest first):\n" + _conversation_text()
+                  + f"\n\nAnswer the user's latest message:\n{latest}")
+        engine = route["provider"] in engines.ENGINES
+        runner = _chat_engine if engine else _chat_api
+        text, cost = await asyncio.wait_for(runner(route, prompt, trace), 900)
+    except Exception as e:  # noqa: BLE001 — shown in the channel instead of a silent failure
+        channel.replying.clear()
+        return channel.add("system", f"The watch could not answer ({type(e).__name__}: "
+                                     f"{str(e)[:200]}).", kind="chat")
+    state = load_state()
+    state.setdefault("ledger", []).append({"t": time.time(), "cost": cost, "kind": "chat"})
+    state.setdefault("runs", []).append({"t": started, "kind": "chat", "decision": "reply",
+                                         "provider": route.get("provider", ""),
+                                         "model": route.get("model", ""), "cost": cost})
+    save_state(state)
+    text = clean_text(text) or "I could not put an answer together — ask me again?"
+    links = [a for a in actions_for(text, "") if a["kind"] != "assistant"
+             or re.search(r"assist", text, re.I)]
+    msg = channel.add("watch", text, kind="chat", reply_to=pending[-1]["id"], actions=links)
+    channel.replying.clear()
+    push.notify("Watch", text, kind="watch", importance="info", thread="watch",
+                data={"message": msg["id"]})
+    if any(m["role"] == "user" and m["t"] > started for m in channel.conversation(40)):
+        asyncio.ensure_future(answer())
+    return msg
+
+
+def welcome() -> dict | None:
+    """The first line in a fresh channel, so it never opens empty and says what
+    it is for."""
+    if channel.conversation(1):
+        return None
+    lang = (settings().get("lang") or "en")[:2].lower()
+    text = WELCOME.get(lang, WELCOME["en"])
+    return channel.add("watch", text, kind="system", title="The watch is on")
+
+
+WELCOME = {
+    "en": "I am keeping an eye on this server now. I write when something is worth knowing — "
+          "usually rarely, and only critical things at night. Ask me anything here, or tell me "
+          "what to leave alone.",
+    "de": "Ich behalte diesen Server ab jetzt im Blick. Ich melde mich, wenn etwas wichtig ist — "
+          "meistens selten, nachts nur bei Kritischem. Frag mich hier alles, oder sag mir, was ich "
+          "in Ruhe lassen soll.",
+}
 
 
 # ------------------------------------------------------------------ scheduler
@@ -882,9 +1140,10 @@ def mute(topic: str, hours: float, note: str = "") -> dict:
     return status()
 
 
-def feedback(notification_id: str, helpful: bool) -> None:
+def feedback(notification_id: str, helpful: bool, topic: str = "") -> None:
     state = load_state()
-    topic = next((m.get("topic") for m in state.get("sent", []) if m.get("id") == notification_id), "")
+    topic = topic or next((m.get("topic") for m in state.get("sent", [])
+                           if m.get("id") == notification_id or m.get("message") == notification_id), "")
     state.setdefault("feedback", []).append({"t": time.time(), "id": notification_id,
                                              "topic": topic, "helpful": bool(helpful)})
     save_state(state)

@@ -84,7 +84,9 @@ def test_parse_decision_from_an_engine():
     d = watch.parse_decision(text)
     assert d == {"decision": "notify", "importance": "important", "topic": "backup",
                  "title": "Backup failed", "text": "The nightly backup failed at 02:31.",
-                 "remember": "backup target is the T5"}
+                 "detail": "", "remember": "backup target is the T5"}
+    with_detail = text.replace('"remember"', '"detail": "exit code 1 at 02:31", "remember"')
+    assert watch.parse_decision(with_detail)["detail"] == "exit code 1 at 02:31"
     assert watch.parse_decision("no json here")["decision"] == "silent"
     assert watch.parse_decision('{"decision": "maybe"}')["decision"] == "silent"
 
@@ -94,6 +96,9 @@ def test_clean_text_strips_markdown_and_emoji():
 
 
 def test_events_are_bundled_and_throttled(w):
+    # only events here: a round or the Sunday look back would otherwise be due
+    # whenever the suite runs outside quiet hours
+    config.settings["watch"].update(interval_min=0, weekly=False)
     for i in range(3):
         activity.push("containers", "docker.die", f"web exited with code 1 ({i})",
                       severity="warn", target="web", source="docker")

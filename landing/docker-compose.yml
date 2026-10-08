@@ -1,5 +1,6 @@
-# Deploys the Helmsman landing page as a tiny static site behind the existing
-# reverse proxy. NPM proxies to it by container name on the shared network.
+# The website (pocketadm.com) as a tiny static site behind the existing reverse
+# proxy — NPM proxies to it by container name on the shared network — and the
+# push relay for the iPhone app next to it, reachable as pocketadm.com/push/.
 services:
   helmsman-landing:
     image: nginx:alpine
@@ -7,8 +8,34 @@ services:
     restart: unless-stopped
     volumes:
       - ./public:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - homeserver_net
+
+  pocketadm-push:
+    build: ../push-relay
+    image: pocketadm-push:local
+    container_name: pocketadm-push
+    restart: unless-stopped
+    # APNS_KEY_ID / APNS_TEAM_ID / RELAY_BUNDLES — kept out of git
+    env_file:
+      - path: ./push.env
+        required: false
+    environment:
+      APNS_KEY_FILE: /secrets/apns.p8
+    volumes:
+      - pocketadm_push_data:/data
+      - ./push-secrets:/secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - homeserver_net
+
+volumes:
+  pocketadm_push_data:
 
 networks:
   homeserver_net:

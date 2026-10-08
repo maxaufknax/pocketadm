@@ -30,13 +30,14 @@ code{background:#0a0e13;border:1px solid var(--border);border-radius:5px;padding
 <div class="wrap">
   <a class="brand" href="/"><img src="/logo.svg" alt=""> PocketADM</a>
   <h1>Privacy Policy</h1>
-  <div class="upd">Last updated: 24 September 2026</div>
+  <div class="upd">Last updated: 8 October 2026</div>
 
   <div class="card tldr">
     <p style="margin:0"><b>In short:</b> PocketADM is open-source, self-hosted software.
-    The app has <b>no backend of ours</b> and <b>collects no personal data</b>. It talks only
-    to the servers <i>you</i> add, over a direct connection. We never see your servers, your
-    credentials, your files, or your usage.</p>
+    The app <b>collects no personal data</b>. It talks to the servers <i>you</i> add, over a
+    direct connection. We never see your servers, your credentials, your files, or your usage.
+    The one service of ours it can use is an optional push relay that forwards notifications
+    to your phone and keeps nothing but the phone's push token.</p>
   </div>
 
   <h2>Who we are</h2>
@@ -46,7 +47,8 @@ code{background:#0a0e13;border:1px solid var(--border);border-radius:5px;padding
 
   <h2>What data the app collects</h2>
   <p><b>None on our side.</b> There is no PocketADM analytics, no tracking SDK, no advertising,
-  and no account with us. We operate no server that receives your data.</p>
+  and no account with us. The only server of ours the app talks to is the optional push relay
+  described below.</p>
 
   <h2>Data that stays on your device</h2>
   <p>To function, the app stores the following <b>locally on your device only</b>:</p>
@@ -61,6 +63,23 @@ code{background:#0a0e13;border:1px solid var(--border);border-radius:5px;padding
   <p>When you use PocketADM, your device communicates <b>directly</b> with the server you added
   (your admin password, commands, chat messages, files). This traffic goes only between your
   device and your server. It does not pass through us.</p>
+
+  <h2>Push notifications (optional)</h2>
+  <p>Your own server cannot send notifications to an iPhone by itself — that takes the app
+  developer's key with Apple. If you allow notifications, the app therefore registers its Apple
+  push token with our relay at <code>pocketadm.com/push</code> and receives a random ID in return,
+  which it hands to your server. When your server has something to tell you (a message from its
+  watch, the assistant waiting for your OK), it sends the notification to the relay, which passes
+  it to Apple's push service and forgets it.</p>
+  <ul>
+    <li>The relay stores only the push token, the random ID, which app build it belongs to and
+    when it was last used. It does not store or log what a notification says, and it does not
+    know which server a phone belongs to.</li>
+    <li>With <b>previews off</b> (in the app's notification settings) your server sends only
+    "New message from your server", so the relay never sees the content.</li>
+    <li>Turning notifications off in the app removes the ID from your server. When you delete
+    the app, Apple invalidates the token and the relay deletes it the next time it is used.</li>
+  </ul>
 
   <h2>AI features (bring your own key)</h2>
   <p>If you enable the AI assistant, requests are sent from your server to the AI provider whose

@@ -163,6 +163,52 @@ async def remote_digest(client: httpx.AsyncClient, registry: str, repo: str, tag
 
 _remote_info_cache: dict[str, dict] = {}
 
+# Runtimes and helpers every image carries — their versions say nothing about
+# the app inside (NODE_VERSION in a Node app is the runtime, not the app).
+_RUNTIME_ENV = {"NODE", "PYTHON", "PYTHON_PIP", "PIP", "YARN", "NPM", "GOSU", "GOLANG", "GO",
+                "JAVA", "JDK", "JRE", "RUBY", "RUBYGEMS", "BUNDLER", "PHP", "COMPOSER", "S6_OVERLAY",
+                "S6", "TINI", "DUMB_INIT", "ALPINE", "DEBIAN", "UBUNTU", "LANG", "GPG", "GPG_KEY",
+                "OPENSSL", "CURL", "DOTNET", "ASPNET", "DOTNET_SDK", "POWERSHELL", "LUA", "LUAJIT",
+                "CADDY_DOCKER", "SETUPTOOLS", "WHEEL", "PIPX", "UV", "POETRY", "VIRTUALENV"}
+_ENV_ALIASES = {"postgres": ("PG", "POSTGRES"), "mariadb": ("MARIADB",), "mysql": ("MYSQL",),
+                "nextcloud": ("NEXTCLOUD",), "redis": ("REDIS",), "nginx": ("NGINX",),
+                "httpd": ("HTTPD",), "mongo": ("MONGO",), "rabbitmq": ("RABBITMQ",),
+                "traefik": ("TRAEFIK",), "caddy": ("CADDY",), "haproxy": ("HAPROXY",),
+                "memcached": ("MEMCACHED",), "elasticsearch": ("ELASTIC", "ELASTICSEARCH"),
+                "influxdb": ("INFLUXDB",), "telegraf": ("TELEGRAF",), "ghost": ("GHOST",),
+                "wordpress": ("WORDPRESS",), "drupal": ("DRUPAL",), "matomo": ("MATOMO",),
+                "registry": ("DISTRIBUTION", "REGISTRY")}
+
+
+def _looks_like_version(text: str) -> bool:
+    """"2.13.1", "v1.162.0", "2026.09.0" — not "master-node" or "latest"."""
+    return bool(re.match(r"^v?\d+(\.\d+)+([-.+][0-9A-Za-z.-]+)?$", (text or "").strip()))
+
+
+def image_version(image: str, labels: dict | None, env: list | None) -> str:
+    """The app's own version, as precisely as the image tells it: its OCI
+    version label, else the *_VERSION variable official images set
+    (REDIS_VERSION, NGINX_VERSION, PG_VERSION …), else nothing."""
+    labels = labels or {}
+    label = (labels.get("org.opencontainers.image.version") or labels.get("version") or "").strip()
+    if _looks_like_version(label):
+        return label[:40]
+    _, path, _ = parse_image_ref(image)
+    name = path.split("/")[-1].lower()
+    wanted = set(_ENV_ALIASES.get(name, ())) | {re.sub(r"[^A-Z0-9]", "_", name.upper())}
+    found: dict[str, str] = {}
+    for item in env or []:
+        key, _, value = str(item).partition("=")
+        if key.endswith("_VERSION") and value:
+            found[key[:-len("_VERSION")]] = value.strip()
+    for prefix in wanted:
+        if _looks_like_version(found.get(prefix, "")):
+            return found[prefix][:40]
+    candidates = [v for k, v in found.items() if k not in _RUNTIME_ENV and _looks_like_version(v)]
+    if len(candidates) == 1:
+        return candidates[0][:40]
+    return label[:40]
+
 
 def _host_arch() -> str:
     import platform
@@ -206,8 +252,7 @@ async def remote_image_info(client: httpx.AsyncClient, image: str) -> dict:
             return info
         blob = r.json()
         labels = (blob.get("config") or {}).get("Labels") or {}
-        info["version"] = (labels.get("org.opencontainers.image.version")
-                           or labels.get("version") or "")[:40]
+        info["version"] = image_version(image, labels, (blob.get("config") or {}).get("Env"))
         info["created"] = (blob.get("created") or "").split(".")[0]
         info["source"] = labels.get("org.opencontainers.image.source", "")
     except Exception:
@@ -295,10 +340,9 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                         entry["created"] = created.split(".")[0] + "Z"
                     except ValueError:
                         pass
-                # the app's own version, when the image declares it (OCI label)
+                # the app's own version, when the image declares it
                 labels = (info.get("Config") or {}).get("Labels") or {}
-                entry["version"] = (labels.get("org.opencontainers.image.version")
-                                    or labels.get("version") or "")[:40]
+                entry["version"] = image_version(image, labels, (info.get("Config") or {}).get("Env"))
                 entry["source"] = labels.get("org.opencontainers.image.source", "")[:200]
                 local_digests = {d.split("@")[1] for d in info.get("RepoDigests", []) if "@" in d}
                 if not local_digests:
@@ -473,39 +517,128 @@ def start_update_all_job(images: list[str]) -> jobs.Job:
     return jobs.start(f"Update all ({len(images)} images)", "update", work)
 
 
-EXPLAIN_SYSTEM = ("You explain a pending software update to a self-hoster who is not a "
-                  "sysadmin. Be concrete and short (max ~140 words), plain words, no "
-                  "headings. Say: 1) in one sentence what the update changes for them, "
-                  "2) the risk — low, medium or high — and why (breaking changes, migrations, "
-                  "major versions, known issues in the notes), 3) what to do (update now, wait, "
-                  "back up first). Use the release notes given; never invent changes. "
-                  "Answer in the user's language if specified.")
+EXPLAIN_SYSTEM = (
+    "You summarise a pending software update for someone who runs it on their own server. "
+    "Write ONLY about what changes between the installed and the new version, from the release "
+    "notes given. Never describe what the software is or does in general, and never mention "
+    "features that already existed. Format, nothing else: up to four bullet points (\"- \"), the "
+    "changes that matter most to someone running it — new things they will notice, fixed bugs, "
+    "security fixes, breaking changes or migration steps — most important first, each at most "
+    "15 words; then one line \"Risk: low|medium|high — why in a few words\"; then one line "
+    "\"Recommendation: …\" (update now, wait for the next patch, or back up first). No intro, no "
+    "headings, no closing sentence. If the notes are only dependency or base-image updates, say "
+    "exactly that in one bullet. Translate everything, including the words Risk and "
+    "Recommendation, into the answer language.")
+
+EXPLAIN_FILE = config.DATA_DIR / "update_explanations.json"
+_EXPLAIN_TTL = 14 * 86400
+LANG_NAMES = {"de": "German", "en": "English", "fr": "French", "es": "Spanish", "it": "Italian",
+              "nl": "Dutch", "pt": "Portuguese", "pl": "Polish"}
+
+
+def _explain_store() -> dict:
+    try:
+        data = json.loads(EXPLAIN_FILE.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def cached_explanation(image: str, digest: str, lang: str) -> str:
+    hit = _explain_store().get(f"{image}|{digest}|{(lang or 'en')[:2]}")
+    if hit and time.time() - hit.get("t", 0) < _EXPLAIN_TTL:
+        return hit.get("text", "")
+    return ""
+
+
+def _remember_explanation(image: str, digest: str, lang: str, text: str) -> None:
+    data = {k: v for k, v in _explain_store().items() if time.time() - v.get("t", 0) < _EXPLAIN_TTL}
+    data[f"{image}|{digest}|{(lang or 'en')[:2]}"] = {"t": time.time(), "text": text}
+    try:
+        EXPLAIN_FILE.write_text(json.dumps(dict(list(data.items())[-300:])))
+    except OSError:
+        pass
+
+
+_TEXTS = {
+    "rebuild": {
+        "en": "- Same {label} version ({version}), only a fresh build of the image — usually updated "
+              "system libraries and security patches of the base image.\nRisk: low — the app itself "
+              "does not change.\nRecommendation: update when it suits you.",
+        "de": "- Gleiche {label}-Version ({version}), nur ein neuer Build des Images — meist "
+              "aktualisierte Systembibliotheken und Sicherheits-Patches des Basis-Images.\nRisiko: "
+              "gering — die App selbst ändert sich nicht.\nEmpfehlung: aktualisieren, wenn es passt.",
+    },
+    "unknown": {
+        "en": "- {label} published no release notes for this build ({created}). It is most likely a "
+              "rebuild with updated dependencies.\nRisk: low to medium — the changes are not "
+              "documented.\nRecommendation: update when nobody is using it, and check it afterwards.",
+        "de": "- Für diesen Build von {label} ({created}) gibt es keine Release-Notes. Meist ist es ein "
+              "Neu-Build mit aktualisierten Abhängigkeiten.\nRisiko: gering bis mittel — die "
+              "Änderungen sind nicht dokumentiert.\nEmpfehlung: aktualisieren, wenn niemand es "
+              "nutzt, und danach kurz prüfen.",
+    },
+}
+
+
+def _canned(kind: str, lang: str, **values) -> str:
+    texts = _TEXTS[kind]
+    return texts.get((lang or "en")[:2], texts["en"]).format(**values)
+
+
+_NOTE_NOISE = re.compile(
+    r"^\s*(\*\*Full Changelog\*\*.*|Full Changelog:.*|.*made their first contribution.*|"
+    r"#+\s*New Contributors.*|<!--.*-->|!\[[^\]]*\]\([^)]*\))\s*$", re.I | re.M)
+
+
+def clean_notes(text: str, limit: int = 1800) -> str:
+    """Release notes without the parts that say nothing about the change:
+    contributor lists, changelog links, images, HTML comments."""
+    text = _NOTE_NOISE.sub("", text or "")
+    text = re.sub(r"\(\s*\[?#?\d+\]?\(https://github\.com/[^)]+\)\s*\)", "", text)
+    text = re.sub(r"https://github\.com/\S+/(pull|issues|commit)/\S+", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text[:limit]
 
 
 async def explain_update(subject: str, kind: str, lang: str = "") -> str:
-    if kind == "docker":
-        details = await release_details(subject)
-        newer = [r for r in details["releases"] if r["newer"]] or details["releases"][:2]
-        notes = "\n\n".join(f"## {r['name'] or r['tag']} ({r['date']})\n{r['notes'][:1500]}"
-                             for r in newer[:5])
-        prompt = (f"Service: {details['label']} — {details['description'] or details['category']}\n"
-                  f"Image: {subject}\n"
-                  f"Installed: {details['local'].get('version') or details['local'].get('tag', '?')}"
-                  f" (built {details['local'].get('created', '?')})\n"
-                  f"New: {details['remote'].get('version') or 'same tag, newer build'}"
-                  f" (built {details['remote'].get('created', '?')})\n"
-                  f"Containers recreated: {', '.join(u['name'] for u in details['used_by']) or 'none'}\n"
-                  f"While updating: {details['impact']}\n")
-        if notes:
-            prompt += f"\nRelease notes since the installed version:\n{notes[:6000]}\n"
-        else:
-            prompt += "\nNo release notes were found upstream.\n"
+    lang = (lang or "en")[:2].lower()
+    if kind != "docker":
+        prompt = (f"A new update is available for the package '{subject}'. Say in two short bullets "
+                  "what kind of package it is and whether updates to it are usually safe, then "
+                  "Risk and Recommendation lines.")
+        if lang != "en":
+            prompt += f"\nAnswer language: {LANG_NAMES.get(lang, lang)}"
+        return await ai.one_shot(prompt, EXPLAIN_SYSTEM, feature="insights")
+    details = await release_details(subject)
+    digest = details["remote"].get("digest", "")
+    cached = cached_explanation(subject, digest, lang)
+    if cached:
+        return cached
+    installed = details["local"].get("version") or ""
+    new = details["remote"].get("version") or ""
+    coming = [r for r in details["releases"] if r["newer"]]
+    if details.get("rebuild"):
+        text = _canned("rebuild", lang, label=details["label"], version=installed)
+    elif not coming:
+        created = (details["remote"].get("created") or "")[:10] or "?"
+        text = _canned("unknown", lang, label=details["label"], created=created)
     else:
-        prompt = f"A new update is available for package '{subject}'.\n"
-    if lang:
-        prompt += f"\nAnswer in language: {lang}"
-    prompt += "\nExplain this update to the user."
-    return await ai.one_shot(prompt, EXPLAIN_SYSTEM, feature="insights")
+        shown = coming[:6]
+        notes = "\n\n".join(f"### {r['tag']} ({r['date']})\n{clean_notes(r['notes'])}" for r in shown)
+        prompt = (f"Software: {details['label']}\n"
+                  f"Installed: {installed or details['local'].get('tag', '?')}"
+                  f" (image built {(details['local'].get('created') or '?')[:10]})\n"
+                  f"New: {new or shown[0]['tag']} (image built {(details['remote'].get('created') or '?')[:10]})\n"
+                  + ("This is a new major version.\n" if details.get("major") else "")
+                  + (f"{len(coming) - len(shown)} older releases in between are not shown.\n"
+                     if len(coming) > len(shown) else "")
+                  + f"\nRelease notes of the versions this update brings (newest first):\n{notes[:7000]}\n")
+        if lang != "en":
+            prompt += f"\nAnswer language: {LANG_NAMES.get(lang, lang)}"
+        text = (await ai.one_shot(prompt, EXPLAIN_SYSTEM, feature="insights")).strip()
+    _remember_explanation(subject, digest, lang, text)
+    return text
 
 
 # Images whose name does not say where their source lives.
@@ -723,8 +856,7 @@ async def release_details(image: str) -> dict:
         labels = (info.get("Config") or {}).get("Labels") or {}
         source = labels.get("org.opencontainers.image.source", "")
         out["local"] = {
-            "version": (labels.get("org.opencontainers.image.version")
-                        or labels.get("version") or "")[:40],
+            "version": image_version(image, labels, (info.get("Config") or {}).get("Env")),
             "created": (info.get("Created") or "").split(".")[0],
             "tag": parse_image_ref(image)[2],
             "digest": next((d.split("@")[1][:19] for d in info.get("RepoDigests", [])
@@ -745,20 +877,61 @@ async def release_details(image: str) -> dict:
         pass
     repo = _github_repo_for(image, source)
     out["repo"] = repo
+    local_v, remote_v = out["local"].get("version", ""), out["remote"].get("version", "")
+    # the same version again: a rebuild of the image, not a new release
+    out["rebuild"] = bool(local_v and remote_v and _looks_like_version(local_v)
+                          and local_v.lstrip("v") == remote_v.lstrip("v"))
     if repo:
         out["links"]["changelog"] = f"https://github.com/{repo}/releases"
         out["links"]["source"] = f"https://github.com/{repo}"
         image_tag = parse_image_ref(image)[2]
-        installed = out["local"].get("version") or image_tag
-        latest = out["remote"].get("version", "")
-        for rel in await github_releases(repo):
-            newer = is_newer(rel["tag"], installed)
-            # nothing newer than what the registry would pull is "coming", and a
-            # pinned tag (redis:7-alpine) never brings the next major
-            beyond = is_newer(rel["tag"], latest) if latest else False
-            coming = bool(newer) and not beyond and reachable_release(rel["tag"], image_tag)
+        releases = await github_releases(repo)
+        marks = coming_releases(releases, local_v, remote_v, image_tag,
+                                out["local"].get("created", ""), out["remote"].get("created", ""))
+        if out["rebuild"]:
+            marks = [False] * len(releases)
+        for rel, coming in zip(releases, marks):
             out["releases"].append({**rel, "newer": coming, "notes": rel["notes"][:2500]})
         out["newer_count"] = sum(1 for r in out["releases"] if r["newer"])
-        out["major"] = major_jump(installed, latest or next(
+        installed = local_v if _looks_like_version(local_v) else image_tag
+        out["major"] = major_jump(installed, remote_v or next(
             (r["tag"] for r in out["releases"] if r["newer"] and not r["prerelease"]), ""))
+    return out
+
+
+_PRE = re.compile(r"(?:^|[-.\d])(rc|beta|alpha|pre|preview|dev|nightly)\d*\b", re.I)
+
+
+def _is_pre(rel: dict) -> bool:
+    return bool(rel.get("prerelease")) or bool(_PRE.search(rel.get("tag", "")))
+
+
+def coming_releases(releases: list[dict], installed: str, latest: str, image_tag: str,
+                    local_created: str = "", remote_created: str = "") -> list[bool]:
+    """Which upstream releases this update actually brings.
+
+    With both versions known: the releases after the installed one up to the
+    new one. Without (a `latest` or `alpine` tag and no version anywhere in the
+    image): the releases published after the installed image was built and no
+    later than the new one. Release candidates count only when the new version
+    is one; a pinned tag (redis:7-alpine) never brings the next major."""
+    target_pre = bool(latest) and bool(_PRE.search(latest))
+    have_versions = _looks_like_version(installed)
+    local_day, remote_day = (local_created or "")[:10], (remote_created or "")[:10]
+    out = []
+    for rel in releases:
+        if _is_pre(rel) and not target_pre:
+            out.append(False)
+            continue
+        if not reachable_release(rel["tag"], image_tag):
+            out.append(False)
+            continue
+        if have_versions:
+            newer = is_newer(rel["tag"], installed)
+            beyond = is_newer(rel["tag"], latest) if _looks_like_version(latest) else False
+            out.append(bool(newer) and not beyond)
+        elif local_day and remote_day and rel.get("date"):
+            out.append(local_day < rel["date"] <= remote_day)
+        else:
+            out.append(False)
     return out

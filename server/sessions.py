@@ -31,7 +31,7 @@ import os
 import time
 
 from . import (agents, ai, audit, chats, cmdpolicy, config, discovery, engines, permissions,
-               servermap)
+               push, servermap)
 
 # events that make up the replayable in-flight turn (see Session.live_events)
 _LIVE_KINDS = {"text", "thinking", "thinking_block", "tool_request",
@@ -46,6 +46,9 @@ class Client:
     def __init__(self, ws):
         self.ws = ws
         self.alive = True
+        # the app says "away" right before the phone suspends it: the socket may
+        # linger for a while, but nobody is looking at it any more
+        self.away = False
 
     async def send(self, **event) -> bool:
         if not self.alive:
@@ -104,6 +107,19 @@ class Session:
 
     def detach(self, client: Client) -> None:
         self.subscribers.discard(client)
+
+    @property
+    def watched(self) -> bool:
+        """Is anyone looking at this chat right now?"""
+        return any(c.alive and not c.away for c in self.subscribers)
+
+    def _push_device(self, title: str, body: str) -> None:
+        """A notification for the phone when nobody has the chat open."""
+        if self.watched:
+            return
+        push.notify(title, body, kind="assistant", importance="important",
+                    thread=f"chat-{self.chat_id}",
+                    data={"chat": self.chat_id, "title": self.chat.get("title", "")})
 
     def config_dict(self) -> dict:
         return {"mode": self.mode, "provider": self.provider, "model": self.model,
@@ -243,11 +259,14 @@ class Session:
             self._drain_inbox_into_history()
             return
         self.running = True
+        started = time.time()
+        finished = False
         await self.broadcast(type="run_state", running=True, live=False)
         try:
             while self.inbox:
                 self._drain_inbox_into_history()
                 await self._agent_cycle()
+            finished = True
         except asyncio.CancelledError:
             await self._safe_broadcast(type="stopped", live=False)
         except Exception as e:  # noqa: BLE001 — surface any provider error
@@ -262,6 +281,16 @@ class Session:
             self.live_events = []
             await self._safe_broadcast(type="run_state", running=False, live=False)
             await self._safe_broadcast(type="done", live=False)
+            if finished and time.time() - started > 15:
+                self._push_device("The assistant is done", self._last_answer(140)
+                                  or "It finished working on your request.")
+
+    def _last_answer(self, limit: int) -> str:
+        for m in reversed(self.messages):
+            if m.get("role") == "assistant" and (m.get("content") or "").strip():
+                text = " ".join(m["content"].split())
+                return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+        return ""
 
     def _drain_inbox_into_history(self) -> None:
         while self.inbox:
@@ -373,6 +402,9 @@ class Session:
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             self.pending[tc["id"]] = fut
             await self.broadcast(type="tool_request", id=tc["id"], name=tc["name"], args=tc["args"])
+            what = (tc["args"].get("command") or tc["args"].get("path") or tc["args"].get("url")
+                    or tc["name"])
+            self._push_device("The assistant is waiting for your OK", str(what)[:160])
             try:
                 approved = await asyncio.wait_for(fut, timeout=1800)
             except asyncio.TimeoutError:
@@ -534,7 +566,9 @@ class Session:
         return cont
 
     def _push(self, status: str, title: str, body: str) -> None:
-        """Fire-and-forget agent push to the global ntfy topic (if configured)."""
+        """Fire-and-forget agent push: the phones nobody looks at the chat on,
+        and the global ntfy topic (if configured)."""
+        self._push_device(title, body)
         au = config.get_autonomy()
         url = config.get_ntfy_url()
         if not (au["push"] and url):
@@ -673,6 +707,9 @@ async def ws_chat(ws) -> None:
                             else:
                                 await session.broadcast(type="rewound", text=removed,
                                                         live=False)
+            elif t in ("away", "back"):
+                # the phone is about to suspend the app / is back in front
+                client.away = t == "away"
             elif t == "approve":
                 if session:
                     session.resolve_approval(msg)

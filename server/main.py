@@ -15,7 +15,7 @@ from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
                servicegroups, sessions, skills, snapshots, sysinfo, terminal, termsessions,
                tls, updates)
-from . import accounts, activity, files, signin, watch
+from . import accounts, activity, channel, files, push, signin, watch
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -26,7 +26,7 @@ authed = Depends(auth.require_auth)
 # Demo instances are a public read-only playground: every mutation is blocked.
 # A WebSocket ticket changes nothing — without it the demo's chat and terminal
 # could not even connect.
-DEMO_ALLOW = {"/api/login", "/api/notifications/seen", "/api/ws/ticket"}
+DEMO_ALLOW = {"/api/login", "/api/notifications/seen", "/api/ws/ticket", "/api/watch/channel/read"}
 
 
 @app.middleware("http")
@@ -232,7 +232,8 @@ async def ws_ticket():
 
 
 FEATURES = ["services", "container_live", "activity", "storage", "files_v2", "watch",
-            "accounts", "routes", "chat_manage", "health_v2", "update_details_v2"]
+            "accounts", "routes", "chat_manage", "health_v2", "update_details_v2",
+            "watch_channel", "push", "files_manage", "chat_presence", "update_explain_v2"]
 
 
 @app.get("/api/me", dependencies=[authed])
@@ -546,7 +547,220 @@ async def metrics_context(t: float, window: int = 240):
 
 
 # ---------------------------------------------------------- fs browser
-# Read-only on purpose (see files.py): browse, preview, download, measure.
+# Browse, preview, download, measure — and manage, with the guardrails in
+# files.py (system folders, credentials, versions for an undo).
+
+
+@app.get("/api/fs/start", dependencies=[authed])
+async def fs_start():
+    """Where the file browser opens: "/" when PocketADM sees the whole server."""
+    return await asyncio.to_thread(files.start)
+
+
+def _fs_error(e: Exception) -> HTTPException:
+    if isinstance(e, PermissionError):
+        return HTTPException(403, str(e) or "permission denied")
+    if isinstance(e, FileNotFoundError):
+        return HTTPException(404, str(e) or "not found")
+    if isinstance(e, FileExistsError):
+        return HTTPException(409, str(e) or "already exists")
+    if isinstance(e, files.Conflict):
+        return HTTPException(409, str(e))
+    if isinstance(e, ValueError):
+        return HTTPException(400, str(e))
+    if isinstance(e, OSError):
+        return HTTPException(500, e.strerror or str(e))
+    return HTTPException(500, str(e))
+
+
+class FsWriteBody(BaseModel):
+    path: str
+    content: str
+    expected_modified: float | None = None
+    create: bool = False
+
+
+@app.post("/api/fs/write", dependencies=[authed])
+async def fs_write(body: FsWriteBody):
+    """Save a text file (or create one with create=true). The previous version
+    is kept: POST /api/fs/restore with the returned `version` undoes the save."""
+    try:
+        result = await asyncio.to_thread(files.write_text, body.path, body.content,
+                                         body.expected_modified, body.create)
+    except Exception as e:  # noqa: BLE001 — mapped to a status code
+        raise _fs_error(e)
+    audit.record("file_create" if body.create else "file_edit", target=result["display"],
+                 detail=f"{result['size']} bytes")
+    return result
+
+
+class FsRestoreBody(BaseModel):
+    version: str
+
+
+@app.post("/api/fs/restore", dependencies=[authed])
+async def fs_restore(body: FsRestoreBody):
+    try:
+        result = await asyncio.to_thread(files.restore_version, body.version)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_restore", target=result["display"])
+    return result
+
+
+class FsMkdirBody(BaseModel):
+    path: str
+    name: str
+
+
+@app.post("/api/fs/mkdir", dependencies=[authed])
+async def fs_mkdir(body: FsMkdirBody):
+    try:
+        result = await asyncio.to_thread(files.make_dir, body.path, body.name)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_mkdir", target=result["display"])
+    return result
+
+
+@app.post("/api/fs/upload", dependencies=[authed])
+async def fs_upload(request: Request, path: str, name: str, overwrite: bool = False):
+    """The request body is the file itself (any type, streamed to disk)."""
+    import queue
+    import threading
+    chunks: "queue.Queue[bytes | None]" = queue.Queue(maxsize=64)
+
+    def feed():
+        while True:
+            item = chunks.get()
+            if item is None:
+                return
+            yield item
+
+    holder: dict = {}
+
+    def worker():
+        try:
+            holder["result"] = files.save_upload(path, name, feed(), overwrite)
+        except BaseException as e:  # noqa: BLE001
+            holder["error"] = e
+            while chunks.get() is not None:      # drain so the reader never blocks
+                pass
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        async for chunk in request.stream():
+            if chunk:
+                await asyncio.to_thread(chunks.put, chunk)
+    finally:
+        await asyncio.to_thread(chunks.put, None)
+        await asyncio.to_thread(thread.join)
+    if "error" in holder:
+        raise _fs_error(holder["error"])
+    result = holder["result"]
+    audit.record("file_upload", target=result["display"], detail=f"{result['size']} bytes")
+    return result
+
+
+class FsRenameBody(BaseModel):
+    path: str
+    name: str
+
+
+@app.post("/api/fs/rename", dependencies=[authed])
+async def fs_rename(body: FsRenameBody):
+    try:
+        result = await asyncio.to_thread(files.rename, body.path, body.name)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_rename", target=files.display(body.path), detail=f"→ {body.name}")
+    return result
+
+
+class FsMoveBody(BaseModel):
+    paths: list[str]
+    dest: str
+    action: str = "move"            # "move" | "copy"
+    overwrite: bool = False
+
+
+@app.post("/api/fs/move", dependencies=[authed])
+async def fs_move(body: FsMoveBody):
+    if not body.paths:
+        raise HTTPException(400, "nothing to move")
+    try:
+        result = await asyncio.to_thread(files.move, body.paths, body.dest,
+                                         body.action == "copy", body.overwrite)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_copy" if body.action == "copy" else "file_move", target=files.display(body.dest),
+                 detail=", ".join(result["done"])[:300])
+    return result
+
+
+class FsPathsBody(BaseModel):
+    paths: list[str]
+
+
+@app.post("/api/fs/delete", dependencies=[authed])
+async def fs_delete(body: FsPathsBody):
+    if not body.paths:
+        raise HTTPException(400, "nothing to delete")
+    try:
+        result = await asyncio.to_thread(files.delete, body.paths)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_delete", target=", ".join(result["removed"])[:300])
+    return result
+
+
+class FsChmodBody(BaseModel):
+    path: str
+    mode: str
+    recursive: bool = False
+
+
+@app.post("/api/fs/chmod", dependencies=[authed])
+async def fs_chmod(body: FsChmodBody):
+    try:
+        result = await asyncio.to_thread(files.chmod, body.path, body.mode, body.recursive)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_chmod", target=result["display"], detail=body.mode)
+    return result
+
+
+class FsPathBody(BaseModel):
+    path: str
+
+
+@app.post("/api/fs/extract", dependencies=[authed])
+async def fs_extract(body: FsPathBody):
+    try:
+        result = await asyncio.to_thread(files.extract, body.path)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_extract", target=result["display"])
+    return result
+
+
+@app.get("/api/fs/archive", dependencies=[authed])
+async def fs_archive(path: str):
+    """A folder as a zip file, to save or share on the phone."""
+    from starlette.background import BackgroundTask
+    try:
+        out = await asyncio.to_thread(files.make_archive, path)
+    except Exception as e:  # noqa: BLE001
+        raise _fs_error(e)
+    audit.record("file_download", target=files.display(files.resolve(path)), detail="folder as zip")
+
+    def cleanup():
+        import shutil
+        shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
+    return FileResponse(out, filename=os.path.basename(out), media_type="application/zip",
+                        content_disposition_type="attachment", background=BackgroundTask(cleanup))
 
 @app.get("/api/fs", dependencies=[authed])
 async def fs_list(path: str = "", want_files: int = Query(0, alias="files"), hidden: int = 0):
@@ -676,9 +890,13 @@ async def get_updates(force: bool = False):
 
 
 @app.get("/api/updates/detail", dependencies=[authed])
-async def update_detail(image: str):
-    """Installed version/build date + latest upstream releases for one image."""
-    return await updates.release_details(image)
+async def update_detail(image: str, lang: str = ""):
+    """Installed version/build date + latest upstream releases for one image,
+    and the summary of what changes when one was already written."""
+    details = await updates.release_details(image)
+    details["explanation"] = updates.cached_explanation(
+        image, details["remote"].get("digest", ""), lang)
+    return details
 
 
 class UpdateBody(BaseModel):
@@ -1329,7 +1547,13 @@ async def set_onboarded():
 
 @app.get("/api/chats", dependencies=[authed])
 async def chats_index(q: str = ""):
-    return {"chats": chats.list_chats(q)}
+    rows = chats.list_chats(q)
+    # a chat the agent is still working on, or waiting in for an OK
+    for row in rows:
+        live = sessions.manager.get(row["id"])
+        row["running"] = bool(live and live.running)
+        row["waiting"] = bool(live and (live.pending or live.paused))
+    return {"chats": rows}
 
 
 class PinBody(BaseModel):
@@ -1505,6 +1729,139 @@ async def watch_test_delivery():
 @app.post("/api/watch/memory/clear", dependencies=[authed])
 async def watch_forget():
     return watch.forget_memory()
+
+
+# ------------------------------------------------------------------ the watch's channel
+
+def _channel_status() -> dict:
+    st = demodata.watch_status() if config.DEMO else watch.status()
+    return {"enabled": st["settings"]["enabled"], "paused": st["paused"],
+            "running": st["running"], "quiet_now": st["quiet_now"],
+            "route": st["route"], "next_round": st["next_round"],
+            "last_round": st["last_round"]}
+
+
+@app.get("/api/watch/channel", dependencies=[authed])
+async def watch_channel(after: float = 0, before: float = 0, limit: int = 60):
+    """The conversation with the watch, oldest first: what it wrote on its own,
+    what you asked it, and its answers."""
+    if config.DEMO:
+        demodata.seed_channel()
+    page = channel.page(after, before, min(max(limit, 1), 200))
+    page["status"] = _channel_status()
+    return page
+
+
+class ChannelChatBody(BaseModel):
+    text: str
+
+
+@app.post("/api/watch/chat", dependencies=[authed])
+async def watch_chat(body: ChannelChatBody):
+    """Write to the watch. The answer arrives in the channel (and as a push
+    notification when the phone is locked)."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "empty message")
+    msg = channel.add("user", text[:2000], kind="chat")
+    asyncio.ensure_future(watch.answer())
+    return {"message": msg, "replying": True}
+
+
+class ChannelReadBody(BaseModel):
+    t: float = 0
+
+
+@app.post("/api/watch/channel/read", dependencies=[authed])
+async def watch_channel_read(body: ChannelReadBody):
+    channel.mark_read(body.t or None)
+    return {"unread": channel.unread()}
+
+
+class ChannelFeedbackBody(BaseModel):
+    helpful: bool
+
+
+@app.post("/api/watch/channel/{msg_id}/feedback", dependencies=[authed])
+async def watch_channel_feedback(msg_id: str, body: ChannelFeedbackBody):
+    msg = channel.get(msg_id)
+    if not msg:
+        raise HTTPException(404, "no such message")
+    channel.update(msg_id, feedback="helpful" if body.helpful else "not_helpful")
+    watch.feedback(msg.get("notification") or msg_id, body.helpful, topic=msg.get("topic", ""))
+    return {"ok": True}
+
+
+@app.delete("/api/watch/channel/{msg_id}", dependencies=[authed])
+async def watch_channel_delete(msg_id: str):
+    msg = channel.get(msg_id)
+    if not channel.delete(msg_id):
+        raise HTTPException(404, "no such message")
+    if msg and msg.get("notification"):
+        agents.delete_notification(msg["notification"])
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ push to phones
+
+@app.get("/api/push", dependencies=[authed])
+async def push_status():
+    return push.status()
+
+
+class PushDeviceBody(BaseModel):
+    relay_id: str
+    name: str = ""
+    platform: str = "ios"
+    min: str = "info"
+    assistant: bool = True
+    preview: bool = True
+
+
+@app.post("/api/push/devices", dependencies=[authed])
+async def push_register(body: PushDeviceBody):
+    """A phone that wants push notifications from this server (its relay id,
+    see push.py)."""
+    try:
+        device = push.register(body.relay_id, body.name, body.platform, body.min,
+                               body.assistant, body.preview)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return device
+
+
+class PushDeviceUpdateBody(BaseModel):
+    min: str | None = None
+    assistant: bool | None = None
+    preview: bool | None = None
+    name: str | None = None
+
+
+@app.patch("/api/push/devices/{device_id}", dependencies=[authed])
+async def push_update(device_id: str, body: PushDeviceUpdateBody):
+    device = push.update(device_id, **body.model_dump())
+    if device is None:
+        raise HTTPException(404, "no such device")
+    return device
+
+
+@app.delete("/api/push/devices/{device_id}", dependencies=[authed])
+async def push_remove(device_id: str):
+    if not push.remove(device_id):
+        raise HTTPException(404, "no such device")
+    return {"ok": True}
+
+
+@app.post("/api/push/test", dependencies=[authed])
+async def push_test():
+    result = await push.send("Test notification",
+                             "Push works: messages from the watch and the assistant reach this phone.",
+                             kind="watch", importance="important", thread="watch")
+    if not result["sent"]:
+        errors = sorted({d["last_error"] for d in push.devices() if d["last_error"]})
+        raise HTTPException(502, "Nothing was delivered" + (f": {', '.join(errors)}" if errors else
+                                                            " — no phone is registered."))
+    return result
 
 
 @app.get("/api/agents/loops", dependencies=[authed])

@@ -190,6 +190,11 @@ _AUDIT_TITLES = {
     "file_download": "File opened", "maintenance": "Maintenance",
     "loop_run": "Background check ran", "watch_message": "Watch message",
     "ai_signin": "AI account connected", "ai_signout": "AI account disconnected",
+    "file_edit": "File saved", "file_create": "File created", "file_restore": "File restored",
+    "file_mkdir": "Folder created", "file_upload": "File uploaded", "file_rename": "Renamed",
+    "file_move": "Moved", "file_copy": "Copied", "file_delete": "Deleted",
+    "file_chmod": "Permissions changed", "file_extract": "Archive unpacked",
+    "watch_save": "Watch settings changed", "watch_run": "Watch asked to look",
 }
 
 
