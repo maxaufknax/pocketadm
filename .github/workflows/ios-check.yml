@@ -54,9 +54,57 @@ jobs:
           set -o pipefail
           xcodebuild -project PocketADMNative.xcodeproj -scheme PocketADMNative \
             -destination "generic/platform=iOS Simulator" -configuration Debug \
+            -derivedDataPath build/dd \
             -skipPackagePluginValidation -skipMacroValidation CODE_SIGNING_ALLOWED=NO \
             build > build.log 2>&1 || { tail -40 build.log; exit 1; }
           grep -E "BUILD SUCCEEDED" build.log
+
+      - name: Open every screen on a simulator and look for crashes
+        if: success() && github.event_name == 'push'
+        run: |
+          set -u
+          APP=$(ls -d build/dd/Build/Products/Debug-iphonesimulator/*.app | head -1)
+          BUNDLE=de.maxaufknax.pocketadm
+          DEVICE=$(xcrun simctl list devicetypes | grep -oE "iPhone [0-9]+ Pro" | sort -V | tail -1)
+          UDID=$(xcrun simctl create smoke "$DEVICE")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b > /dev/null
+          xcrun simctl install "$UDID" "$APP"
+          mkdir -p shots
+          crashes=0
+          while read -r name tab route; do
+            [ -z "$name" ] && continue
+            args=(-PocketADMScreenshotTab "$tab")
+            [ -n "${route:-}" ] && args+=(-PocketADMScreenshotRoute "$route")
+            xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE" "${args[@]}" > /dev/null
+            sleep 14
+            if xcrun simctl spawn "$UDID" launchctl list | grep -q "UIKitApplication:$BUNDLE"; then
+              echo "✓ $name"
+            else
+              echo "::error title=Crash on $name::the app is not running 14 s after opening $tab ${route:-}"
+              crashes=$((crashes + 1))
+            fi
+            xcrun simctl io "$UDID" screenshot "shots/$name.png" > /dev/null 2>&1 || true
+          done <<'SCREENS'
+          dashboard dashboard
+          assistant assistant
+          containers containers
+          terminal terminal
+          session terminal session
+          more more
+          watch more alerts
+          files more files
+          activity more activity
+          health more checks
+          updates more updates
+          ai more ai
+          SCREENS
+          for report in $(find ~/Library/Logs/DiagnosticReports -name 'PocketADM*' 2>/dev/null | head -3); do
+            summary=$(grep -m1 -E '"exception"|Exception Type' "$report" | head -c 300)
+            frames=$(grep -m6 -E 'PocketADM' "$report" | tr '\n' ' ' | head -c 700)
+            echo "::error title=Crash report::$summary $frames"
+          done
+          [ "$crashes" -eq 0 ]
 
       - name: Compiler errors (1-10)
         if: failure()
