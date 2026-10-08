@@ -66,8 +66,10 @@ jobs:
 
       - name: Compiler errors (11-20)
         if: failure()
-        run: sed -n '11,20p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'
+        run: |
+          sed -n '11,20p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'
 
       - name: Compiler errors (21-30)
         if: failure()
-        run: sed -n '21,30p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'
+        run: |
+          sed -n '21,30p' errors.txt | sed -E 's#^.*/client-swift/(.+):([0-9]+):([0-9]+): error: (.*)$#::error file=client-swift/\1,line=\2,col=\3::\4#'
