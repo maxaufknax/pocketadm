@@ -4,5 +4,5 @@ raw-dashboard  dark dashboard
 raw-assistant  dark assistant
 raw-watch      dark more       alerts
 raw-files      dark more       files
-raw-containers dark containers
+raw-overview   dark more       inventory
 raw-terminal   dark terminal   session

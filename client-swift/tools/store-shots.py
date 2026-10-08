@@ -34,7 +34,7 @@ CAPTIONS = {
          "+ your own key or Claude / Codex plan"),
         ("watch", ["A {watch} that", "writes when", "it matters"], "and answers when you ask it"),
         ("files", ["Every {file},", "like in an editor"], ""),
-        ("containers", ["Every {container},", "one tap away"], ""),
+        ("overview", ["Your {whole server}", "at a glance"], "domains, services, timers, drives"),
         ("terminal", ["A {real terminal},", "wherever you are"], ""),
     ],
     "de-DE": [
@@ -43,7 +43,7 @@ CAPTIONS = {
          "+ eigener Key oder Claude-/Codex-Abo"),
         ("watch", ["Ein {Wächter},", "der schreibt, wenn", "es wichtig ist"], "und antwortet, wenn du fragst"),
         ("files", ["Jede {Datei},", "wie im Editor"], ""),
-        ("containers", ["Jeder {Container},", "nur einen Tipp entfernt"], ""),
+        ("overview", ["Dein {ganzer Server}", "auf einen Blick"], "Domains, Dienste, Timer, Laufwerke"),
         ("terminal", ["Ein {echtes Terminal},", "wo immer du bist"], ""),
     ],
 }

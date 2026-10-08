@@ -1,13 +1,13 @@
 PocketADM 2.0 ist eine neue App: von Grund auf als native iPhone-App gebaut – mit neuem Icon.
 
-• Der Wächter als Chat: Eine KI behält deinen Server im Blick und schreibt dir kurze Nachrichten, wenn es sich lohnt – mit Details auf Antippen und dem nächsten Schritt als Knopf. Frag sie alles („Warum ist die Platte so voll?“) oder sag ihr, worüber sie schweigen soll. Ihre Nachrichten kommen als Mitteilung aufs iPhone.
-• Der Assistent bleibt dran: Verlässt du die App, läuft die Sitzung auf dem Server weiter. Kommst du zurück, ist alles wieder da, auch eine offene Freigabe. Wartet er auf dein OK, bekommst du eine Mitteilung.
-• Tabellen, Überschriften, Listen und Code werden im Chat sauber dargestellt.
-• Dateien wie in einem Editor: Start in „/“, Ordner klappen auf, Laufwerke oben. Textdateien bearbeiten (mit Rückgängig), Fotos und Dateien hochladen, umbenennen, verschieben, kopieren, entpacken, als ZIP laden, Rechte ändern, löschen.
-• Updates sagen, was sich ändert: nur die Neuerungen zwischen deiner und der neuen Version, kurz, mit Risiko und Empfehlung.
-• Aktivität in zwei Teilen: was auf dem Server passiert, und was in PocketADM getan wurde.
-• Health kompakter: Punktzahl, Bereiche auf einen Blick, die Lösung direkt in der Zeile.
-• Deine KI-Abos an einem Ort: Claude, ChatGPT und Mistral mit einem Tipp verbinden, ohne Terminal.
-• Apps statt Container-Listen, Container-Seiten mit Live-Auslastung, Shell, Prozessen und Live-Logs.
+• Server-Überblick: Domains und wohin sie führen, Dienste und Timer mit Journal sowie Start, Stopp und Neustart, Cronjobs, Docker-Stacks und Laufwerke. PocketADM findet das auf jedem Server selbst.
+• Themes: Midnight (OLED), Ocean, Aurora, Forest, Sunset, Terminal, Nord, Paper, Arctic und Rosé, dazu das iOS-Design hell oder dunkel.
+• Der Assistent kennt deinen Server: Er liest PocketADMs eigene Aufzeichnungen (Updates mit Ergebnis, Aktivität, Verlauf von Platte und Speicher, Health) und führt Notizen nach Themen, die du anpinnen, bearbeiten und aufräumen lassen kannst.
+• Anhänge im Chat: Fotos, Screenshots und Dateien vom iPhone, oder Dateien, Ordner, Container mit Logs, Server-Überblick und Health-Befunde vom Server.
+• Unter jeder Antwort steht, welches Modell sie geschrieben hat. Für Mistral Vibe wählst du das Modell, auch GLM und Mistral Large über deinen API-Key.
+• Claude-Abo zuverlässiger verbinden: klare Meldung, wenn ein Code nicht passt, oder ein Token von `claude setup-token` einfügen.
+• Der Wächter als Chat, mit Mitteilungen aufs iPhone. Der Assistent arbeitet weiter, wenn du die App verlässt.
+• Dateien wie in einem Editor: bearbeiten mit Rückgängig, hochladen, verschieben, entpacken, Rechte ändern.
+• Updates sagen, was sich ändert. Aktivität, Health und Apps sind kompakter.
 
-Die neuen Funktionen brauchen PocketADM 0.25 auf dem Server: Führe dazu den Installer erneut aus.
+Die neuen Funktionen brauchen PocketADM 0.26 auf dem Server: Führe dazu den Installer erneut aus.

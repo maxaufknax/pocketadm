@@ -312,7 +312,7 @@ def test_store_shots_compositor_writes_both_languages(tmp_path):
               (ROOT / "client-swift" / "tools" / "shots-store.txt").read_text().splitlines()
               if line.strip() and not line.startswith("#")]
     assert listed == ["raw-dashboard", "raw-assistant", "raw-watch", "raw-files",
-                      "raw-containers", "raw-terminal"]
+                      "raw-overview", "raw-terminal"]
     for name in listed:
         Image.new("RGB", (1320, 2868), (20, 30, 40)).save(raw / f"{name}.png")
     import subprocess
@@ -323,3 +323,54 @@ def test_store_shots_compositor_writes_both_languages(tmp_path):
         files = sorted((tmp_path / "out" / locale).glob("*.png"))
         assert [f.name for f in files][0] == "01-dashboard.png" and len(files) == 6
         assert Image.open(files[0]).size == (1284, 2778)
+
+
+class FullSetASC(ShotASC):
+    """The state the 2.0 build met: a set already holding ten screenshots —
+    five finished, five from a run that stopped half-way — so every upload
+    answered STATE_ERROR.SCREENSHOT_TOO_MANY."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.held: dict[str, list[str]] = {}
+
+    def call(self, method, path, body=None, params=None, ok404=False):
+        if path.endswith("/appScreenshots") and method == "GET":
+            self.calls.append((method, path, body))
+            set_id = path.split("/")[3]
+            if set_id not in self.held:
+                self.held[set_id] = [f"OK{i}" for i in range(5)] + [f"HALF{i}" for i in range(5)]
+            data = [{"id": i, "attributes": {"assetDeliveryState": {
+                "state": "COMPLETE" if i.startswith("OK") else "AWAITING_UPLOAD"}}}
+                for i in self.held[set_id]]
+            return {"data": data}
+        if path == "/v1/appScreenshots" and method == "POST":
+            set_id = body["data"]["relationships"]["appScreenshotSet"]["data"]["id"]
+            if len(self.held[set_id]) >= 10:
+                raise SystemExit("HTTP 409: STATE_ERROR.SCREENSHOT_TOO_MANY")
+            result = super().call(method, path, body, params, ok404)
+            self.held[set_id].append(result["data"]["id"])
+            return result
+        if method == "DELETE" and path.startswith("/v1/appScreenshots/"):
+            self.calls.append((method, path, body))
+            shot = path.rsplit("/", 1)[1]
+            for ids in self.held.values():
+                if shot in ids:
+                    ids.remove(shot)
+            return {}
+        return super().call(method, path, body, params, ok404)
+
+
+def test_a_full_set_with_broken_uploads_still_gets_the_new_images(mod, monkeypatch, tmp_path):
+    (tmp_path / "en-US").mkdir()
+    for n in range(1, 7):
+        (tmp_path / "en-US" / f"0{n}-x.png").write_bytes(b"png")
+    monkeypatch.setattr(mod, "put_bytes", lambda op, blob: None)
+    fake = FullSetASC([LIVE])
+    run(mod, fake, monkeypatch, "--screenshots", str(tmp_path))
+    for set_id, ids in fake.held.items():
+        assert sorted(ids) == [f"NEW{i}" for i in range(1, 7)] or len(ids) == 6, (set_id, ids)
+        assert not any(i.startswith(("OK", "HALF")) for i in ids)
+    deleted = [p for m, p, _ in fake.calls if m == "DELETE" and p.startswith("/v1/appScreenshots/")]
+    # the half-finished ones go first, then only as many finished ones as needed for room
+    assert deleted[:5] == [f"/v1/appScreenshots/HALF{i}" for i in range(5)]

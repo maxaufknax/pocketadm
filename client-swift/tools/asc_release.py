@@ -309,6 +309,7 @@ def set_review_notes(asc: ASC, app_id: str, version_id: str, notes: str) -> None
 
 
 SCREENSHOT_SLOT = "APP_IPHONE_65"     # 1284 x 2778, the slot the listing has always used
+SET_LIMIT = 10                        # screenshots per set, App Store Connect's maximum
 
 
 def put_bytes(op: dict, blob: bytes) -> None:
@@ -365,9 +366,21 @@ def replace_screenshots(asc: ASC, version_id: str, shots: Path) -> None:
                 "type": "appScreenshotSets", "attributes": {"screenshotDisplayType": SCREENSHOT_SLOT},
                 "relationships": {"appStoreVersionLocalization": {"data": {
                     "type": "appStoreVersionLocalizations", "id": loc["id"]}}}}})["data"]
-        old = [x["id"] for x in (asc.call("GET", f"/v1/appScreenshotSets/{target['id']}/appScreenshots")
-                                 or {}).get("data") or []]
-        new = [upload_screenshot(asc, target["id"], f) for f in files]
+        existing = (asc.call("GET", f"/v1/appScreenshotSets/{target['id']}/appScreenshots")
+                    or {}).get("data") or []
+        # Uploads that never finished (an earlier run that stopped half-way)
+        # still count against the set's limit of ten: they go first.
+        broken = [x["id"] for x in existing if ((x.get("attributes") or {}).get("assetDeliveryState")
+                                                or {}).get("state") not in ("COMPLETE", None)]
+        old = [x["id"] for x in existing if x["id"] not in broken]
+        for shot_id in broken:
+            asc.call("DELETE", f"/v1/appScreenshots/{shot_id}")
+        # New ones are uploaded before old ones go, so the set is never empty —
+        # as far as the limit allows: make room first when old + new exceed it.
+        room = SET_LIMIT - len(files)
+        while len(old) > max(0, room):
+            asc.call("DELETE", f"/v1/appScreenshots/{old.pop(0)}")
+        new = [upload_screenshot(asc, target["id"], f) for f in files[:SET_LIMIT]]
         for shot_id in old:
             asc.call("DELETE", f"/v1/appScreenshots/{shot_id}")
         asc.call("PATCH", f"/v1/appScreenshotSets/{target['id']}/relationships/appScreenshots",
@@ -378,7 +391,7 @@ def replace_screenshots(asc: ASC, version_id: str, shots: Path) -> None:
             if kind.startswith("APP_IPHONE_") and kind != SCREENSHOT_SLOT:
                 asc.call("DELETE", f"/v1/appScreenshotSets/{other['id']}")
         print(f"✓ screenshots ({locale}{'' if folder.name == locale else ', English images'}): "
-              f"{len(new)} new, {len(old)} replaced")
+              f"{len(new)} new, {len(existing)} replaced")
 
 
 def main() -> None:

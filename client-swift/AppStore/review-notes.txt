@@ -15,6 +15,12 @@ NOTIFICATIONS AND BACKGROUND REFRESH: the app asks for notification permission o
 
 FILES: browsing and opening files works in the demo; creating, uploading, editing and deleting are refused because the demo is read-only.
 
+SERVER OVERVIEW: More → Server overview lists what the demo server runs (domains, services, timers, cron jobs, drives). Opening a service shows its status and log; the start, stop and restart buttons are refused in the read-only demo.
+
+APPEARANCE: More → Appearance switches between themes; the choice is stored on the phone only.
+
+ASSISTANT NOTES AND ATTACHMENTS: More → AI accounts → Assistant behaviour shows the notes the assistant keeps about a server (sample notes in the demo, read-only). The attach button (+) in the Assistant's message field uploads a photo or file to the user's own server, or attaches information from it; it is disabled in the read-only demo.
+
 TERMINAL: in the demo, opening any shell shows a simulated, read-only shell (try ls, docker ps, free, df, cat readme.txt); nothing is executed. On a user's own server it is a real terminal.
 
 APP TRANSPORT SECURITY: arbitrary loads are allowed because PocketADM connects only to servers the user adds, which are often local addresses (192.168.x.x, .local hosts) or VPN addresses. New servers use HTTPS with their own certificate; the app trusts such a certificate only when its key matches the fingerprint in the pairing QR code the user scanned. No traffic goes anywhere other than the servers the user adds.

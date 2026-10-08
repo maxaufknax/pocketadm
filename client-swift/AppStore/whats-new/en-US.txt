@@ -1,13 +1,13 @@
 PocketADM 2.0 is a new app: rebuilt from the ground up as a native iPhone app — with a new icon.
 
-• The watch, as a chat: an AI keeps an eye on your server and sends short messages when something is worth knowing — details on a tap, the next step as a button. Ask it anything ("why is the disk so full?") or tell it what to stay quiet about. Its messages arrive as notifications.
-• The assistant stays with you: leave the app and the session keeps running on the server; come back and everything is there, a pending approval included. When it waits for your OK, you get a notification.
-• Tables, headings, lists and code look right in the chat.
-• Files like an editor: start at "/", folders unfold in place, drives on top. Edit text files (with undo), upload photos and files, rename, move, copy, unpack, download as a zip, change permissions, delete.
-• Updates say what changes: only what is new between your version and the next one, short, with the risk and a recommendation.
-• Activity in two halves: what happens on the server, and what was done in PocketADM.
-• A more compact Health: the score, the areas at a glance, the fix right on the row.
-• Your AI subscriptions in one place: connect Claude, ChatGPT and Mistral with a tap, no terminal.
-• Apps instead of container lists; container pages with live usage, a shell, processes and live logs.
+• Server overview: domains and where they lead, services and timers with their journal and start, stop and restart, cron jobs, Docker stacks and drives. PocketADM finds all of it on any server by itself.
+• Themes: Midnight (OLED), Ocean, Aurora, Forest, Sunset, Terminal, Nord, Paper, Arctic and Rosé, plus the iOS look in light or dark.
+• The assistant knows your server: it reads PocketADM's own records (updates and how they ended, activity, disk and memory over time, health) and keeps notes by topic that you can pin, edit and have tidied up.
+• Attachments in the chat: photos, screenshots and files from the iPhone, or files, folders, containers with their logs, the server overview and health findings from the server.
+• Every answer says which model wrote it. For Mistral Vibe you pick the model, including GLM and Mistral Large through your API key.
+• Connecting a Claude subscription is more reliable: a clear message when a code does not fit, or paste a token from `claude setup-token`.
+• The watch, as a chat, with notifications on the iPhone. The assistant keeps working when you leave the app.
+• Files like an editor: edit with undo, upload, move, unpack, change permissions.
+• Updates say what changes. Activity, Health and Apps are more compact.
 
-The newest features need PocketADM 0.25 on the server: run the installer again to update it.
+The newest features need PocketADM 0.26 on the server: run the installer again to update it.
