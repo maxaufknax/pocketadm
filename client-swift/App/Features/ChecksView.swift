@@ -736,7 +736,7 @@ struct ReportScheduleSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ThemedList {
                 Section {
                     Toggle("Run automatically", isOn: $auto)
                 }

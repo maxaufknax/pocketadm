@@ -75,7 +75,7 @@ struct ContainerDetailView: View {
     private var isPaused: Bool { state == "paused" }
 
     var body: some View {
-        List {
+        ThemedList {
             Section { header }
                 .listRowBackground(Color.clear)
 

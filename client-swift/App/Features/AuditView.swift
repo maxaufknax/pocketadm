@@ -38,7 +38,7 @@ struct AuditView: View {
     }
 
     private var list: some View {
-        List {
+        ThemedList {
             ForEach(events) { event in
                 HStack(alignment: .top, spacing: 14) {
                     let style = AuditStyle.of(event.action)

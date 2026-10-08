@@ -1319,8 +1319,15 @@ struct AIModels: Decodable {
         let name: String
         let free: Bool
         let tools: Bool
+        /// What the model is good for, in a few words (0.26).
+        let hint: String
+        /// For Mistral Vibe (0.26): "subscription" or "api" (billed per use
+        /// on the Mistral API key).
+        let billing: String
 
-        enum CodingKeys: String, CodingKey { case id, name, free, tools }
+        var billedPerUse: Bool { billing == "api" }
+
+        enum CodingKeys: String, CodingKey { case id, name, free, tools, hint, billing }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1330,6 +1337,8 @@ struct AIModels: Decodable {
             // Absent means "unknown", and every non-OpenRouter provider omits
             // it — defaulting to false would grey out every usable model.
             tools = c.get(.tools, true)
+            hint = c.get(.hint, "")
+            billing = c.get(.billing, "")
         }
     }
 

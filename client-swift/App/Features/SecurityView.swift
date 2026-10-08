@@ -27,7 +27,7 @@ struct SecurityView: View {
     private var totpEnabled: Bool { app.me?.totpEnabled ?? false }
 
     var body: some View {
-        List {
+        ThemedList {
             if app.me?.shouldWarnAboutExposure == true {
                 Section {
                     WarningBanner(

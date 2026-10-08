@@ -99,7 +99,7 @@ struct UpdatesView: View {
     private var pendingCount: Int { pendingImages.count }
 
     private func content(_ updates: UpdatesResponse) -> some View {
-        List {
+        ThemedList {
             if !updates.pending.isEmpty {
                 Section {
                     ForEach(updates.pending) { update in

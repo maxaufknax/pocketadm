@@ -49,7 +49,7 @@ struct LocalAIView: View {
     }
 
     private func content(_ status: LocalAIStatus) -> some View {
-        List {
+        ThemedList {
             Section {
                 FactRow(label: "Ollama",
                         value: status.running ? "running" : "not running",

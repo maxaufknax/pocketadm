@@ -21,6 +21,11 @@ struct ChatView: View {
     @State private var newTitle = ""
     @State private var shareText: ShareText?
     @State private var toast: Toast?
+    /// Files, pictures and context attached to the message being written.
+    @State private var attachments: [PendingAttachment] = []
+    @State private var attachBusy = ""
+    /// What to ask, from the server's state (0.26) — else a fixed few.
+    @State private var suggestions: [String] = ChatView.fallbackSuggestions
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -37,7 +42,7 @@ struct ChatView: View {
             .navigationTitle(socket.title.isEmpty ? "Assistant" : socket.title)
             .navigationBarTitleDisplayMode(.inline)
             // A conversation sits on the plain page colour, like Messages.
-            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+            .background(Theme.chatBg.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -107,6 +112,9 @@ struct ChatView: View {
         .task {
             await app.refreshMe()
             models = try? await app.client?.aiModels()
+            if app.supports("suggestions"), let fresh = try? await app.client?.aiSuggestions(), !fresh.isEmpty {
+                suggestions = fresh
+            }
             // switching tabs keeps the connection; only a first appearance
             // (or a socket that gave up) connects
             if !socket.isActive { connect() }
@@ -249,7 +257,7 @@ struct ChatView: View {
                 .font(.body)
                 .foregroundStyle(Theme.muted)
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(Self.suggestions, id: \.self) { suggestion in
+                ForEach(suggestions, id: \.self) { suggestion in
                     Button {
                         draft = suggestion
                         composerFocused = true
@@ -266,7 +274,7 @@ struct ChatView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
-                        .background(Color(uiColor: .secondarySystemBackground),
+                        .background(Theme.bubble,
                                     in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -278,8 +286,8 @@ struct ChatView: View {
         .padding(.top, 24)
     }
 
-    private static let suggestions = [
-        "Why is disk usage climbing?",
+    static let fallbackSuggestions = [
+        "Give me a short health check of the whole server.",
         "Check the last 50 lines of the nextcloud logs for errors.",
         "Which containers are not on a restart policy?",
     ]
@@ -314,7 +322,18 @@ struct ChatView: View {
                 .id(editing.id)
             }
 
+            if !attachments.isEmpty || !attachBusy.isEmpty {
+                AttachmentChips(items: $attachments, busy: attachBusy)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             HStack(alignment: .bottom, spacing: 10) {
+                if editing == nil {
+                    AttachButton(items: $attachments, busy: $attachBusy) { message in
+                        toast = Toast(text: message, isError: true)
+                    }
+                    .padding(.bottom, 2)
+                }
                 HStack(alignment: .bottom, spacing: 8) {
                     TextField("Message", text: $draft, axis: .vertical)
                         .lineLimit(1...5)
@@ -340,7 +359,7 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color(uiColor: .secondarySystemBackground),
+                .background(Theme.bubble,
                             in: RoundedRectangle(cornerRadius: 20, style: .continuous))
 
                 Button {
@@ -366,17 +385,23 @@ struct ChatView: View {
     }
 
     private var sendEnabled: Bool {
-        socket.running || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        socket.running || (attachBusy.isEmpty
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty))
     }
 
     private func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        var text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !attachments.isEmpty else { return }
         if let editing, let ordinal = editing.ordinal {
+            guard !text.isEmpty else { return }
             socket.rewind(to: ordinal, text: text)
             self.editing = nil
         } else {
-            socket.submit(text)
+            if text.isEmpty { text = "Have a look at what I attached." }
+            socket.submit(text, context: PendingAttachment.preamble(attachments),
+                          images: attachments.map(\.imagePath).filter { !$0.isEmpty },
+                          attachments: attachments.map(\.label))
+            withAnimation(.snappy) { attachments = [] }
         }
         draft = ""
     }
@@ -517,34 +542,50 @@ struct ChatRow: View {
     var body: some View {
         switch item.kind {
         case .user:
-            HStack {
-                Spacer(minLength: 48)
-                Text(item.text)
-                    .foregroundStyle(Theme.onAccent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Theme.accent,
-                                in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .contextMenu {
-                        Button { perform(.copy) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                        if canEdit && item.ordinal != nil {
-                            Button { perform(.edit) } label: {
-                                Label("Edit and resend", systemImage: "pencil")
-                            }
-                            Button(role: .destructive) { perform(.retract) } label: {
-                                Label("Take back", systemImage: "arrow.uturn.backward")
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack {
+                    Spacer(minLength: 48)
+                    Text(item.text)
+                        .foregroundStyle(Theme.onAccent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Theme.accent,
+                                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contextMenu {
+                            Button { perform(.copy) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                            if canEdit && item.ordinal != nil {
+                                Button { perform(.edit) } label: {
+                                    Label("Edit and resend", systemImage: "pencil")
+                                }
+                                Button(role: .destructive) { perform(.retract) } label: {
+                                    Label("Take back", systemImage: "arrow.uturn.backward")
+                                }
                             }
                         }
+                }
+                if !item.attachments.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        SentAttachments(items: item.attachments)
                     }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
 
         case .assistant:
-            MarkdownText(text: item.text, font: .body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contextMenu {
-                    Button { perform(.copy) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                    Button { perform(.share) } label: { Label("Share", systemImage: "square.and.arrow.up") }
+            VStack(alignment: .leading, spacing: 6) {
+                MarkdownText(text: item.text, font: .body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contextMenu {
+                        Button { perform(.copy) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                        Button { perform(.share) } label: { Label("Share", systemImage: "square.and.arrow.up") }
+                    }
+                if !item.by.isEmpty {
+                    Label(item.by, systemImage: "sparkles")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.muted)
+                        .labelStyle(.titleAndIcon)
                 }
+            }
 
         case .thinking:
             ThinkingRow(text: item.text)
@@ -632,7 +673,7 @@ struct ToolGroupCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemBackground),
+        .background(Theme.bubble,
                     in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
@@ -794,7 +835,7 @@ struct ToolCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(call.state == .denied ? Theme.danger.opacity(0.10) : Color(uiColor: .secondarySystemBackground),
+        .background(call.state == .denied ? Theme.danger.opacity(0.10) : Theme.bubble,
                     in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
     }

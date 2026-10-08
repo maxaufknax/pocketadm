@@ -55,7 +55,7 @@ struct TerminalHomeView: View {
     }
 
     private func list(_ targets: TerminalTargets) -> some View {
-        List {
+        ThemedList {
             if !sessions.isEmpty {
                 // Sessions live on the server, so this is genuinely "still
                 // running", not "recently viewed".

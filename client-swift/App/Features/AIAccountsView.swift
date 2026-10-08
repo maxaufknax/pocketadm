@@ -16,7 +16,7 @@ struct AIAccountsView: View {
     @State private var signIn: AIAccounts.Account?
 
     var body: some View {
-        List {
+        ThemedList {
             if let accounts {
                 Section {
                     ForEach(accounts.accounts) { account in
@@ -222,7 +222,7 @@ struct AccountDetailView: View {
     private var current: AIAccounts.Account { account ?? initial }
 
     var body: some View {
-        List {
+        ThemedList {
             Section {
                 VStack(spacing: 10) {
                     ServiceIcon(names: [current.brand, current.name, current.vendor], category: "AI", size: 64)
@@ -277,13 +277,17 @@ struct AccountDetailView: View {
                     Button(saving ? "Saving…" : "Save key") { Task { await saveKey(key) } }
                         .disabled(saving)
                 }
-                if current.keySet {
+                if current.keySet && !current.keyFromEnv {
                     Button("Remove key", role: .destructive) { Task { await saveKey("-") } }
                 }
             } header: {
                 Text("API key")
             } footer: {
-                Text(current.keyHint.isEmpty ? "Billed by the provider per use." : "\(current.keyHint). Billed by the provider per use.")
+                if current.keyFromEnv {
+                    Text("This key is set in the server's environment (\(current.keyProvider.uppercased())_API_KEY in the compose file), so it cannot be removed here.")
+                } else {
+                    Text(current.keyHint.isEmpty ? "Billed by the provider per use." : "\(current.keyHint). Billed by the provider per use.")
+                }
             }
 
             if !current.usedFor.isEmpty {
@@ -427,9 +431,14 @@ struct SignInSheet: View {
                 Button("Try again") { Task { await start() } }
                     .buttonStyle(PrimaryButtonStyle())
             case "waiting_code":
+                if !flow.message.isEmpty && (flow.attempt > 1 || Self.isProblem(flow.message)) {
+                    callout(flow.message, tint: flow.attempt > 1 ? Theme.warn : Theme.danger,
+                            symbol: flow.attempt > 1 ? "arrow.clockwise.circle.fill" : "exclamationmark.triangle.fill")
+                }
                 steps([
-                    "Open the sign-in page and sign in with your \(subscription).",
-                    "The page shows a code. Copy it.",
+                    flow.attempt > 1 ? "Open the new sign-in page and sign in with your \(subscription)."
+                                     : "Open the sign-in page and sign in with your \(subscription).",
+                    "Tap Copy Code on the page that follows — the whole code, it has a # in it.",
                     "Come back here and paste it.",
                 ])
                 openButton(flow)
@@ -452,8 +461,10 @@ struct SignInSheet: View {
                             .disabled(code.isEmpty || submitting)
                     }
                 }
-                if !flow.message.isEmpty {
-                    Text(flow.message).font(.footnote).foregroundStyle(Theme.muted)
+                if engine == "claude-code" {
+                    Text("Already ran `claude setup-token` on a computer? Paste that token (sk-ant-oat…) instead of a code.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.muted)
                         .multilineTextAlignment(.center)
                 }
             case "waiting_browser":
@@ -476,6 +487,18 @@ struct SignInSheet: View {
                     ProgressView()
                     Text("Waiting for the sign-in…").font(.footnote).foregroundStyle(Theme.muted)
                 }
+            case "verifying":
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text(flow.message.isEmpty ? "Checking the code with \(name)…" : flow.message)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.muted)
+                        .multilineTextAlignment(.center)
+                    Text("This can take up to a minute.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.muted)
+                }
+                .padding(.top, 20)
             default:
                 VStack(spacing: 12) {
                     ProgressView()
@@ -489,6 +512,27 @@ struct SignInSheet: View {
         } else {
             ProgressView().padding(.top, 30)
         }
+    }
+
+    static func isProblem(_ message: String) -> Bool {
+        let low = message.lowercased()
+        return ["did not", "not accept", "only part", "older", "api key", "too long", "error", "failed"]
+            .contains { low.contains($0) }
+    }
+
+    private func callout(_ text: String, tint: Color, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(tint)
+                .font(.title3)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 
     private func steps(_ lines: [String]) -> some View {
@@ -556,7 +600,9 @@ struct SignInSheet: View {
                 try? await Task.sleep(for: .seconds(1.5))
                 guard let client = app.client, let id = flow?.id,
                       let fresh = try? await client.signInFlow(id) else { continue }
-                // a code being typed must not be cleared by a poll
+                // a code being typed must not be cleared by a poll — unless the
+                // page it came from is gone (Claude renewed it after a failure)
+                if let old = flow, fresh.attempt > old.attempt { code = "" }
                 if fresh != flow { flow = fresh }
                 if fresh.state == "done" {
                     browser = nil
@@ -572,7 +618,7 @@ struct SignInSheet: View {
         submitting = true
         defer { submitting = false }
         do {
-            flow = try await client.submitSignInCode(id, code: code)
+            flow = try await client.submitSignInCode(id, code: code.trimmingCharacters(in: .whitespacesAndNewlines))
             browser = nil
         } catch {
             self.error = error.localizedDescription
@@ -628,7 +674,7 @@ struct RoutePickerView: View {
     @State private var toast: Toast?
 
     var body: some View {
-        List {
+        ThemedList {
             if feature != "assistant" {
                 Section {
                     Button {
@@ -663,10 +709,15 @@ struct RoutePickerView: View {
                                             Text("cannot use tools — it would only guess")
                                                 .font(.caption2)
                                                 .foregroundStyle(Theme.warn)
+                                        } else if !model.hint.isEmpty {
+                                            Text(model.hint)
+                                                .font(.caption2)
+                                                .foregroundStyle(model.billedPerUse ? Theme.warn : Theme.muted)
                                         }
                                     }
                                     Spacer()
                                     if model.free { StatusPill(text: "free", tint: Theme.accent2) }
+                                    if model.billedPerUse { StatusPill(text: "API key", tint: Theme.warn) }
                                     if isChosen(entry.provider, model.id) {
                                         Image(systemName: "checkmark").foregroundStyle(Theme.accent)
                                     }

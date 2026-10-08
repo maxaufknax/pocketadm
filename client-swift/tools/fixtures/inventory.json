@@ -1,0 +1,527 @@
+{
+ "time": 1791483273.0529575,
+ "host": {
+  "hostname": "demo-server",
+  "os": "Ubuntu 24.04.1 LTS",
+  "kernel": "6.8.0-45-generic",
+  "arch": "x86_64",
+  "cores": 8,
+  "memory": 34359738368,
+  "uptime": 1040400
+ },
+ "stacks": [
+  {
+   "project": "backup",
+   "dir": "/srv/backup",
+   "services": [
+    {
+     "name": "backup-runner",
+     "state": "exited",
+     "health": "",
+     "image": "offen/docker-volume-backup:v2",
+     "ports": []
+    }
+   ]
+  },
+  {
+   "project": "cloud",
+   "dir": "/srv/cloud",
+   "services": [
+    {
+     "name": "nextcloud",
+     "state": "running",
+     "health": "healthy",
+     "image": "nextcloud:29-apache",
+     "ports": [
+      {
+       "private": 80,
+       "public": 8081,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    },
+    {
+     "name": "nextcloud-db",
+     "state": "running",
+     "health": "",
+     "image": "mariadb:11",
+     "ports": []
+    },
+    {
+     "name": "nextcloud-redis",
+     "state": "running",
+     "health": "",
+     "image": "redis:7-alpine",
+     "ports": []
+    }
+   ]
+  },
+  {
+   "project": "dns",
+   "dir": "/srv/dns",
+   "services": [
+    {
+     "name": "pihole",
+     "state": "running",
+     "health": "healthy",
+     "image": "pihole/pihole:latest",
+     "ports": [
+      {
+       "private": 53,
+       "public": 53,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      },
+      {
+       "private": 80,
+       "public": 8053,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "project": "git",
+   "dir": "/srv/git",
+   "services": [
+    {
+     "name": "gitea",
+     "state": "running",
+     "health": "",
+     "image": "gitea/gitea:1.22",
+     "ports": [
+      {
+       "private": 3000,
+       "public": 3002,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      },
+      {
+       "private": 22,
+       "public": 2222,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "project": "helmsman",
+   "dir": "/srv/helmsman",
+   "services": [
+    {
+     "name": "helmsman",
+     "state": "running",
+     "health": "",
+     "image": "ghcr.io/maxaufknax/helmsman:latest",
+     "ports": [
+      {
+       "private": 8080,
+       "public": 8090,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "project": "media",
+   "dir": "/srv/media",
+   "services": [
+    {
+     "name": "jellyfin",
+     "state": "running",
+     "health": "",
+     "image": "jellyfin/jellyfin:latest",
+     "ports": [
+      {
+       "private": 8096,
+       "public": 8096,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    },
+    {
+     "name": "navidrome",
+     "state": "running",
+     "health": "",
+     "image": "deluan/navidrome:latest",
+     "ports": [
+      {
+       "private": 4533,
+       "public": 4533,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "project": "monitoring",
+   "dir": "/srv/monitoring",
+   "services": [
+    {
+     "name": "grafana",
+     "state": "running",
+     "health": "",
+     "image": "grafana/grafana:11.1.0",
+     "ports": [
+      {
+       "private": 3000,
+       "public": 3000,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    },
+    {
+     "name": "prometheus",
+     "state": "running",
+     "health": "",
+     "image": "prom/prometheus:latest",
+     "ports": [
+      {
+       "private": 9090,
+       "public": 9090,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    },
+    {
+     "name": "uptime-kuma",
+     "state": "running",
+     "health": "healthy",
+     "image": "louislam/uptime-kuma:1",
+     "ports": [
+      {
+       "private": 3001,
+       "public": 3001,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "project": "vault",
+   "dir": "/srv/vault",
+   "services": [
+    {
+     "name": "vaultwarden",
+     "state": "running",
+     "health": "healthy",
+     "image": "vaultwarden/server:latest",
+     "ports": [
+      {
+       "private": 80,
+       "public": 8222,
+       "type": "tcp",
+       "ip": "0.0.0.0"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "containers": [],
+ "domains": [
+  {
+   "domain": "cloud.example.org",
+   "target": "http://nextcloud:8081",
+   "host": "nextcloud",
+   "port": 8081,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "nextcloud"
+  },
+  {
+   "domain": "tv.example.org",
+   "target": "http://jellyfin:8096",
+   "host": "jellyfin",
+   "port": 8096,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "jellyfin"
+  },
+  {
+   "domain": "music.example.org",
+   "target": "http://navidrome:4533",
+   "host": "navidrome",
+   "port": 4533,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "navidrome"
+  },
+  {
+   "domain": "vault.example.org",
+   "target": "http://vaultwarden:8222",
+   "host": "vaultwarden",
+   "port": 8222,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "vaultwarden"
+  },
+  {
+   "domain": "git.example.org",
+   "target": "http://gitea:3002",
+   "host": "gitea",
+   "port": 3002,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "gitea"
+  },
+  {
+   "domain": "status.example.org",
+   "target": "http://uptime-kuma:3001",
+   "host": "uptime-kuma",
+   "port": 3001,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "uptime-kuma"
+  },
+  {
+   "domain": "grafana.example.org",
+   "target": "http://grafana:3000",
+   "host": "grafana",
+   "port": 3000,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "grafana"
+  },
+  {
+   "domain": "pocketadm.example.org",
+   "target": "http://helmsman:8090",
+   "host": "helmsman",
+   "port": 8090,
+   "tls": true,
+   "enabled": true,
+   "source": "Caddy",
+   "service": "helmsman"
+  }
+ ],
+ "services": [
+  {
+   "unit": "backup-nightly.service",
+   "kind": "service",
+   "description": "Nightly backup to the USB drive",
+   "active": "inactive",
+   "sub": "dead",
+   "enabled": "static",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": true,
+   "path": "/etc/systemd/system/backup-nightly.service"
+  },
+  {
+   "unit": "minecraft.service",
+   "kind": "service",
+   "description": "Minecraft server (Paper)",
+   "active": "active",
+   "sub": "running",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 1400000000,
+   "custom": true,
+   "path": "/etc/systemd/system/minecraft.service"
+  },
+  {
+   "unit": "docker.service",
+   "kind": "service",
+   "description": "Docker Application Container Engine",
+   "active": "active",
+   "sub": "running",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": false,
+   "path": ""
+  },
+  {
+   "unit": "ssh.service",
+   "kind": "service",
+   "description": "OpenBSD Secure Shell server",
+   "active": "active",
+   "sub": "running",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": false,
+   "path": ""
+  },
+  {
+   "unit": "fail2ban.service",
+   "kind": "service",
+   "description": "Fail2Ban Service",
+   "active": "active",
+   "sub": "running",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": false,
+   "path": ""
+  },
+  {
+   "unit": "wg-quick@wg0.service",
+   "kind": "service",
+   "description": "WireGuard via wg-quick(8) for wg0",
+   "active": "active",
+   "sub": "exited",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": false,
+   "path": ""
+  },
+  {
+   "unit": "ufw.service",
+   "kind": "service",
+   "description": "Uncomplicated firewall",
+   "active": "active",
+   "sub": "exited",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "",
+   "last_run": "",
+   "triggers": "",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": false,
+   "path": ""
+  }
+ ],
+ "timers": [
+  {
+   "unit": "backup-nightly.timer",
+   "kind": "timer",
+   "description": "Run the nightly backup at 03:00",
+   "active": "active",
+   "sub": "waiting",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "03:00 tonight",
+   "last_run": "03:00 today",
+   "triggers": "backup-nightly.service",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": true,
+   "path": "/etc/systemd/system/backup-nightly.timer"
+  },
+  {
+   "unit": "dyndns-update.timer",
+   "kind": "timer",
+   "description": "Update the dynamic DNS record every 5 minutes",
+   "active": "active",
+   "sub": "waiting",
+   "enabled": "enabled",
+   "result": "success",
+   "since": "Mon 2026-10-05 08:12:44 UTC",
+   "next_run": "in 3 min",
+   "last_run": "2 min ago",
+   "triggers": "dyndns-update.service",
+   "triggered_by": "",
+   "memory": 0,
+   "custom": true,
+   "path": "/etc/systemd/system/dyndns-update.timer"
+  }
+ ],
+ "cron": [
+  {
+   "schedule": "*/15 * * * *",
+   "user": "root",
+   "command": "/usr/local/bin/check-certs --quiet",
+   "file": "/etc/cron.d/check-certs"
+  },
+  {
+   "schedule": "@reboot",
+   "user": "admin",
+   "command": "/home/admin/bin/notify-boot.sh",
+   "file": "/var/spool/cron/crontabs/admin"
+  }
+ ],
+ "drives": [
+  {
+   "mount": "/",
+   "kind": "system",
+   "fstype": "ext4",
+   "label": "",
+   "model": "Samsung SSD 980",
+   "total": 511101108224,
+   "used": 317827579904,
+   "free": 193273528320,
+   "percent": 62.2,
+   "browsable": true
+  },
+  {
+   "mount": "/mnt/backup",
+   "kind": "external",
+   "fstype": "ext4",
+   "label": "Backup",
+   "model": "Portable SSD T7",
+   "total": 999653638144,
+   "used": 431644213248,
+   "free": 568009424896,
+   "percent": 43.2,
+   "browsable": true
+  },
+  {
+   "mount": "/boot/efi",
+   "kind": "boot",
+   "fstype": "vfat",
+   "label": "",
+   "model": "Samsung SSD 980",
+   "total": 1073741824,
+   "used": 42949672,
+   "free": 1030792152,
+   "percent": 4.0,
+   "browsable": false
+  }
+ ]
+}

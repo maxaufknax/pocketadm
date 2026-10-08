@@ -12,7 +12,7 @@ struct AboutView: View {
     }
 
     var body: some View {
-        List {
+        ThemedList {
             Section {
                 VStack(spacing: 10) {
                     ServiceIcon(names: ["pocketadm"], size: 84)

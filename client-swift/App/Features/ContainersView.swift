@@ -347,7 +347,7 @@ struct ContainersView: View {
     }
 
     private var containersList: some View {
-        List {
+        ThemedList {
             Section {
                 EmptyView()
             } header: {
@@ -585,7 +585,7 @@ struct AppGroupView: View {
     private var group: AppGroup { model.groups.first { $0.id == groupID } ?? initial }
 
     var body: some View {
-        List {
+        ThemedList {
             Section { header }
                 .listRowBackground(Color.clear)
 

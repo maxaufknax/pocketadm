@@ -16,7 +16,7 @@ struct SettingsView: View {
     @State private var toast: Toast?
 
     var body: some View {
-        List {
+        ThemedList {
             Section("Connection") {
                 FactRow(label: "Name", value: app.serverName.isEmpty ? "—" : app.serverName)
                 FactRow(label: "Address", value: app.serverURL?.absoluteString ?? "—", selectable: true)

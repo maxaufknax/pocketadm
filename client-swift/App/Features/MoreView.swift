@@ -13,12 +13,17 @@ struct MoreView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
+            ThemedList {
                 Section {
                     NavigationLink(value: MoreRoute.server) { serverCard }
                 }
 
                 Section("Manage") {
+                    if app.supports("inventory") {
+                        link(.inventory, NavRow(symbol: "server.rack", title: "Server overview",
+                                                subtitle: "Domains, services, timers, drives — all in one place",
+                                                tint: .teal))
+                    }
                     link(.updates, NavRow(symbol: "arrow.triangle.2.circlepath", title: "Updates",
                                           subtitle: updateCount > 0
                                             ? "\(updateCount) image\(updateCount == 1 ? "" : "s") ready"
@@ -76,7 +81,11 @@ struct MoreView: View {
                 }
 
                 Section("App") {
-                    AppearancePicker()
+                    link(.appearance, NavRow(symbol: "paintpalette.fill", title: "Appearance",
+                                             subtitle: ThemeStore.current.isSystem
+                                               ? "PocketADM theme · \(AppearancePicker.label)"
+                                               : "\(ThemeStore.current.name) theme",
+                                             tint: .pink))
                     link(.about, NavRow(symbol: "info.circle.fill", title: "About PocketADM",
                                         tint: .gray))
                 }
@@ -179,6 +188,9 @@ struct MoreDestination: View {
         case .agents:   CLIsView()
         case .security: SecurityView()
         case .about:    AboutView()
+        case .appearance: AppearanceView()
+        case .inventory:  ServerOverviewView()
+        case .agent:      AgentSettingsView()
         }
     }
 }
@@ -187,24 +199,16 @@ struct MoreDestination: View {
 /// deep link) can open one directly.
 enum MoreRoute: String, Hashable {
     case server, updates, apps, files, users, alerts, checks, activity, ai, agents, security, about
+    case appearance, inventory, agent
 }
 
-/// System, light or dark — stored per device.
-struct AppearancePicker: View {
-    @AppStorage("pocketadm.appearance") private var appearance = "system"
-
-    var body: some View {
-        Picker(selection: $appearance) {
-            Text("System").tag("system")
-            Text("Light").tag("light")
-            Text("Dark").tag("dark")
-        } label: {
-            HStack(spacing: 14) {
-                IconTile(symbol: "circle.lefthalf.filled", color: .indigo)
-                Text("Appearance")
-                    .foregroundStyle(Theme.text)
-            }
+/// System, light or dark — stored per device (More → Appearance).
+enum AppearancePicker {
+    static var label: String {
+        switch UserDefaults.standard.string(forKey: "pocketadm.appearance") ?? "system" {
+        case "light": return "Light"
+        case "dark":  return "Dark"
+        default:      return "follows iOS"
         }
-        .pickerStyle(.menu)
     }
 }

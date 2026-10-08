@@ -11,7 +11,7 @@ struct CLIsView: View {
     @State private var toast: Toast?
 
     var body: some View {
-        List {
+        ThemedList {
             Section {
                 ForEach(tools) { tool in
                     HStack(alignment: .top, spacing: 14) {

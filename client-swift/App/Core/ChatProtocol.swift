@@ -178,14 +178,49 @@ struct ChatItem: Identifiable, Hashable {
     /// Set on user rows so "edit and resend" can tell the server which message
     /// to truncate at (it counts only visible user messages).
     var ordinal: Int?
+    /// On user rows: what was attached (files, pictures, context) — 0.26.
+    var attachments: [ChatAttachmentLabel] = []
+    /// On assistant rows: who answered ("Mistral Vibe · GLM 5.3") — 0.26.
+    var by: String = ""
 
     init(id: String = UUID().uuidString, kind: Kind, text: String,
-         tool: ToolCall? = nil, ordinal: Int? = nil) {
+         tool: ToolCall? = nil, ordinal: Int? = nil,
+         attachments: [ChatAttachmentLabel] = [], by: String = "") {
         self.id = id
         self.kind = kind
         self.text = text
         self.tool = tool
         self.ordinal = ordinal
+        self.attachments = attachments
+        self.by = by
+    }
+}
+
+/// One attachment as a sent message shows it: its name and kind (image,
+/// file, folder, service, system, health …).
+struct ChatAttachmentLabel: Hashable {
+    let name: String
+    let kind: String
+
+    static func list(_ raw: Any?) -> [ChatAttachmentLabel] {
+        (raw as? [Any] ?? []).compactMap { entry in
+            guard let a = entry as? [String: Any], let name = a["name"] as? String, !name.isEmpty
+            else { return nil }
+            return ChatAttachmentLabel(name: name, kind: a["kind"] as? String ?? "")
+        }
+    }
+
+    var symbol: String {
+        switch kind {
+        case "image":   return "photo"
+        case "text", "file": return "doc.text"
+        case "folder":  return "folder"
+        case "service": return "shippingbox"
+        case "system":  return "gauge.with.dots.needle.33percent"
+        case "health":  return "checkmark.shield"
+        case "unit":    return "gearshape.2"
+        default:        return "paperclip"
+        }
     }
 }
 
@@ -204,7 +239,11 @@ struct ChatSnapshot {
 
 enum ChatServerEvent {
     case snapshot(ChatSnapshot)
-    case userEcho(text: String, queued: Bool)
+    case userEcho(text: String, queued: Bool, attachments: [ChatAttachmentLabel])
+    /// Who wrote the answer that just finished (from the turn's usage, 0.26).
+    case answeredBy(String)
+    /// A remark from the server about the turn ("this model cannot see pictures").
+    case notice(String)
     case assistantDelta(String)
     case thinkingDelta(String)
     case toolRequest(ToolCall)
@@ -242,7 +281,8 @@ enum ChatProtocol {
 
         case "user_echo":
             return .userEcho(text: json["text"] as? String ?? "",
-                             queued: json["queued"] as? Bool ?? false)
+                             queued: json["queued"] as? Bool ?? false,
+                             attachments: ChatAttachmentLabel.list(json["attachments"]))
 
         case "text":
             return .assistantDelta(json["delta"] as? String ?? "")
@@ -301,8 +341,17 @@ enum ChatProtocol {
         case "done":
             return .done
 
-        // Usage and service pushes exist but have no place in the transcript.
-        case "usage", "services":
+        case "usage":
+            // the label under the answer; tokens and cost have no place here
+            let turn = json["turn"] as? [String: Any] ?? [:]
+            if let by = turn["by"] as? String, !by.isEmpty { return .answeredBy(by) }
+            return .unknown(type)
+
+        case "notice":
+            return .notice(json["text"] as? String ?? "")
+
+        // Service pushes exist but have no place in the transcript.
+        case "services":
             return .unknown(type)
 
         default:
@@ -321,10 +370,12 @@ enum ChatProtocol {
             case "user":
                 items.append(ChatItem(kind: .user,
                                       text: event["text"] as? String ?? "",
-                                      ordinal: userOrdinal))
+                                      ordinal: userOrdinal,
+                                      attachments: ChatAttachmentLabel.list(event["attachments"])))
                 userOrdinal += 1
             case "assistant":
-                items.append(ChatItem(kind: .assistant, text: event["text"] as? String ?? ""))
+                items.append(ChatItem(kind: .assistant, text: event["text"] as? String ?? "",
+                                      by: event["by"] as? String ?? ""))
             case "tool":
                 let name = event["name"] as? String ?? "?"
                 let args = event["args"] as? [String: Any] ?? [:]
@@ -465,8 +516,16 @@ enum ChatProtocol {
         encode(["type": "reset"])
     }
 
-    static func user(text: String, context: String = "") -> String {
-        encode(["type": "user", "text": text, "context": context])
+    /// `images`: uploaded pictures (server paths) for models that see images;
+    /// `attachments`: name and kind of everything attached, for the chips.
+    static func user(text: String, context: String = "", images: [String] = [],
+                     attachments: [ChatAttachmentLabel] = []) -> String {
+        var frame: [String: Any] = ["type": "user", "text": text, "context": context]
+        if !images.isEmpty { frame["images"] = images }
+        if !attachments.isEmpty {
+            frame["attachments"] = attachments.map { ["name": $0.name, "kind": $0.kind] }
+        }
+        return encode(frame)
     }
 
     static func config(_ config: ChatConfig) -> String {

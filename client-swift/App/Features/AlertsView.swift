@@ -68,7 +68,7 @@ struct AlertsView: View {
     }
 
     private var content: some View {
-        List {
+        ThemedList {
             if app.supports("watch") {
                 Section { watchCard }
                     .listRowInsets(EdgeInsets())

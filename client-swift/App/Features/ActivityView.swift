@@ -172,7 +172,7 @@ struct ActivityView: View {
     private var filterList: [String] { filter.map { [$0] } ?? Self.order }
 
     private var list: some View {
-        List {
+        ThemedList {
             Section {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -295,7 +295,7 @@ struct ActivityDetailSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ThemedList {
                 Section {
                     HStack(spacing: 12) {
                         IconTile(symbol: ActivityStyle.symbol(event), color: ActivityStyle.tint(event), size: 40)

@@ -1,0 +1,108 @@
+{
+ "notes": [
+  {
+   "id": "m000000",
+   "text": "Backups run nightly at 03:00 to the USB drive mounted at /mnt/backup (backup-nightly.timer); keep 7 days.",
+   "topic": "storage",
+   "source": "assistant",
+   "created": 1791310473.0426872,
+   "updated": 1791440073.0426872,
+   "pinned": true
+  },
+  {
+   "id": "m000001",
+   "text": "Compose stacks live under /srv/<stack>; change a service there with `docker compose up -d`, never with docker run.",
+   "topic": "procedures",
+   "source": "assistant",
+   "created": 1791224073.0426872,
+   "updated": 1791396873.0426872,
+   "pinned": false
+  },
+  {
+   "id": "m000002",
+   "text": "All public services go through Caddy with Let's Encrypt; new apps get a subdomain of example.org.",
+   "topic": "network",
+   "source": "assistant",
+   "created": 1791137673.0426872,
+   "updated": 1791353673.0426872,
+   "pinned": false
+  },
+  {
+   "id": "m000003",
+   "text": "The owner prefers short answers and wants to approve every restart of Nextcloud.",
+   "topic": "preferences",
+   "source": "assistant",
+   "created": 1791051273.0426872,
+   "updated": 1791310473.0426872,
+   "pinned": false
+  },
+  {
+   "id": "m000004",
+   "text": "Nextcloud data is on the system disk under /srv/nextcloud/data (about 180 GB).",
+   "topic": "services",
+   "source": "assistant",
+   "created": 1790964873.0426872,
+   "updated": 1791267273.0426872,
+   "pinned": false,
+   "subject": "Nextcloud"
+  }
+ ],
+ "topics": [
+  {
+   "id": "server",
+   "label": "Server & hardware"
+  },
+  {
+   "id": "services",
+   "label": "Apps & services"
+  },
+  {
+   "id": "network",
+   "label": "Network & domains"
+  },
+  {
+   "id": "storage",
+   "label": "Storage & backups"
+  },
+  {
+   "id": "security",
+   "label": "Access & security"
+  },
+  {
+   "id": "procedures",
+   "label": "How things are done"
+  },
+  {
+   "id": "projects",
+   "label": "Projects"
+  },
+  {
+   "id": "preferences",
+   "label": "Preferences"
+  },
+  {
+   "id": "other",
+   "label": "Other"
+  }
+ ],
+ "stats": {
+  "count": 5,
+  "pinned": 1,
+  "stale": 0,
+  "chars": 555,
+  "budget": 6000,
+  "in_prompt": 555,
+  "by_topic": {
+   "server": 0,
+   "services": 1,
+   "network": 1,
+   "storage": 1,
+   "security": 0,
+   "procedures": 1,
+   "projects": 0,
+   "preferences": 1,
+   "other": 0
+  },
+  "can_undo": false
+ }
+}

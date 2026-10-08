@@ -254,10 +254,12 @@ final class ChatSocket: ObservableObject {
 
     // MARK: - Sending
 
-    func submit(_ text: String, context: String = "") {
+    func submit(_ text: String, context: String = "", images: [String] = [],
+                attachments: [ChatAttachmentLabel] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let frame = ChatProtocol.user(text: trimmed, context: context)
+        let frame = ChatProtocol.user(text: trimmed, context: context, images: images,
+                                      attachments: attachments)
         guard task != nil, status == .connected else {
             if urlProvider != nil {
                 // sent as soon as the connection is back
@@ -346,11 +348,12 @@ final class ChatSocket: ObservableObject {
             outbox = []
             for frame in queued { send(raw: frame) }
 
-        case .userEcho(let text, let queued):
+        case .userEcho(let text, let queued, let attachments):
             let ordinal = items.filter { $0.kind == .user }.count
             items.append(ChatItem(kind: .user,
                                   text: text,
-                                  ordinal: ordinal))
+                                  ordinal: ordinal,
+                                  attachments: attachments))
             if queued {
                 items.append(ChatItem(kind: .notice,
                                       text: "Queued — it will steer the next step."))
@@ -426,6 +429,16 @@ final class ChatSocket: ObservableObject {
         case .done:
             running = false
             awaitingApproval = nil
+
+        case .answeredBy(let label):
+            // the newest answer of this turn carries the label
+            if let i = items.lastIndex(where: { $0.kind == .assistant }),
+               !items[(i + 1)...].contains(where: { $0.kind == .user }) {
+                items[i].by = label
+            }
+
+        case .notice(let text):
+            if !text.isEmpty { items.append(ChatItem(kind: .notice, text: text)) }
 
         case .unknown:
             break

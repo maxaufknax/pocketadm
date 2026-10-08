@@ -31,7 +31,7 @@ struct AISettingsView: View {
     ]
 
     var body: some View {
-        List {
+        ThemedList {
             Section {
                 ForEach(Self.providers, id: \.self) { provider in
                     VStack(alignment: .leading, spacing: 6) {

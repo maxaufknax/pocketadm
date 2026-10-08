@@ -608,9 +608,13 @@ struct AIAccounts: Decodable {
         let plan: String
         let connected: Bool
         let usedFor: [String]
+        /// The key comes from the server's environment: only changing the
+        /// container's settings removes it (0.26).
+        let keyFromEnv: Bool
 
         enum CodingKeys: String, CodingKey {
             case id, name, vendor, engine, subscription, brand, detail, plan, connected
+            case keyFromEnv = "key_from_env"
             case keyProvider = "key_provider"
             case keyHint = "key_hint"
             case keySet = "key_set"
@@ -640,6 +644,7 @@ struct AIAccounts: Decodable {
             plan = c.get(.plan, "")
             connected = c.get(.connected, false)
             usedFor = c.get(.usedFor, [])
+            keyFromEnv = c.get(.keyFromEnv, false)
         }
     }
 
@@ -716,11 +721,14 @@ struct SignInFlow: Decodable, Equatable {
     let message: String
     let error: String
     let label: String
+    /// Which sign-in page this is: a code Claude rejected renews the page
+    /// (server 0.26), and the old page's codes no longer work.
+    let attempt: Int
 
     var isOver: Bool { ["done", "failed", "cancelled"].contains(state) }
 
     enum CodingKeys: String, CodingKey {
-        case id, engine, state, url, message, error, label
+        case id, engine, state, url, message, error, label, attempt
         case userCode = "user_code"
     }
 
@@ -734,6 +742,7 @@ struct SignInFlow: Decodable, Equatable {
         message = c.get(.message, "")
         error = c.get(.error, "")
         label = c.get(.label, "")
+        attempt = c.get(.attempt, 1)
     }
 }
 

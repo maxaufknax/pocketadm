@@ -1,0 +1,18 @@
+{
+ "unit": "backup-nightly.timer",
+ "kind": "timer",
+ "description": "Run the nightly backup at 03:00",
+ "active": "active",
+ "sub": "waiting",
+ "enabled": "enabled",
+ "result": "success",
+ "since": "Mon 2026-10-05 08:12:44 UTC",
+ "next_run": "03:00 tonight",
+ "last_run": "03:00 today",
+ "triggers": "backup-nightly.service",
+ "triggered_by": "",
+ "memory": 0,
+ "custom": true,
+ "path": "/etc/systemd/system/backup-nightly.timer",
+ "logs": "2026-10-08T17:14:33+00:00 demo-server systemd[1]: Starting backup-nightly.timer - Run the nightly backup at 03:00…\n2026-10-08T17:14:33+00:00 demo-server systemd[1]: Started backup-nightly.timer - Run the nightly backup at 03:00.\n2026-10-08T17:14:33+00:00 demo-server systemd[1]: backup-nightly.timer: running fine."
+}

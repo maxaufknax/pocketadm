@@ -57,7 +57,7 @@ struct UsersView: View {
     }
 
     private func content(_ data: ServerUsers) -> some View {
-        List {
+        ThemedList {
             Section("This machine") {
                 FactRow(label: "Host", value: data.identity.hostname)
                 FactRow(label: "System", value: data.identity.os)
@@ -168,7 +168,7 @@ struct UserSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ThemedList {
                 Section {
                     FactRow(label: "User", value: user.name)
                     FactRow(label: "UID", value: String(user.uid))
@@ -264,7 +264,7 @@ struct CreateUserSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ThemedList {
                 Section {
                     TextField("Username", text: $name)
                         .textInputAutocapitalization(.never)

@@ -13,7 +13,7 @@ struct ChatSettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ThemedList {
                 Section {
                     ForEach(ChatMode.allCases) { mode in
                         Button {
@@ -68,11 +68,18 @@ struct ChatSettingsSheet: View {
                                                     Text("no tool support — chat only")
                                                         .font(.caption2)
                                                         .foregroundStyle(Theme.warn)
+                                                } else if !model.hint.isEmpty {
+                                                    Text(model.hint)
+                                                        .font(.caption2)
+                                                        .foregroundStyle(model.billedPerUse ? Theme.warn : Theme.muted)
                                                 }
                                             }
                                             Spacer()
                                             if model.free {
                                                 StatusPill(text: "free", tint: Theme.accent2)
+                                            }
+                                            if model.billedPerUse {
+                                                StatusPill(text: "API key", tint: Theme.warn)
                                             }
                                             if draft.provider == entry.provider
                                                 && draft.model == model.id {
@@ -104,7 +111,7 @@ struct ChatSettingsSheet: View {
                     } footer: {
                         Text(draft.model.isEmpty
                              ? "Using the server's default model."
-                             : "Using \(draft.model).")
+                             : "Using \(Self.modelName(draft, in: models)).")
                             .font(.caption)
                             .foregroundStyle(Theme.muted)
                     }
@@ -152,6 +159,13 @@ struct ChatSettingsSheet: View {
             }
             .onAppear { draft = config }
         }
+    }
+
+    /// The chosen model by the name the menu shows ("GLM 5.3"), not its id.
+    static func modelName(_ config: ChatConfig, in models: AIModels) -> String {
+        let entry = models.providers.first { $0.provider == config.provider }
+        let name = entry?.models.first { $0.id == config.model }?.name ?? config.model
+        return entry.map { "\($0.displayName) · \(name)" } ?? name
     }
 }
 

@@ -27,7 +27,7 @@ struct FilesHomeView: View {
     ]
 
     var body: some View {
-        List {
+        ThemedList {
             if !drives.isEmpty {
                 Section {
                     ForEach(drives) { drive in
@@ -304,7 +304,7 @@ struct FolderView: View {
                           name: \.name, size: { _ in 0 }, date: \.modified)
         let files = sorted(listing.fileEntries.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) },
                            name: \.name, size: \.size, date: \.modified)
-        return List {
+        return ThemedList {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(listing.shownPath)
@@ -688,7 +688,7 @@ struct FolderUsageView: View {
     @State private var error: String?
 
     var body: some View {
-        List {
+        ThemedList {
             if let usage {
                 Section {
                     FactRow(label: "In total", value: Fmt.bytes(usage.total))

@@ -324,7 +324,7 @@ struct FileExplorerView: View {
     // MARK: Layout
 
     private var explorer: some View {
-        List {
+        ThemedList {
             if rootPath == nil && !drives.isEmpty && filter.isEmpty {
                 Section { driveStrip }
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
@@ -1051,7 +1051,7 @@ struct FolderPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ThemedList {
                 Section {
                     row(FSNode(root: startPath, display: startDisplay.isEmpty ? startPath : startDisplay), depth: 0)
                     ForEach(tree.rows(under: startPath)) { item in

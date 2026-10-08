@@ -32,7 +32,7 @@ struct WatchChannelView: View {
                 conversation
             }
         }
-        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .background(Theme.chatBg.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) { titleView }
@@ -263,7 +263,7 @@ struct WatchChannelView: View {
                 .focused($composerFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color(uiColor: .secondarySystemBackground),
+                .background(Theme.bubble,
                             in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .disabled(!canWrite)
 
@@ -539,7 +539,7 @@ struct WatchBubble: View {
                 }
                 .padding(.horizontal, 13)
                 .padding(.vertical, 9)
-                .background(Color(uiColor: .secondarySystemBackground),
+                .background(Theme.bubble,
                             in: RoundedRectangle(cornerRadius: 19, style: .continuous))
                 .overlay(alignment: .leading) {
                     if message.severity == .crit || message.severity == .warn {
@@ -666,7 +666,7 @@ struct TypingBubble: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
-            .background(Color(uiColor: .secondarySystemBackground),
+            .background(Theme.bubble,
                         in: RoundedRectangle(cornerRadius: 19, style: .continuous))
             Spacer()
         }

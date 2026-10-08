@@ -20,6 +20,9 @@ dark-ai                  dark  more       ai
 dark-agents              dark  more       agents
 dark-security            dark  more       security
 dark-about               dark  more       about
+dark-inventory           dark  more       inventory
+dark-appearance          dark  more       appearance
+dark-agent               dark  more       agent
 dark-connect             dark  connect
 dark-login               dark  login
 light-dashboard          light dashboard
@@ -33,5 +36,7 @@ light-apps               light more       apps
 light-checks             light more       checks
 light-security           light more       security
 light-ai                 light more       ai
+light-inventory          light more       inventory
+light-appearance         light more       appearance
 light-connect            light connect
 light-login              light login

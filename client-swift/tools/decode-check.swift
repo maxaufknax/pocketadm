@@ -488,6 +488,49 @@ if case .list(_, _, let items)? = Markdown.parse("1. a\n  - b\n2. c").first {
     expect("markdown: two-space nesting under a number", items.count == 2)
 } else { expect("markdown: two-space nesting", false) }
 
+// 0.26: notes, the inventory with its units, suggestions, chat attachments
+check("agent_notes", AgentNotes.self) {
+    $0.notes.count == 5 && $0.notes.contains { $0.pinned } && $0.topics.count == 9
+        && $0.stats.budget > 0 && $0.label(of: "storage") == "Storage & backups"
+}
+check("inventory", ServerInventory.self) {
+    !$0.domains.isEmpty && $0.domains.allSatisfy { $0.url != nil } && !$0.services.isEmpty
+        && $0.timers.contains { !$0.nextRun.isEmpty } && !$0.cron.isEmpty && !$0.drives.isEmpty
+        && !$0.stacks.isEmpty && $0.host.cores > 0
+}
+check("system_unit", SystemUnit.self) { $0.isTimer && !$0.logs.isEmpty && $0.stateText == "Waiting" }
+check("ai_suggestions", AISuggestions.self) { $0.suggestions.count == 4 }
+check("chat_upload", ChatUpload.self) { $0.kind == "image" && $0.path.hasPrefix("/var/lib/pocketadm/uploads/") }
+check("skills", AgentSkillList.self) { _ in true }
+
+print("Chat protocol 0.26:")
+if case .userEcho(let text, _, let attached) = ChatProtocol.parse(
+    #"{"type":"user_echo","text":"hi","queued":false,"attachments":[{"name":"err.png","kind":"image"}]}"#) {
+    expect("user echo carries attachments", text == "hi" && attached == [ChatAttachmentLabel(name: "err.png", kind: "image")])
+} else { expect("user echo", false) }
+if case .answeredBy(let by) = ChatProtocol.parse(
+    #"{"type":"usage","turn":{"input":1,"output":2,"by":"Mistral Vibe · GLM 5.3"},"session":{}}"#) {
+    expect("usage names who answered", by == "Mistral Vibe · GLM 5.3")
+} else { expect("usage → answeredBy", false) }
+if case .notice(let text) = ChatProtocol.parse(#"{"type":"notice","text":"no pictures"}"#) {
+    expect("notice", text == "no pictures")
+} else { expect("notice", false) }
+let frame = ChatProtocol.user(text: "why?", context: "ctx", images: ["/var/lib/pocketadm/uploads/a.png"],
+                              attachments: [ChatAttachmentLabel(name: "a.png", kind: "image")])
+expect("user frame carries images and attachments",
+       (field(frame, "images") as? [String]) == ["/var/lib/pocketadm/uploads/a.png"]
+           && ((field(frame, "attachments") as? [[String: String]])?.first?["kind"]) == "image")
+let snap = ChatProtocol.parse(#"{"type":"chat","id":"c","title":"t","events":[{"t":"user","text":"q","attachments":[{"name":"x","kind":"file"}]},{"t":"assistant","text":"a","by":"Claude Code · Sonnet"}],"config":{},"running":false,"live":[]}"#)
+if case .snapshot(let s) = snap {
+    expect("snapshot: attachments and who answered",
+           s.items.first?.attachments.first?.name == "x" && s.items.last?.by == "Claude Code · Sonnet")
+} else { expect("snapshot 0.26", false) }
+expect("cron reads like a person", {
+    let job = try? JSONDecoder().decode(CronJob.self, from: Data(#"{"schedule":"*/15 * * * *","user":"root","command":"x","file":"/etc/cron.d/x"}"#.utf8))
+    let daily = try? JSONDecoder().decode(CronJob.self, from: Data(#"{"schedule":"25 6 * * *","command":"y"}"#.utf8))
+    return job?.readableSchedule == "every 15 minutes" && daily?.readableSchedule == "daily at 06:25"
+}())
+
 print("")
 if failures == 0 {
     print("✓ \(checks) checks passed")

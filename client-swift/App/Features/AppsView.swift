@@ -66,7 +66,7 @@ struct AppsView: View {
     }
 
     private func content(_ response: AppsResponse) -> some View {
-        List {
+        ThemedList {
             if !installed(response).isEmpty {
                 Section {
                     ForEach(installed(response)) { entry in
