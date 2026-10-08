@@ -27,6 +27,20 @@ Since **2.0** this is the App Store app (`de.maxaufknax.pocketadm`, app id
 The live demo must answer (`curl -s https://demo.pocketadm.com/api/info`
 without `-k`), or App Review meets a dead end on the first screen.
 
+**Push notifications.** Before signing, the workflow enables the Push
+Notifications capability on the app id and deletes App Store profiles that lack
+the `aps-environment` entitlement (`tools/asc_push.py`), so `fetch-signing-files
+--create` makes a fresh one; when that cannot be done it builds without the
+entitlement (`PUSH_READY=0`) and the app falls back to background refresh. The
+app registers its token with the relay at `pocketadm.com/push` (`push-relay/` in
+this repository); the relay needs the Apple key (`.p8`, Keys → Apple Push
+Notifications service) to deliver — see `push-relay/README.md`.
+
+**Does it compile?** Every push that touches `client-swift/` builds the app for
+the simulator on GitHub (`.github/workflows/ios-check.yml`, no signing); the
+first compiler errors appear as annotations on the commit. Codemagic's free
+macOS machines can queue for a long time during the day, GitHub's start at once.
+
 **Checking the UI without a phone:** `ios-native-shots` (any branch) builds for
 the simulator and photographs every screen in light and dark against the demo
 — `tools/shots-review.txt` lists them, `tools/simulator-shots.sh` takes them,
