@@ -1,0 +1,1361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PocketADM app preview</title>
+<!--
+  The App Store preview, drawn frame by frame. Nothing here animates on its
+  own: render.mjs calls window.renderFrame(t) for every frame and photographs
+  the page, so a frame is a pure function of its time.
+
+  ?lang=en|de   captions (the app itself is English)
+  ?orient=portrait|landscape   886 x 1920 or 1920 x 886
+  ?t=12.3       show one moment (for looking at a frame in a browser)
+
+  UI icons: Lucide (ISC, https://lucide.dev). Brand marks: Simple Icons (CC0),
+  the same files the app ships.
+-->
+<style>
+@font-face { font-family: "PADisplay"; src: url("../fonts/InterDisplay-Black.ttf"); font-weight: 900; }
+@font-face { font-family: "PASemi"; src: url("../fonts/Inter-SemiBold.ttf"); font-weight: 600; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { overflow: hidden; background: #000; }
+body { font-family: "Inter", sans-serif; -webkit-font-smoothing: antialiased; font-feature-settings: "cv11" 1; }
+#stage { position: absolute; left: 0; top: 0; overflow: hidden; background: #000; }
+
+/* ---------- background ---------- */
+.blob { position: absolute; border-radius: 50%; pointer-events: none; }
+#code { position: absolute; left: 0; top: 0; }
+#code i { position: absolute; height: 14px; border-radius: 7px; display: block; }
+#vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.65) 100%); }
+
+/* ---------- captions ---------- */
+.cap { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.hl { font-family: "PADisplay"; font-weight: 900; color: #fff; white-space: nowrap; letter-spacing: -0.5px; }
+.hl .w { display: inline-block; white-space: pre; will-change: transform; }
+.g { background-image: linear-gradient(90deg, #4FE3E0, #1D62D8); -webkit-background-clip: text; background-clip: text; color: transparent; background-repeat: no-repeat; }
+.sub { font-family: "PASemi"; font-weight: 600; color: #4DA3FF; white-space: nowrap; }
+.sub .w { display: inline-block; white-space: pre; }
+
+/* ---------- device ---------- */
+#devWrap { position: absolute; transform-origin: 50% 50%; }
+#devGlow { position: absolute; inset: 0; border-radius: 9%/4.2%; }
+#device { position: absolute; left: 0; top: 0; width: 393px; height: 852px; transform-origin: 0 0; border-radius: 55px; overflow: hidden; background: #000; }
+#rim { position: absolute; inset: 0; border-radius: 55px; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.16), inset 0 0 0 3px rgba(0,0,0,.4); pointer-events: none; z-index: 90; }
+.screen { position: absolute; inset: 0; color: var(--text); font-size: 17px; letter-spacing: -0.25px; }
+.page { position: absolute; left: 0; top: 0; width: 393px; height: 852px; background: var(--bg); overflow: hidden; display: none; color: var(--text); }
+.card { background: var(--card); border-radius: 18px; }
+.muted { color: var(--muted); }
+.lt { position: absolute; left: 16px; top: 101px; font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: -0.5px; }
+.sect { font-size: 20px; line-height: 25px; font-weight: 600; padding-left: 4px; margin: 22px 0 10px; letter-spacing: -0.3px; }
+.gbtn { position: absolute; top: 47px; width: 44px; height: 44px; border-radius: 22px; background: var(--gbtn); box-shadow: inset 0 0 0 .6px var(--glassBorder), 0 3px 12px rgba(0,0,0,.18); display: flex; align-items: center; justify-content: center; color: var(--text); z-index: 20; }
+.gbtn.l { left: 17px; } .gbtn.r { right: 16px; }
+.edge { position: absolute; left: 0; right: 0; top: 0; height: 112px; background: linear-gradient(var(--bg) 64%, transparent); z-index: 15; pointer-events: none; }
+.inlinetitle { position: absolute; top: 58px; left: 70px; right: 70px; text-align: center; font-size: 17px; font-weight: 600; line-height: 22px; z-index: 21; }
+svg { display: block; }
+
+/* status bar, tab bar, home indicator */
+.sb { position: absolute; top: 0; left: 0; right: 0; height: 54px; z-index: 60; color: var(--text); pointer-events: none; }
+.sb .time { position: absolute; left: 0; width: 104px; top: 15px; text-align: center; font-size: 17px; font-weight: 600; letter-spacing: -0.2px; }
+.sb .ri { position: absolute; right: 26px; top: 19px; display: flex; gap: 6px; align-items: center; }
+.tabbar { position: absolute; left: 21px; width: 351px; top: 768px; height: 62px; border-radius: 31px; background: var(--glass); box-shadow: inset 0 0 0 .6px var(--glassBorder), 0 10px 30px rgba(0,0,0,.35); z-index: 50; }
+.tabpill { position: absolute; top: 4px; height: 54px; border-radius: 27px; background: var(--pill); }
+.tab { position: absolute; top: 0; width: 72px; height: 62px; color: var(--text); }
+.tab .ti { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); }
+.tab .tl { position: absolute; top: 39px; left: 0; right: 0; text-align: center; font-size: 11.5px; font-weight: 600; letter-spacing: -0.1px; }
+.tab.sel { color: var(--accent); }
+.home { position: absolute; bottom: 8px; left: 129.5px; width: 134px; height: 5px; border-radius: 3px; background: var(--text); z-index: 70; }
+
+/* rows */
+.rows .row { display: flex; align-items: center; gap: 14px; padding: 11px 16px; position: relative; }
+.rows .row + .row::before { content: ""; position: absolute; top: 0; left: 60px; right: 0; height: .5px; background: var(--sep); }
+.tile { flex: none; display: flex; align-items: center; justify-content: center; color: #fff; }
+.rt { flex: 1; min-width: 0; }
+.rt .a { font-size: 17px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt .b { font-size: 15px; line-height: 20px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv { font-size: 17px; white-space: nowrap; }
+.chev { color: var(--tert); flex: none; }
+
+/* dashboard */
+.gauges { padding: 16px; }
+.rings { display: flex; }
+.gauge { flex: 1; display: flex; flex-direction: column; align-items: center; }
+.ringbox { position: relative; width: 78px; height: 78px; }
+.ringbox svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.ringval { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.gt { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 20px; }
+.gd { font-size: 12px; color: var(--muted); line-height: 16px; white-space: nowrap; }
+.hdiv { height: .5px; background: var(--sep); margin: 16px 0; }
+.net { display: flex; }
+.net > div { flex: 1; text-align: center; }
+.net .nl { font-size: 12px; color: var(--muted); display: flex; gap: 4px; justify-content: center; align-items: center; line-height: 16px; }
+.net .nv { font-size: 15px; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.seg { display: flex; background: var(--field); border-radius: 17px; height: 34px; padding: 2px; position: relative; }
+.seg > div { flex: 1; text-align: center; font-size: 13.5px; font-weight: 500; line-height: 30px; position: relative; z-index: 1; white-space: nowrap; }
+.seg .thumb { position: absolute; top: 2px; bottom: 2px; border-radius: 15px; background: var(--thumb); box-shadow: 0 2px 6px rgba(0,0,0,.2); z-index: 0; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 5px; }
+.facts .fr { display: flex; justify-content: space-between; padding: 11px 16px; font-size: 17px; position: relative; }
+.facts .fr + .fr::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: .5px; background: var(--sep); }
+
+/* apps */
+.chips { display: flex; gap: 8px; margin-top: 12px; }
+.chip { font-size: 15px; font-weight: 500; padding: 7px 12px; border-radius: 18px; background: var(--card); white-space: nowrap; }
+.chip b { font-weight: 500; color: var(--muted); margin-left: 5px; }
+.chip.on { background: var(--accent); color: var(--onAccent); }
+.chip.on b { color: var(--onAccent); opacity: .85; }
+.grid { position: absolute; left: 16px; width: 361px; }
+.acard { position: absolute; width: 174.5px; height: 128px; padding: 14px; border-radius: 18px; background: var(--card); }
+.acard .dot { position: absolute; right: 14px; top: 18px; width: 10px; height: 10px; border-radius: 5px; }
+.acard .an { position: absolute; left: 14px; top: 66px; font-size: 17px; font-weight: 600; line-height: 22px; }
+.acard .as { position: absolute; left: 14px; top: 88px; font-size: 12px; line-height: 16px; color: var(--muted); }
+.acard .bars { position: absolute; left: 14px; right: 14px; top: 112px; display: flex; gap: 4px; }
+.acard .bars i { flex: 1; height: 5px; border-radius: 3px; display: block; }
+.spin { position: absolute; }
+.ctxbg { position: absolute; inset: 0; z-index: 40; background: rgba(0,0,0,.18); }
+.ctxmenu { position: absolute; z-index: 45; width: 250px; border-radius: 24px; background: rgba(46,46,50,.97); backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); box-shadow: 0 20px 50px rgba(0,0,0,.5), inset 0 0 0 .6px rgba(255,255,255,.12); overflow: hidden; transform-origin: 20% 0; padding: 6px 0; }
+.ctxmenu .mi { display: flex; justify-content: space-between; align-items: center; height: 46px; padding: 0 18px; font-size: 17px; margin: 0 6px; border-radius: 14px; }
+.ctxmenu .ms { height: 7px; }
+
+/* terminal list */
+.search { position: absolute; left: 16px; right: 16px; top: 156px; height: 44px; border-radius: 22px; background: var(--field); display: flex; align-items: center; gap: 8px; padding-left: 14px; font-size: 17px; color: var(--muted); }
+.cap2 { font-size: 17px; font-weight: 600; color: var(--muted); padding-left: 20px; margin: 26px 0 10px; }
+.trows .row { padding: 12px 16px; min-height: 68px; }
+.trows .row + .row::before { left: 62px; }
+
+/* terminal session */
+.term { position: absolute; left: 8px; right: 8px; top: 106px; font-family: "DejaVu Sans Mono", monospace; font-size: 12px; line-height: 17px; color: var(--termFg); white-space: pre; letter-spacing: 0; }
+.term .pu { color: #7ee787; font-weight: bold; }
+.term .pp { color: #79c0ff; font-weight: bold; }
+.term .dir { color: #79c0ff; font-weight: bold; }
+.term .ok { color: #7ee787; }
+.term .hd { font-weight: bold; }
+.term .cur { display: inline-block; width: 7.2px; height: 15px; background: var(--termFg); vertical-align: -3px; }
+.acc { position: absolute; left: 0; right: 0; height: 46px; background: #1d1d20; display: flex; gap: 6px; align-items: center; padding: 0 6px; border-top: .5px solid rgba(255,255,255,.08); }
+.acc span { height: 32px; min-width: 30px; padding: 0 8px; border-radius: 8px; background: #3a3a3e; color: #fff; font-size: 14px; display: flex; align-items: center; justify-content: center; font-family: "Inter"; }
+.kb { position: absolute; left: 0; right: 0; height: 290px; background: #2b2b2e; }
+.key { position: absolute; height: 43px; border-radius: 9px; background: #6b6b6f; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 23px; font-weight: 400; box-shadow: 0 1px 0 rgba(0,0,0,.45); }
+.key.fn { background: #444447; font-size: 16px; }
+
+/* chat */
+.chatview { position: absolute; left: 0; right: 0; top: 104px; bottom: 148px; overflow: hidden; }
+.chatin { position: absolute; left: 0; right: 0; top: 0; padding: 8px 16px 0; }
+.blk { overflow: visible; position: relative; }
+.ubub { margin-left: auto; max-width: 293px; background: var(--accent); color: var(--onAccent); border-radius: 22px; padding: 12px 16px; font-size: 17px; line-height: 23px; width: fit-content; }
+.atext { font-size: 17px; line-height: 24px; }
+.atext p + p { margin-top: 10px; }
+.atext .w { visibility: hidden; }
+.mlabel { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
+.tcard { border-radius: 18px; background: var(--card); padding: 12px 14px; display: flex; gap: 12px; align-items: center; }
+.tcard .tt { font-size: 17px; font-weight: 600; line-height: 22px; }
+.tcard .ts { font-family: "DejaVu Sans Mono", monospace; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 18px; letter-spacing: 0; }
+.li { display: flex; gap: 9px; align-items: flex-start; margin-top: 7px; }
+.li svg { flex: none; margin-top: 3px; }
+.appr { border-radius: 18px; background: rgba(255,159,10,.13); padding: 14px; }
+.appr .h { color: var(--warn); font-size: 15px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+.appr .n { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 10px; }
+.appr .code { margin-top: 8px; background: var(--termBg); border-radius: 8px; padding: 10px; font-family: "DejaVu Sans Mono", monospace; font-size: 11.5px; line-height: 17px; color: var(--termFg); white-space: pre; letter-spacing: 0; overflow: hidden; }
+.appr .btns { display: flex; gap: 10px; margin-top: 12px; }
+.appr .btns div { flex: 1; text-align: center; font-size: 17px; font-weight: 600; padding: 14px 0; border-radius: 26px; }
+.composer { position: absolute; left: 0; right: 0; top: 716px; height: 42px; z-index: 30; }
+.composer .plus { position: absolute; left: 11px; top: 3px; width: 36px; height: 36px; border-radius: 18px; background: var(--gbtn); box-shadow: inset 0 0 0 .6px var(--glassBorder); display: flex; align-items: center; justify-content: center; color: var(--text); }
+.composer .fld { position: absolute; left: 57px; right: 61px; top: 0; height: 42px; border-radius: 21px; background: var(--gbtn); box-shadow: inset 0 0 0 .6px var(--glassBorder); font-size: 17px; color: var(--muted); padding: 0 16px; display: flex; align-items: center; justify-content: space-between; }
+.composer .fld small { font-size: 15px; color: var(--muted); }
+.composer .send { position: absolute; right: 13px; top: 3px; width: 36px; height: 36px; border-radius: 18px; background: #2d2d31; display: flex; align-items: center; justify-content: center; color: #fff; }
+
+/* watch */
+.wbub { background: var(--card); border-radius: 19px; padding: 9px 13px; font-size: 17px; line-height: 23px; position: relative; }
+.wbub .sev { font-size: 12px; font-weight: 600; color: var(--warn); display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
+.wbub .bar { position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--warn); }
+.acts { display: flex; gap: 6px; margin-top: 6px; }
+.acts div { font-size: 13px; font-weight: 600; color: var(--accent); background: rgba(61,147,255,.14); padding: 6px 10px; border-radius: 15px; display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+.wtime { font-size: 11px; color: var(--muted); margin: 5px 0 0 4px; }
+.sysline { text-align: center; font-size: 13px; color: var(--muted); }
+.banner { position: absolute; left: 8px; right: 8px; top: 10px; border-radius: 26px; background: rgba(48,48,52,.95); backdrop-filter: blur(30px) saturate(170%); -webkit-backdrop-filter: blur(30px) saturate(170%); box-shadow: 0 12px 40px rgba(0,0,0,.45), inset 0 0 0 .6px rgba(255,255,255,.14); padding: 13px 14px; display: flex; gap: 11px; z-index: 80; color: #fff; }
+.banner img { width: 38px; height: 38px; border-radius: 9px; flex: none; }
+.banner .bt { display: flex; justify-content: space-between; font-size: 15px; font-weight: 600; line-height: 20px; }
+.banner .bt span { font-weight: 400; color: rgba(235,235,245,.6); font-size: 14px; }
+.banner .bb { font-size: 15px; line-height: 20px; }
+
+/* health */
+.score { position: absolute; left: 16px; right: 16px; top: 168px; height: 134px; padding: 16px; display: flex; gap: 18px; align-items: center; }
+.score .verdict { font-size: 17px; font-weight: 600; line-height: 22px; }
+.score .when { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.score .again { margin-top: 8px; display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent); background: rgba(61,147,255,.2); padding: 7px 13px; border-radius: 16px; }
+.htile { position: absolute; width: 114px; height: 78px; border-radius: 18px; background: var(--card); padding: 11px 12px; }
+.htile .hi { position: absolute; left: 12px; top: 11px; }
+.htile .hb { position: absolute; right: 10px; top: 10px; }
+.htile .hn { position: absolute; left: 12px; top: 36px; font-size: 15.5px; font-weight: 600; line-height: 19px; }
+.htile .hs { position: absolute; left: 12px; top: 56px; font-size: 13px; color: var(--muted); line-height: 16px; white-space: nowrap; }
+.needs { position: absolute; left: 16px; right: 16px; top: 528px; overflow: hidden; }
+.nrow { display: flex; gap: 14px; align-items: center; padding: 0 14px 0 16px; height: 57px; position: relative; overflow: hidden; }
+.nrow + .nrow::before { content: ""; position: absolute; top: 0; left: 52px; right: 0; height: .5px; background: var(--sep); }
+.nrow .nt { font-size: 16.5px; font-weight: 600; line-height: 21px; white-space: nowrap; }
+.nrow .ns { font-size: 14px; color: var(--muted); line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nrow .btn { margin-left: auto; flex: none; font-size: 15px; font-weight: 600; color: var(--warn); background: rgba(255,159,10,.2); padding: 8px 14px; border-radius: 18px; white-space: nowrap; }
+
+/* taps */
+.tap { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 23px; background: rgba(255,255,255,.32); box-shadow: 0 0 0 2px rgba(255,255,255,.55), 0 0 18px rgba(255,255,255,.25); z-index: 95; pointer-events: none; display: none; }
+
+/* intro / outro */
+.layer { position: absolute; inset: 0; pointer-events: none; }
+.appicon { position: absolute; overflow: hidden; }
+.appicon img { width: 100%; height: 100%; display: block; }
+.appicon .shine { position: absolute; top: -50%; width: 45%; height: 200%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.38), transparent); transform: rotate(20deg); }
+.ring { position: absolute; border-radius: 50%; border: 3px solid rgba(85,148,255,.7); }
+.wm { position: absolute; }
+.wm { font-family: "PADisplay"; font-weight: 900; color: #fff; white-space: nowrap; text-align: center; letter-spacing: -1px; }
+.wm .part { display: inline-block; }
+.feat { position: absolute; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+.feat div { font-family: "PASemi"; font-weight: 600; color: #e8eef8; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); border-radius: 40px; display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.feat div svg { color: #5594FF; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bg">
+    <div class="blob" id="blobA"></div>
+    <div class="blob" id="blobB"></div>
+    <div class="blob" id="blobC"></div>
+    <div id="code"></div>
+    <div id="vignette"></div>
+  </div>
+  <div id="caps"></div>
+  <div id="devWrap">
+    <div id="devGlow"></div>
+    <div id="device"><div class="screen" id="screen"></div><div id="rim"></div></div>
+  </div>
+  <div class="layer" id="intro"></div>
+  <div class="layer" id="outro"></div>
+  <div class="layer" id="fade" style="background:#000;opacity:0"></div>
+</div>
+<script>
+"use strict";
+// ======================================================================
+// parameters and layout
+// ======================================================================
+const Q = new URLSearchParams(location.search);
+const LANG = Q.get("lang") === "de" ? "de" : "en";
+const ORIENT = Q.get("orient") === "landscape" ? "landscape" : "portrait";
+const PORTRAIT = ORIENT === "portrait";
+const W = PORTRAIT ? 886 : 1920, H = PORTRAIT ? 1920 : 886;
+const FPS = 30, DURATION = 29.5;
+const DW = 393, DH = 852;
+
+// where the phone screen and the captions sit
+const L = PORTRAIT
+  ? { S: 1.66, devX: (W - DW * 1.66) / 2, devY: H - DH * 1.66 - 40,
+      cap: { x: 40, y: 0, w: W - 80, h: H - DH * 1.66 - 40 }, hlMax: 100, subSize: 34 }
+  : { S: (H - 64) / DH, devX: W - DW * ((H - 64) / DH) - 290, devY: 32,
+      cap: { x: 90, y: 0, w: W - DW * ((H - 64) / DH) - 290 - 150, h: H }, hlMax: 112, subSize: 36 };
+
+const stage = document.getElementById("stage");
+stage.style.width = W + "px"; stage.style.height = H + "px";
+document.documentElement.style.width = W + "px"; document.documentElement.style.height = H + "px";
+
+// scene boundaries (seconds). The soundtrack reads these too.
+const SC = {
+  intro: [0, 2.5], dash: [2.5, 6.5], apps: [6.5, 9.5], term: [9.5, 12.5], chat: [12.5, 18.5],
+  watch: [18.5, 21.5], health: [21.5, 24.5], themes: [24.5, 26.5], outro: [26.5, 29.5],
+};
+
+// ======================================================================
+// helpers
+// ======================================================================
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eOut = (t) => 1 - Math.pow(1 - t, 3);
+const eOut5 = (t) => 1 - Math.pow(1 - t, 5);
+const eIn = (t) => t * t * t;
+const eIO = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const eBack = (t) => { const c1 = 1.5, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+// damped spring from 0 to 1, t in seconds
+const spring = (t, zeta = 0.62, w = 13) => {
+  if (t <= 0) return 0;
+  const wd = w * Math.sqrt(1 - zeta * zeta);
+  return 1 - Math.exp(-zeta * w * t) * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t));
+};
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const hex = (h) => { h = h.replace("#", ""); return [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16)); };
+const rgbs = (c, a = 1) => `rgba(${c.map(Math.round).join(",")},${a})`;
+const mix = (a, b, t) => a.map((v, i) => lerp(v, b[i], t));
+function css(el, o) { for (const k in o) el.style[k] = o[k]; }
+function show(el, on) { el.style.display = on ? "block" : "none"; }
+
+// ======================================================================
+// icons
+// ======================================================================
+const LU = {
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  package: '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/>',
+  drive: '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+  down: '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+  up: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  radio: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>',
+  chevR: '<path d="m9 18 6-6-6-6"/>',
+  chevL: '<path d="m15 18-6-6 6-6"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>',
+  ellipsis: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  list: '<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  ccheck: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  rotate: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+  stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  sliders: '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+  backup: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 12a9 3 0 0 0 5 2.69"/><path d="M21 9.3V5"/><path d="M3 5v14a9 3 0 0 0 6.47 2.88"/><path d="M12 12v4h4"/><path d="M13 20a5 5 0 0 0 9-3 4.5 4.5 0 0 0-4.5-4.5c-1.33 0-2.54.54-3.41 1.41L12 16"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
+  layout: '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+};
+function ic(name, size = 20, sw = 2, extra = "") {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" ${extra}>${LU[name]}</svg>`;
+}
+function icFill(name, size = 20) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">${LU[name]}</svg>`;
+}
+const SVG = {
+  signal: `<svg width="19" height="12" viewBox="0 0 19 12"><rect x="0" y="8" width="3.2" height="4" rx="1" fill="currentColor"/><rect x="5" y="5.5" width="3.2" height="6.5" rx="1" fill="currentColor"/><rect x="10" y="3" width="3.2" height="9" rx="1" fill="currentColor"/><rect x="15" y="0" width="3.2" height="12" rx="1" fill="currentColor"/></svg>`,
+  wifi: `<svg width="17" height="12" viewBox="0 0 17 12"><path fill="currentColor" d="M8.5 2.4c2.5 0 4.7.9 6.4 2.6l1.2-1.2C14.1 1.8 11.4.7 8.5.7S2.9 1.8.9 3.8l1.2 1.2C3.8 3.3 6 2.4 8.5 2.4zm0 3.3c1.6 0 3 .6 4.1 1.7l1.2-1.2C12.4 4.8 10.5 4 8.5 4S4.6 4.8 3.2 6.2l1.2 1.2C5.5 6.3 6.9 5.7 8.5 5.7zm0 3.3c.7 0 1.3.3 1.8.7L8.5 11.6 6.7 9.7c.5-.4 1.1-.7 1.8-.7z"/></svg>`,
+  battery: `<svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.8" fill="none" stroke="currentColor" stroke-opacity=".38"/><rect x="2" y="2" width="20" height="9" rx="2.4" fill="currentColor"/><path d="M25 4.4v4.2c.8-.3 1.4-1.1 1.4-2.1s-.6-1.8-1.4-2.1z" fill="currentColor" fill-opacity=".4"/></svg>`,
+  termFill: (s) => `<svg width="${s}" height="${s}" viewBox="0 0 28 28"><rect x="2.5" y="4" width="23" height="20" rx="5" fill="currentColor"/><path d="M8 10.5l4 3.5-4 3.5M14 18.5h6" stroke="var(--glassSolid)" stroke-width="2.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  moreFill: (s) => `<svg width="${s}" height="${s}" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11.5" fill="currentColor"/><circle cx="8.6" cy="14" r="1.8" fill="var(--glassSolid)"/><circle cx="14" cy="14" r="1.8" fill="var(--glassSolid)"/><circle cx="19.4" cy="14" r="1.8" fill="var(--glassSolid)"/></svg>`,
+  warnFill: (s) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path d="M10.27 3.2a2 2 0 0 1 3.46 0l8.26 14.3A2 2 0 0 1 20.26 20.5H3.74a2 2 0 0 1-1.73-3z" fill="var(--warn)"/><path d="M12 8.6v5" stroke="#000" stroke-width="2.3" stroke-linecap="round"/><circle cx="12" cy="17" r="1.35" fill="#000"/></svg>`,
+  okFill: (s) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="var(--accent2)"/><path d="m7.2 12.3 3.2 3.2 6.4-6.6" stroke="#000" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  shieldFill: (s, c) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" fill="${c}"/></svg>`,
+};
+
+// ======================================================================
+// themes (client-swift/App/Core/Theme.swift)
+// ======================================================================
+const THEMES = {
+  system:   { name: "PocketADM", accent: "#3D93FF", page: "#000000", card: "#1C1C1E", field: "rgba(118,118,128,.24)", text: "#FFFFFF", muted: "rgba(235,235,245,.6)", sep: "rgba(84,84,88,.6)", grad: ["#4FE3E0", "#1D62D8"] },
+  midnight: { name: "Midnight", accent: "#3D9BFF", accent2: "#30D158", page: "#000000", card: "#111114", field: "#1D1D23", text: "#F2F2F7", muted: "#8E8E9A", sep: "#2A2A31", grad: ["#1B1B24", "#3D9BFF"] },
+  ocean:    { name: "Ocean", accent: "#2EC4D6", accent2: "#3DDC97", page: "#06141F", card: "#0D2231", field: "#15324A", text: "#E6F3FF", muted: "#8FB3CC", sep: "#1C3A52", onAccent: "#03212A", grad: ["#0B3A5B", "#2EC4D6"] },
+  aurora:   { name: "Aurora", accent: "#9D7BFF", accent2: "#34D399", page: "#0B0B1A", card: "#16152C", field: "#221F40", text: "#EEEAFE", muted: "#A39FC9", sep: "#2A2850", grad: ["#6D3EF0", "#22D3A6"] },
+  forest:   { name: "Forest", accent: "#3DD68C", accent2: "#A3E635", page: "#0B1510", card: "#13231A", field: "#1C3326", text: "#E7F5EC", muted: "#93B8A0", sep: "#21382B", onAccent: "#05210F", grad: ["#14532D", "#3DD68C"] },
+  sunset:   { name: "Sunset", accent: "#FF7A59", accent2: "#4ADE80", warn: "#FFC14D", page: "#1A0F14", card: "#27161F", field: "#36212C", text: "#FFEFF2", muted: "#C9A3AE", sep: "#3D2531", grad: ["#7C2D52", "#FF9A5A"] },
+  terminal: { name: "Terminal", accent: "#4ADE80", accent2: "#A3E635", warn: "#FACC15", danger: "#F87171", page: "#050805", card: "#0C140C", field: "#142114", text: "#C8F7C5", muted: "#6FA86B", sep: "#1B2E1B", onAccent: "#031503", grad: ["#052E16", "#4ADE80"] },
+  nord:     { name: "Nord", accent: "#88C0D0", accent2: "#A3BE8C", warn: "#EBCB8B", danger: "#BF616A", page: "#2E3440", card: "#3B4252", field: "#434C5E", text: "#ECEFF4", muted: "#A7B1C2", sep: "#4C566A", onAccent: "#2E3440", grad: ["#5E81AC", "#88C0D0"] },
+  paper:    { name: "Paper", light: 1, accent: "#C2551F", accent2: "#3E8E5E", warn: "#C27C0E", danger: "#C0392B", page: "#F4EFE6", card: "#FFFCF6", field: "#EAE3D6", text: "#2B2620", muted: "#7D7366", sep: "#DDD4C4", grad: ["#F3D9B1", "#C2551F"] },
+  arctic:   { name: "Arctic", light: 1, accent: "#0A84C6", accent2: "#12A37F", page: "#EEF4F8", card: "#FFFFFF", field: "#E1EAF1", text: "#0F1C26", muted: "#5E7383", sep: "#D3DFE8", grad: ["#BFE6FF", "#0A84C6"] },
+  rose:     { name: "Rosé", light: 1, accent: "#D6336C", accent2: "#2F9E44", page: "#FBF1F3", card: "#FFFFFF", field: "#F3E1E6", text: "#2A1A20", muted: "#8A6A75", sep: "#EED5DC", grad: ["#FFC2D4", "#D6336C"] },
+};
+function themeVars(key) {
+  const th = THEMES[key];
+  const light = !!th.light;
+  const card = th.card;
+  const cardRGB = card.startsWith("#") ? hex(card) : [28, 28, 30];
+  return {
+    "--bg": th.page, "--card": card, "--field": th.field, "--text": th.text, "--muted": th.muted, "--sep": th.sep,
+    "--tert": light ? "rgba(60,60,67,.3)" : "rgba(235,235,245,.3)",
+    "--accent": th.accent, "--accent2": th.accent2 || (light ? "#34C759" : "#30D158"),
+    "--warn": th.warn || (light ? "#FF9500" : "#FF9F0A"), "--danger": th.danger || (light ? "#FF3B30" : "#FF453A"),
+    "--onAccent": th.onAccent || "#fff",
+    "--glass": light ? "rgba(255,255,255,.96)" : rgbs(mix(cardRGB, [60, 60, 66], 0.3), 0.97),
+    "--glassSolid": light ? "#ffffff" : rgbs(mix(cardRGB, [60, 60, 66], 0.35)),
+    "--glassBorder": light ? "rgba(0,0,0,.08)" : "rgba(255,255,255,.12)",
+    "--pill": light ? "rgba(0,0,0,.07)" : "rgba(255,255,255,.13)",
+    "--gbtn": light ? "rgba(255,255,255,.92)" : (key === "system" ? "#171717" : rgbs(mix(cardRGB, [0, 0, 0], 0.15))),
+    "--thumb": light ? "#ffffff" : "rgba(255,255,255,.22)",
+    "--purple": light ? "#AF52DE" : "#BF5AF2",
+    "--termBg": "#0d1117", "--termFg": "#e6edf3",
+  };
+}
+function applyTheme(el, key) { const v = themeVars(key); for (const k in v) el.style.setProperty(k, v[k]); el.dataset.theme = key; }
+
+// IconTile: a colour with SwiftUI's .gradient sheen
+const tileBg = (c) => { const b = hex(c); return `linear-gradient(180deg, ${rgbs(mix(b, [255, 255, 255], 0.16))}, ${c})`; };
+function iconTile(name, color, size = 30, fill = false) {
+  const inner = fill ? icFill(name, size * 0.55) : ic(name, size * 0.55, 2.4);
+  return `<div class="tile" style="width:${size}px;height:${size}px;border-radius:${size * 0.27}px;background:${tileBg(color)}">${inner}</div>`;
+}
+
+// brand tiles (client-swift/App/Features/Icons.swift BrandTile)
+const BRAND = { authentik: 0xFD4B2D, nextcloud: 0x0082C9, jellyfin: 0x00A4DC, vaultwarden: 0x175DDC, pihole: 0x96060C, grafana: 0xF46800, gitea: 0x609926, immich: 0x4250AF, homeassistant: 0x18BCF2, docker: 0x2496ED };
+const BR = {};
+function brandGrad(n) {
+  const base = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const lum = (0.2126 * base[0] + 0.7152 * base[1] + 0.0722 * base[2]) / 255;
+  let c;
+  if (lum < 0.16) c = [base, mix(base, hex("6b7684"), 0.38)];
+  else if (lum > 0.82) c = [mix(base, hex("3b4552"), 0.2), mix(base, hex("232b36"), 0.45)];
+  else c = [mix(base, [255, 255, 255], 0.12), base];
+  return `linear-gradient(135deg, ${rgbs(c[0])}, ${rgbs(c[1])})`;
+}
+function brandTile(slug, size = 42) {
+  return `<div style="position:relative;flex:none;width:${size}px;height:${size}px;border-radius:${size * 0.27}px;background:${brandGrad(BRAND[slug])}"><div style="position:absolute;inset:${size * 0.21}px;background:#fff;-webkit-mask:url(${BR[slug]}) center/contain no-repeat;mask:url(${BR[slug]}) center/contain no-repeat"></div></div>`;
+}
+const ICON_URL = "/App/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png";
+const MARK_URL = "/App/Resources/Assets.xcassets/Brands/pocketadm-mark.imageset/pocketadm-mark.png";
+
+// ======================================================================
+// texts
+// ======================================================================
+const TX = {
+  en: {
+    intro: ["Your server,", "{in your pocket.}"],
+    dash: [["Everything {live},", "at a glance"], "CPU, memory, disk, network, internet"],
+    apps: [["{Apps},", "not container lists"], "start, stop and restart them as one"],
+    term: [["A {real terminal},", "wherever you are"], ""],
+    chat: [["An {AI agent}", "that works on", "your server"], "+ your own key or Claude / Codex plan"],
+    watch: [["A {watch} that", "writes when", "it matters"], "and answers when you ask it"],
+    health: [["{Health},", "scored and explained"], "with a fix for every finding"],
+    themes: [["Make it", "{yours}"], "11 themes · "],
+    outro: "Self-hosted · Open source · AI built in",
+    feats: ["Dashboard", "Apps", "Terminal", "AI agent", "Watch", "Health"],
+  },
+  de: {
+    intro: ["Dein Server,", "{in deiner Tasche.}"],
+    dash: [["Alles {live},", "auf einen Blick"], "CPU, RAM, Speicher, Netzwerk, Internet"],
+    apps: [["{Apps} statt", "Container-Listen"], "als Ganzes starten, stoppen, neu starten"],
+    term: [["Ein {echtes Terminal},", "wo immer du bist"], ""],
+    chat: [["Ein {KI-Agent},", "der auf deinem", "Server arbeitet"], "+ eigener Key oder Claude-/Codex-Abo"],
+    watch: [["Ein {Wächter},", "der schreibt, wenn", "es wichtig ist"], "und antwortet, wenn du fragst"],
+    health: [["{Health-Check}", "mit Score und Erklärung"], "und einem Fix für jeden Fund"],
+    themes: [["Ganz", "{dein Stil}"], "11 Themes · "],
+    outro: "Selbst gehostet · Open Source · KI inklusive",
+    feats: ["Dashboard", "Apps", "Terminal", "KI-Agent", "Wächter", "Health"],
+  },
+}[LANG];
+
+// ======================================================================
+// background
+// ======================================================================
+const BG = { A: $("#blobA"), B: $("#blobB"), C: $("#blobC"), code: $("#code") };
+(function buildCode() {
+  const r = rng(7), cols = ["#1b2c48", "#2b3a55", "#3b3872", "#3a2f2a", "#22324f"];
+  let html = "";
+  const rows = Math.ceil(H / 44) + 2;
+  for (let row = 0; row < rows; row++) {
+    let x = -200 + r() * 160;
+    while (x < W * 2 + 200) {
+      const w = 40 + r() * 260;
+      if (r() > 0.25) html += `<i style="left:${x.toFixed(0)}px;top:${row * 44 + 15}px;width:${w.toFixed(0)}px;background:${cols[Math.floor(r() * cols.length)]}"></i>`;
+      x += w + 24 + r() * 90;
+    }
+  }
+  BG.code.innerHTML = html;
+  css(BG.code, { width: W * 2 + 400 + "px", height: H + "px" });
+  const m = PORTRAIT ? "radial-gradient(ellipse 70% 40% at 50% 30%, #000 0%, transparent 100%)" : "radial-gradient(ellipse 45% 70% at 32% 50%, #000 0%, transparent 100%)";
+  css(BG.code, { webkitMaskImage: m, maskImage: m });
+})();
+function blob(el, x, y, r, color, a) {
+  css(el, { left: x - r + "px", top: y - r + "px", width: 2 * r + "px", height: 2 * r + "px", background: `radial-gradient(circle, ${rgbs(color, a)} 0%, ${rgbs(color, a * 0.45)} 35%, transparent 70%)` });
+}
+const glowA = hex("1D62D8"), glowB = hex("4FE3E0");
+function renderBackground(t) {
+  let a = glowA, b = glowB;
+  // the themes scene tints the light with each theme
+  const th = themeAt(t);
+  if (th) {
+    const back = 1 - eIO(seg(t, 26.35, 27.0));
+    const fromA = th.i === 0 ? hex("1D62D8") : hex(THEMES[th.from].grad[1]), fromB = th.i === 0 ? hex("4FE3E0") : hex(THEMES[th.from].grad[0]);
+    a = mix(hex("1D62D8"), mix(fromA, hex(THEMES[th.to].grad[1]), th.k), back);
+    b = mix(hex("4FE3E0"), mix(fromB, hex(THEMES[th.to].grad[0]), th.k * 0.8), back);
+  }
+  const intro = 1 - seg(t, 0, 0.9);
+  const outroBoost = seg(t, 26.6, 27.4) * (1 - seg(t, 29.1, 29.5));
+  const glow = (0.5 + 0.5 * seg(t, 0.05, 1.0)) * (1 - seg(t, 29.1, 29.5) * 0.7);
+  if (PORTRAIT) {
+    blob(BG.A, W * (0.32 + 0.06 * Math.sin(t * 0.35)), H * (0.12 + 0.02 * Math.cos(t * 0.3)), 760, a, 0.62 * glow + outroBoost * 0.15);
+    blob(BG.B, W * (0.86 + 0.05 * Math.cos(t * 0.4)), H * (0.27 + 0.03 * Math.sin(t * 0.33)), 560, b, 0.26 * glow);
+    blob(BG.C, W * 0.5, H * (0.62 + 0.03 * Math.sin(t * 0.25)), 900, a, (0.22 + outroBoost * 0.18) * glow);
+  } else {
+    blob(BG.A, W * (0.28 + 0.04 * Math.sin(t * 0.35)), H * (0.25 + 0.05 * Math.cos(t * 0.3)), 900, a, 0.55 * glow + outroBoost * 0.15);
+    blob(BG.B, W * (0.6 + 0.04 * Math.cos(t * 0.4)), H * (0.8 + 0.05 * Math.sin(t * 0.33)), 600, b, 0.24 * glow);
+    blob(BG.C, L.devX + DW * L.S / 2, H * 0.55, 800, a, (0.25 + outroBoost * 0.2) * glow);
+  }
+  const speed = 14 + intro * 220;
+  const drift = -(t * 14 + eOut(seg(t, 0, 1.2)) * 140) % W;
+  css(BG.code, { transform: `translateX(${drift - 200}px)`, opacity: (0.32 + 0.4 * intro * seg(t, 0, 0.3)) * (1 - seg(t, 29.1, 29.5)) });
+}
+
+// ======================================================================
+// captions
+// ======================================================================
+const CAPS = {};
+let gradGroups = 0;
+function wordsHTML(line, cls) {
+  // {braces} carry the brand gradient, as in the store images
+  const parts = line.split(/(\{[^}]*\})/).filter(Boolean);
+  let html = "";
+  for (const p of parts) {
+    const g = p.startsWith("{");
+    const text = g ? p.slice(1, -1) : p;
+    const words = text.split(/(\s+)/).filter((w) => w.length);
+    const gid = g ? `data-g="${++gradGroups}"` : "";
+    for (const w of words) {
+      if (/^\s+$/.test(w)) html += `<span class="w sp">${w}</span>`;
+      else html += `<span class="w${g ? " g" : ""}" ${gid}>${w}</span>`;
+    }
+  }
+  return html;
+}
+function fitGradients(root) {
+  const groups = {};
+  for (const w of $$(".w.g", root)) (groups[w.dataset.g] ||= []).push(w);
+  for (const k in groups) {
+    const ws = groups[k];
+    const left = ws[0].offsetLeft, right = ws[ws.length - 1].offsetLeft + ws[ws.length - 1].offsetWidth;
+    for (const w of ws) css(w, { backgroundSize: `${right - left}px 100%`, backgroundPosition: `${left - w.offsetLeft}px 0` });
+  }
+}
+function buildCaption(key, lines, sub) {
+  const el = document.createElement("div");
+  el.className = "cap";
+  css(el, { left: L.cap.x + "px", top: L.cap.y + "px", width: L.cap.w + "px", height: L.cap.h + "px" });
+  el.innerHTML = lines.map((l) => `<div class="hl">${wordsHTML(l)}</div>`).join("") + (sub !== null ? `<div class="sub">${sub ? wordsHTML(sub) : ""}</div>` : "");
+  $("#caps").appendChild(el);
+  // auto-fit the headline, as store-shots.py does
+  let size = L.hlMax;
+  const hls = $$(".hl", el);
+  const fits = () => hls.every((h) => h.scrollWidth <= L.cap.w - 20);
+  for (;;) { hls.forEach((h) => css(h, { fontSize: size + "px", lineHeight: size * 0.98 + "px" })); if (fits() || size < 50) break; size -= 2; }
+  const s = $(".sub", el);
+  if (s) css(s, { fontSize: L.subSize + "px", lineHeight: L.subSize * 1.3 + "px", marginTop: sub ? size * 0.28 + "px" : "0" });
+  fitGradients(el);
+  CAPS[key] = { el, words: $$(".hl .w:not(.sp)", el), sub: s, subWords: s ? $$(".w:not(.sp)", s) : [] };
+}
+function renderCaption(key, t, a, b) {
+  const c = CAPS[key];
+  const vis = t > a - 0.05 && t < b + 0.1;
+  show(c.el, vis);
+  if (!vis) return;
+  c.el.style.display = "flex";
+  const out = seg(t, b - 0.28, b + 0.02);
+  c.words.forEach((w, i) => {
+    const p = eOut(seg(t, a + i * 0.055, a + i * 0.055 + 0.5));
+    const o = p * (1 - eIn(out));
+    css(w, { opacity: o, transform: `translateY(${(1 - p) * 46 - eIn(out) * 30}px) scale(${0.94 + 0.06 * p})`, filter: `blur(${(1 - p) * 14 + out * 10}px)` });
+  });
+  const n = c.words.length;
+  c.subWords.forEach((w, i) => {
+    const p = eOut(seg(t, a + 0.25 + n * 0.05 + i * 0.03, a + 0.7 + n * 0.05 + i * 0.03));
+    css(w, { opacity: p * (1 - out), transform: `translateY(${(1 - p) * 18}px)` });
+  });
+}
+
+// ======================================================================
+// screen pieces
+// ======================================================================
+const screen = $("#screen");
+applyTheme(screen, "system");
+const TAB_X = [47, 119, 185, 247, 309];
+const TAB_NAMES = ["Dashboard", "Containers", "Terminal", "Assistant", "More"];
+function statusBar() { return `<div class="sb"><div class="time">9:41</div><div class="ri">${SVG.signal}${SVG.wifi}${SVG.battery}</div></div>`; }
+function tabBar(sel) {
+  const icons = [ic("gauge", 27, 2.1), ic("package", 26, 2), SVG.termFill(28), icFill("sparkles", 26), SVG.moreFill(28)];
+  return `<div class="tabbar"><div class="tabpill" style="left:${TAB_X[sel] - 38}px;width:76px"></div>` +
+    TAB_X.map((x, i) => `<div class="tab${i === sel ? " sel" : ""}" style="left:${x - 36}px"><div class="ti">${icons[i]}</div><div class="tl">${TAB_NAMES[i]}</div></div>`).join("") + `</div>`;
+}
+function page(id, html, theme) {
+  const el = document.createElement("div");
+  el.className = "page"; el.id = id; el.innerHTML = html;
+  screen.appendChild(el);
+  if (theme) applyTheme(el, theme);
+  return el;
+}
+
+// ---------------- dashboard ----------------
+const RING_C = 2 * Math.PI * 34.5;
+function dashHTML() {
+  const ring = (k, title, detail) => `<div class="gauge"><div class="ringbox"><svg width="78" height="78" viewBox="0 0 78 78"><circle cx="39" cy="39" r="34.5" fill="none" stroke-width="9" class="trk-${k}"/><circle cx="39" cy="39" r="34.5" fill="none" stroke-width="9" stroke-linecap="round" class="prg-${k}" stroke-dasharray="${RING_C}"/></svg><div class="ringval val-${k}">0%</div></div><div class="gt">${title}</div><div class="gd">${detail}</div></div>`;
+  const row = (icon, color, title, val, cls, fill) => `<div class="row st"><div>${iconTile(icon, color, 30, fill)}</div><div class="rt"><div class="a">${title}</div></div><div class="rv ${cls}">${val}</div><div class="chev">${ic("chevR", 15, 2.6)}</div></div>`;
+  return `
+  <div class="scr" style="position:absolute;left:0;right:0;top:0">
+    <div class="lt">Dashboard</div>
+    <div style="position:absolute;left:16px;right:16px;top:156px">
+      <div class="card gauges">
+        <div class="rings">${ring("cpu", "CPU", "8 cores")}${ring("mem", "Memory", "11.6 GB of 16 GB")}${ring("disk", "Disk", "438 GB free")}</div>
+        <div class="hdiv"></div>
+        <div class="net">
+          <div><div class="nl">${ic("down", 12, 2.6)}Download</div><div class="nv net-rx">4.2 MB/s</div></div>
+          <div><div class="nl">${ic("up", 12, 2.6)}Upload</div><div class="nv net-tx">812 KB/s</div></div>
+          <div><div class="nl">${ic("radio", 13, 2.2)}Latency</div><div class="nv net-ping">14 ms</div></div>
+        </div>
+      </div>
+      <div class="sect">Status</div>
+      <div class="card rows">
+        ${row("bell", "#FF453A", "Alerts", "Watching", "muted", true)}
+        ${row("refresh", "#FF9F0A", "Updates", "3 available", "warn", false)}
+        ${row("shield", "#30D158", "Health", "86/100 · All clear", "muted", false)}
+        ${row("package", "#AC8E68", "Containers", "13 of 14 running", "warn", false)}
+        ${row("drive", "#8E8E93", "Storage", "Disk 47 % · USB 63 %", "muted", false)}
+      </div>
+      <div class="sect">Last hour</div>
+      <div class="card" style="padding:16px">
+        <div class="seg"><div class="thumb" style="left:2px;width:25%"></div><div>CPU &amp; RAM</div><div>Network</div><div>Disk</div><div>Internet</div></div>
+        <svg class="chart" width="329" height="170" viewBox="0 0 329 170" style="margin-top:12px;overflow:visible"></svg>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+          <div class="legend"><span><i style="background:var(--accent)"></i>CPU</span><span><i style="background:var(--purple)"></i>Memory</span></div>
+          <div style="font-size:12px;font-weight:600;color:var(--accent)">1 hour ⌄</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="edge"></div>
+  <div class="inlinetitle" style="opacity:0">Dashboard</div>
+  <div class="gbtn r">${ic("bell", 21, 2)}</div>`;
+}
+function chartSeries() {
+  const r = rng(42), n = 60, cpu = [], mem = [];
+  let c = 22, m = 70;
+  for (let i = 0; i < n; i++) {
+    c += (r() - 0.5) * 9 + (20 - c) * 0.12 + (i === 38 ? 34 : 0) + (i === 39 ? 10 : 0);
+    m += (r() - 0.5) * 1.6 + (72 - m) * 0.08;
+    cpu.push(clamp(c, 4, 95)); mem.push(clamp(m, 50, 90));
+  }
+  return { cpu, mem };
+}
+function smoothPath(pts) {
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+function setupChart(svg, uid) {
+  const { cpu, mem } = chartSeries();
+  const w = 300, h = 150, X = (i) => (i / (cpu.length - 1)) * w, Y = (v) => h - (v / 100) * h;
+  const cp = cpu.map((v, i) => [X(i), Y(v)]), mp = mem.map((v, i) => [X(i), Y(v)]);
+  const cpuD = smoothPath(cp), memD = smoothPath(mp);
+  svg.innerHTML = `
+    <defs><linearGradient id="ag${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".32"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient>
+    <clipPath id="cl${uid}"><rect class="clip" x="0" y="-10" width="0" height="${h + 20}"/></clipPath></defs>
+    ${[0, 50, 100].map((v) => `<line x1="0" x2="${w}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--sep)" stroke-width=".6" stroke-dasharray="2 3"/><text x="${w + 6}" y="${Y(v) + 4}" font-size="10" fill="var(--muted)">${v}%</text>`).join("")}
+    ${["9:00", "9:15", "9:30"].map((s, i) => `<text x="${(i * w) / 3 + 2}" y="${h + 16}" font-size="10" fill="var(--muted)">${s}</text>`).join("")}
+    <g clip-path="url(#cl${uid})">
+      <path d="${cpuD} L${w},${h} L0,${h} Z" fill="url(#ag${uid})"/>
+      <path d="${cpuD}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <path d="${memD}" fill="none" stroke="var(--purple)" stroke-width="2"/>
+    </g>
+    <circle class="head" r="4" fill="var(--accent)" stroke="var(--card)" stroke-width="2"/>`;
+  return { clip: $(".clip", svg), head: $(".head", svg), cp, w };
+}
+function makeDash(root) {
+  const R = { root, scr: $(".scr", root), edge: $(".edge", root), it: $(".inlinetitle", root), rows: $$(".row.st", root), net: [$(".net-rx", root), $(".net-tx", root), $(".net-ping", root)] };
+  R.rings = ["cpu", "mem", "disk"].map((k) => ({ trk: $(".trk-" + k, root), prg: $(".prg-" + k, root), val: $(".val-" + k, root) }));
+  R.chart = setupChart($(".chart", root), root.id);
+  return R;
+}
+const RINGS = [18, 72, 47];
+const NET = {
+  rx: ["4.2 MB/s", "5.8 MB/s", "3.9 MB/s", "6.4 MB/s", "4.7 MB/s", "5.1 MB/s", "3.6 MB/s", "4.9 MB/s"],
+  tx: ["812 KB/s", "1.1 MB/s", "740 KB/s", "960 KB/s", "1.3 MB/s", "880 KB/s", "790 KB/s", "1.0 MB/s"],
+  ping: ["14 ms", "13 ms", "15 ms", "14 ms", "12 ms", "14 ms", "16 ms", "13 ms"],
+};
+function ringTint(p) { return p < 70 ? "var(--accent2)" : p < 90 ? "var(--warn)" : "var(--danger)"; }
+function renderDash(R, u, scroll) {
+  R.rings.forEach((r, i) => {
+    const p = eOut(seg(u, 0.35 + i * 0.12, 1.45 + i * 0.12));
+    const v = RINGS[i] * p + (u > 1.6 ? Math.sin(u * 2.3 + i * 2) * (i === 0 ? 3 : 0.4) * seg(u, 1.6, 2.2) : 0);
+    const tint = ringTint(RINGS[i]);
+    r.trk.setAttribute("stroke", tint); r.trk.setAttribute("stroke-opacity", 0.18);
+    r.prg.setAttribute("stroke", tint);
+    r.prg.setAttribute("stroke-dashoffset", RING_C * (1 - Math.max(0.002, v / 100)));
+    r.val.textContent = Math.round(v) + "%";
+  });
+  const k = Math.max(0, Math.floor((u - 1.0) / 0.55));
+  R.net[0].textContent = NET.rx[k % 8]; R.net[1].textContent = NET.tx[k % 8]; R.net[2].textContent = NET.ping[k % 8];
+  R.rows.forEach((row, i) => { const p = eOut(seg(u, 0.12 + i * 0.07, 0.55 + i * 0.07)); css(row, { opacity: p, transform: `translateX(${(1 - p) * 18}px)` }); });
+  css(R.scr, { transform: `translateY(${-scroll}px)` });
+  css(R.edge, { opacity: clamp(scroll / 30) });
+  css(R.it, { opacity: clamp((scroll - 78) / 26) });
+  // chart draws in
+  const c = R.chart, cp = eIO(seg(u, 1.9, 3.5));
+  c.clip.setAttribute("width", c.w * cp + 2);
+  const idx = Math.min(c.cp.length - 1, Math.round(cp * (c.cp.length - 1)));
+  const pt = c.cp[idx];
+  c.head.setAttribute("cx", pt[0]); c.head.setAttribute("cy", pt[1]);
+  c.head.setAttribute("opacity", cp > 0.01 && cp < 0.999 ? 1 : 0);
+}
+
+// ---------------- apps ----------------
+const APPS = [
+  { n: "Authentik", s: "4 containers", b: "authentik", bars: 4 },
+  { n: "Backup", s: "Stopped", icon: "backup", color: "#64D2FF", stopped: true },
+  { n: "Gitea", s: "Development", b: "gitea" },
+  { n: "Grafana", s: "3 containers", b: "grafana", bars: 3 },
+  { n: "Home Assistant", s: "Smart home", b: "homeassistant" },
+  { n: "Immich", s: "4 containers", b: "immich", bars: 4 },
+  { n: "Jellyfin", s: "Media", b: "jellyfin" },
+  { n: "Navidrome", s: "Media", icon: "music", color: "#FF375F" },
+  { n: "Nextcloud", s: "3 containers", b: "nextcloud", bars: 3 },
+  { n: "Pi-hole", s: "Network", b: "pihole" },
+];
+function appsHTML() {
+  const cards = APPS.map((a, i) => {
+    const x = (i % 2) * 186.5, y = Math.floor(i / 2) * 140;
+    const icon = a.b ? brandTile(a.b, 42) : `<div style="width:42px">${iconTile(a.icon, a.color, 42, a.icon === "music")}</div>`;
+    const bars = a.bars ? `<div class="bars">${"<i style='background:#30D158'></i>".repeat(a.bars)}</div>` : "";
+    return `<div class="acard" style="left:${x}px;top:${y}px">${icon}<div class="dot" style="background:${a.stopped ? "#48484A" : "#30D158"}"></div><div class="an">${a.n}</div><div class="as">${a.s}</div>${bars}</div>`;
+  }).join("");
+  return `
+  <div class="lt">Containers</div>
+  <div class="gbtn r">${ic("ellipsis", 22, 2.6)}</div>
+  <div style="position:absolute;left:16px;right:16px;top:156px">
+    <div class="seg"><div class="thumb" style="left:2px;width:calc(50% - 2px)"></div><div style="font-size:15px">Apps</div><div style="font-size:15px">Containers</div></div>
+    <div class="chips"><div class="chip on">All<b>10</b></div><div class="chip">Problems<b>0</b></div><div class="chip">Running<b>9</b></div><div class="chip">Stopped<b>1</b></div></div>
+  </div>
+  <div class="grid" style="top:254px">${cards}</div>
+  <div class="ctxbg" style="display:none"></div>
+  <div class="lift" style="position:absolute;z-index:44;display:none"></div>
+  <div class="ctxmenu" style="display:none">
+    <div class="mi">Restart app ${ic("rotate", 20, 2.2)}</div>
+    <div class="mi">Stop app ${icFill("stop", 18)}</div>
+    <div class="ms"></div>
+    <div class="mi">Ask the assistant ${ic("sparkles", 20, 2)}</div>
+  </div>`;
+}
+function makeApps(root) {
+  const R = { root, cards: $$(".grid .acard", root), bg: $(".ctxbg", root), lift: $(".lift", root), menu: $(".ctxmenu", root), mis: $$(".ctxmenu .mi", root) };
+  // the long-pressed card is lifted above the blur as a copy
+  R.lift.innerHTML = R.cards[0].outerHTML;
+  R.liftCard = R.lift.firstChild;
+  css(R.liftCard, { left: "0px", top: "0px", boxShadow: "0 18px 40px rgba(0,0,0,.45)" });
+  css(R.lift, { left: "16px", top: "254px", width: "174.5px", height: "128px" });
+  R.cards[0].insertAdjacentHTML("beforeend", `<svg class="spin" width="16" height="16" viewBox="0 0 24 24" style="right:11px;top:15px;display:none" fill="none" stroke="var(--muted)" stroke-width="3" stroke-linecap="round">${LU.loader}</svg>`);
+  R.spin = $(".spin", R.cards[0]); R.dot = $(".dot", R.cards[0]); R.bars = $$(".bars i", R.cards[0]);
+  R.behind = $$(":scope > :not(.ctxbg):not(.lift):not(.ctxmenu)", root);
+  return R;
+}
+function renderApps(R, u) {
+  R.cards.forEach((c, i) => {
+    const p = eOut(seg(u, 0.12 + i * 0.05, 0.6 + i * 0.05));
+    const press = i === 0 ? pressCurve(u, 1.1, 1.55) : 0;
+    css(c, { opacity: p, transform: `translateY(${(1 - p) * 26}px) scale(${(0.94 + 0.06 * p) * (1 - press * 0.035)})` });
+  });
+  // long press on Authentik: lift, blur, menu
+  const lift = eOut(seg(u, 1.45, 1.7)), close = eOut(seg(u, 2.4, 2.62));
+  const on = lift > 0 && close < 1;
+  show(R.bg, on); show(R.lift, on); show(R.menu, on);
+  const blur = on ? lift * (1 - close) : 0;
+  for (const el of R.behind) el.style.filter = blur > 0 ? `blur(${blur * 7}px) brightness(${1 - blur * 0.25})` : "none";
+  if (on) {
+    R.bg.style.opacity = lift * (1 - close);
+    css(R.lift, { transform: `scale(${1 + 0.04 * lift * (1 - close)})`, opacity: 1 });
+    R.cards[0].style.opacity = 0;
+    const m = eBack(clamp(lift));
+    css(R.menu, { left: "16px", top: "394px", opacity: lift * (1 - close), transform: `scale(${(0.55 + 0.45 * m) * (1 - 0.2 * close)})` });
+    const hi = u > 2.18 && u < 2.48 ? 1 : 0;
+    R.mis.forEach((mi, i) => (mi.style.background = i === 0 && hi ? "rgba(255,255,255,.14)" : "transparent"));
+  } else if (u > 2.6) {
+    R.cards[0].style.opacity = 1;
+  }
+  // after "Restart app": the card shows it is busy
+  const busy = u > 2.6 && u < 3.4;
+  show(R.spin, busy); show(R.dot, !busy);
+  if (busy) R.spin.style.transform = `rotate(${u * 540}deg)`;
+  R.bars.forEach((b, i) => (b.style.background = busy ? (i < 2 ? "#FF9F0A" : "#48484A") : "#30D158"));
+}
+function pressCurve(u, a, b) { return seg(u, a, a + 0.12) * (1 - seg(u, b, b + 0.12)); }
+
+// ---------------- terminal list ----------------
+function termListHTML() {
+  const g = "#30D158";
+  const row = (tile, a, b) => `<div class="row">${tile}<div class="rt"><div class="a">${a}</div><div class="b">${b}</div></div><div class="chev">${ic("chevR", 16, 2.6)}</div></div>`;
+  const tt = (c) => `<div class="tile" style="width:34px;height:34px;border-radius:9px;background:${tileBg(c)}">${ic("terminal", 18, 2.6)}</div>`;
+  return `
+  <div class="lt">Terminal</div>
+  <div class="search">${ic("search", 19, 2.4)}Find a shell</div>
+  <div style="position:absolute;left:16px;right:16px;top:206px">
+    <div class="cap2">Open sessions</div>
+    <div class="card rows trows">
+      ${row(tt(g), "Navidrome", "Active · 0 attached")}
+      ${row(tt(g), "PocketADM app", "Active · 0 attached")}
+      ${row(tt(g), "admin@homeserver", "Active · 0 attached")}
+    </div>
+    <div class="cap2">This server</div>
+    <div class="card rows trows">
+      ${row(`<img src="${MARK_URL}" style="width:34px;height:34px;border-radius:9px">`, "PocketADM app", "the app's own container · docker + host")}
+      ${row(tt("#8E8E93"), "admin@homeserver", "Administrator · you")}
+    </div>
+    <div class="cap2">Apps</div>
+    <div class="card rows trows">
+      ${row(brandTile("authentik", 34), "Authentik", "4 containers")}
+      ${row(brandTile("nextcloud", 34), "Nextcloud", "3 containers")}
+    </div>
+  </div>`;
+}
+
+// ---------------- terminal session ----------------
+const P1 = `<span class="pu">admin@homeserver</span>:<span class="pp">~</span>$ `;
+const TERM = [
+  { o: "Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8 x86_64)" },
+  { o: "Last login: Thu Oct  9 21:02:11 2026 from 10.0.0.12" },
+  { c: "ls /srv" },
+  { o: '<span class="dir">authentik</span>  <span class="dir">backup</span>  <span class="dir">cloud</span>  <span class="dir">gitea</span>  <span class="dir">immich</span>' },
+  { o: '<span class="dir">jellyfin</span>  <span class="dir">monitoring</span>  <span class="dir">navidrome</span>  <span class="dir">pihole</span>' },
+  { c: "docker ps --format 'table {{.Names}}\\t{{.Status}}'" },
+  { o: '<span class="hd">NAMES              STATUS</span>' },
+  { o: 'authentik-server   Up 12 days <span class="ok">(healthy)</span>' },
+  { o: 'authentik-worker   Up 12 days <span class="ok">(healthy)</span>' },
+  { o: 'nextcloud          Up 30 days <span class="ok">(healthy)</span>' },
+  { o: 'jellyfin           Up 13 days' },
+  { o: 'vaultwarden        Up 4 days <span class="ok">(healthy)</span>' },
+  { o: 'pihole             Up 58 days <span class="ok">(healthy)</span>' },
+  { o: 'grafana            Up 4 days' },
+  { c: "" },
+];
+// when each line starts (session-relative seconds); short commands type at
+// 40 chars/s, a long one takes 0.85 s
+const TERM_START = 10.2;
+const TERM_T = (() => {
+  const out = []; let t = 0.05;
+  for (const l of TERM) {
+    const d = l.c ? l.c.length / Math.max(40, l.c.length / 0.85) : 0;
+    if (l.c !== undefined) { t += 0.12; out.push({ t0: t, t1: t + d }); t = t + d + 0.1; }
+    else { out.push({ t0: t, t1: t }); t += 0.035; }
+  }
+  return out;
+})();
+const KB_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+function kbHTML(top) {
+  let h = `<div class="acc" style="top:${top}px">${["esc", "ctrl", "tab", "~", "|", "/", "-", "←", "↑", "↓", "→"].map((k) => `<span>${k}</span>`).join("")}</div><div class="kb" style="top:${top + 46}px">`;
+  const kw = 33.2, gap = 5.8, kh = 43;
+  const y0 = 8, dy = kh + 11;
+  KB_ROWS.forEach((r, ri) => {
+    const n = r.length, rowW = n * kw + (n - 1) * gap, x0 = (393 - rowW) / 2;
+    [...r].forEach((ch, i) => (h += `<div class="key" data-k="${ch}" style="left:${x0 + i * (kw + gap)}px;top:${y0 + ri * dy}px;width:${kw}px">${ch}</div>`));
+  });
+  h += `<div class="key fn" style="left:4px;top:${y0 + 2 * dy}px;width:44px">⇧</div><div class="key fn" style="left:345px;top:${y0 + 2 * dy}px;width:44px">⌫</div>`;
+  h += `<div class="key fn" style="left:4px;top:${y0 + 3 * dy}px;width:90px">123</div><div class="key" data-k=" " style="left:100px;top:${y0 + 3 * dy}px;width:193px;font-size:16px"></div><div class="key fn" data-k="\n" style="left:299px;top:${y0 + 3 * dy}px;width:90px">return</div>`;
+  h += `<div style="position:absolute;left:24px;top:${y0 + 4 * dy + 4}px;color:#aeaeb2">${ic("globe", 26, 1.8)}</div><div style="position:absolute;right:24px;top:${y0 + 4 * dy + 4}px;color:#aeaeb2">${ic("mic", 26, 1.8)}</div></div>`;
+  return h;
+}
+function termHTML() {
+  return `
+  <div style="position:absolute;inset:0;background:var(--termBg)"></div>
+  <div class="gbtn l" style="background:#1f2329">${ic("chevL", 22, 2.6)}</div>
+  <div class="inlinetitle" style="color:#fff">admin@homeserver</div>
+  <div style="position:absolute;right:30px;top:65px;width:9px;height:9px;border-radius:5px;background:#30D158"></div>
+  <div class="term"></div>
+  <div class="kbwrap" style="position:absolute;left:0;right:0;top:0">${kbHTML(852 - 336)}</div>`;
+}
+function makeTerm(root) {
+  const R = { root, term: $(".term", root), kb: $(".kbwrap", root), keys: {} };
+  for (const k of $$(".key[data-k]", root)) R.keys[k.dataset.k] = k;
+  R.lines = TERM.map(() => { const d = document.createElement("div"); R.term.appendChild(d); return d; });
+  return R;
+}
+function renderTerm(R, s) {
+  // keyboard slides up with the screen
+  css(R.kb, { transform: `translateY(${(1 - eOut5(seg(s, -0.2, 0.25))) * 340}px)` });
+  let typing = null, lastLine = -1;
+  TERM.forEach((l, i) => {
+    const tm = TERM_T[i], el = R.lines[i];
+    if (s < tm.t0) { el.style.display = "none"; return; }
+    el.style.display = "block"; lastLine = i;
+    if (l.c !== undefined) {
+      const n = Math.floor(clamp((s - tm.t0) / (tm.t1 - tm.t0 || 1)) * l.c.length);
+      const txt = l.c.slice(0, n).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      el.innerHTML = P1 + txt;
+      if (s < tm.t1 + 0.12 && n < l.c.length) typing = l.c[n];
+      else if (s >= tm.t1 && s < tm.t1 + 0.1 && l.c.length) typing = "\n";
+    } else el.innerHTML = l.o;
+  });
+  // cursor on the last visible line
+  $$(".cur", R.term).forEach((c) => c.remove());
+  if (lastLine >= 0) {
+    const blink = Math.floor(s * 2.2) % 2 === 0 || typing;
+    R.lines[lastLine].insertAdjacentHTML("beforeend", `<span class="cur" style="opacity:${blink ? 1 : 0}"></span>`);
+  }
+  for (const k in R.keys) R.keys[k].style.background = k === (typing || "").toLowerCase() ? "#b4b4b8" : (R.keys[k].classList.contains("fn") ? "#444447" : "#6b6b6f");
+}
+
+// ---------------- assistant chat ----------------
+const A1 = "I'll check which services are internet-facing and how they're protected, starting with the reverse proxy.";
+function wordsSpan(text) { return text.split(/(\s+)/).map((w) => (/^\s+$/.test(w) ? w : `<span class="w">${w}</span>`)).join(""); }
+function chatHTML() {
+  const ok = `<span style="color:var(--accent2)">${ic("ccheck", 18, 2.4)}</span>`;
+  const warn = `<span style="color:var(--warn)">${ic("alert", 18, 2.4)}</span>`;
+  const toolTile = (c, name) => `<div class="tile" style="width:36px;height:36px;border-radius:10px;background:rgba(61,147,255,.16);color:var(--accent)">${ic(name, 19, 2.4)}</div>`;
+  return `
+  <div class="gbtn l" style="color:var(--accent)">${ic("list", 21, 2.4)}</div>
+  <div style="position:absolute;left:74px;right:72px;top:57px;font-size:18px;font-weight:600;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:21">Which of my services can be…</div>
+  <div class="gbtn r" style="color:var(--accent)">${ic("ellipsis", 22, 2.6)}</div>
+  <div class="chatview"><div class="chatin">
+    <div class="blk" data-b="user"><div class="ubub">Which of my services can be reached from the internet, and are they protected?</div></div>
+    <div class="blk" data-b="typing"><div style="display:flex;gap:5px;padding:12px 4px" class="dots"><i></i><i></i><i></i></div></div>
+    <div class="blk" data-b="a1"><div class="atext"><p>${wordsSpan(A1)}</p></div></div>
+    <div class="blk" data-b="tool"><div class="tcard">${toolTile("", "terminal")}<div class="rt"><div class="tt">Ran 6 commands</div><div class="ts">docker ps --format '{{.Names}} {{.Ports}}'</div></div><span class="tstate"></span></div></div>
+    <div class="blk" data-b="a2"><div class="atext">
+      <p><b>${wordsSpan("4 services are reachable from the internet:")}</b></p>
+      <div class="li">${ok}<div><b>cloud.example.com</b> — Nextcloud, behind Authentik</div></div>
+      <div class="li">${ok}<div><b>vault.example.com</b> — Vaultwarden, login + 2FA</div></div>
+      <div class="li">${ok}<div><b>auth.example.com</b> — Authentik itself</div></div>
+      <div class="li">${warn}<div><b>music.example.com</b> — Navidrome, <b>no sign-in</b></div></div>
+      <p style="margin-top:10px">${wordsSpan("I'll put Navidrome behind Authentik as well — approve the change below.")}</p>
+    </div></div>
+    <div class="blk" data-b="model"><div class="mlabel">${ic("sparkles", 15, 2)}Mistral Vibe · Mistral Small 4</div></div>
+    <div class="blk" data-b="appr"><div class="appr">
+      <div class="h">${icFill("hand", 16)}Run this?</div>
+      <div class="n">edit_file</div>
+      <div class="code"><span style="color:#8b949e">/srv/proxy/conf.d/music.conf</span>
+<span style="color:#7ee787">+ auth_request /outpost.goauthentik.io/auth/nginx;</span>
+<span style="color:#7ee787">+ error_page 401 = @goauthentik_signin;</span></div>
+      <div class="btns"><div class="dec" style="color:var(--danger);background:rgba(255,69,58,.16)">Decline</div><div class="alw" style="color:#fff;background:var(--accent)">Allow</div></div>
+    </div></div>
+    <div class="blk" data-b="done"><div class="tcard"><div class="tile" style="width:36px;height:36px;border-radius:10px;background:rgba(48,209,88,.16);color:var(--accent2)">${ic("pencil", 18, 2.4)}</div><div class="rt"><div class="tt">Edited music.conf</div><div class="ts">+2 lines · nginx reloaded</div></div><span style="color:var(--accent2)">${ic("check", 20, 3)}</span></div></div>
+  </div></div>
+  <div class="edge" style="height:120px;opacity:1"></div>
+  <div class="composer"><div class="plus">${ic("plus", 22, 2.4)}</div><div class="fld">Message<small>Agent</small></div><div class="send">${ic("up", 20, 2.6)}</div></div>`;
+}
+const CHAT_GAP = 14;
+const CHAT_VIEW_H = 852 - 104 - 148;   // .chatview
+// block: [appear, disappear]
+const CHAT_TL = { user: [0.35, 99], typing: [0.68, 1.05], a1: [1.05, 99], tool: [1.95, 99], a2: [3.0, 99], model: [4.35, 99], appr: [4.5, 5.42], done: [5.45, 99] };
+function makeBlocks(root, sel) {
+  const blocks = {};
+  for (const b of $$(sel, root)) { blocks[b.dataset.b] = { el: b, h: b.offsetHeight, words: $$(".w", b), lis: $$(".li", b) }; css(b, { height: b.offsetHeight + "px" }); }
+  return blocks;
+}
+function layoutBlocks(blocks, TL, u, gap) {
+  let total = 0;
+  for (const k in TL) {
+    const B = blocks[k]; if (!B) continue;
+    const [a, d] = TL[k];
+    const p = eOut(seg(u, a, a + 0.28)), q = eIO(seg(u, d, d + 0.22));
+    const f = p * (1 - q);
+    css(B.el, { height: B.h * f + "px", marginBottom: gap * f + "px", opacity: clamp(p * 1.4 - 0.3) * (1 - q), transform: `translateY(${(1 - p) * 14}px) scale(${1 - 0.03 * (1 - p)})`, display: f > 0.001 ? "block" : "none" });
+    total += (B.h + gap) * f;
+  }
+  return total;
+}
+function makeChat(root) {
+  const R = { root, view: $(".chatview", root), inner: $(".chatin", root) };
+  R.blocks = makeBlocks(root, ".chatin .blk");
+  R.dots = $$(".dots i", root);
+  R.dots.forEach((d) => css(d, { width: "8px", height: "8px", borderRadius: "4px", background: "var(--muted)", display: "block" }));
+  R.tstate = $(".tstate", root); R.tt = $(".blk[data-b=tool] .tt", root); R.ts = $(".blk[data-b=tool] .ts", root);
+  R.alw = $(".alw", root); R.ubub = $(".ubub", root);
+  return R;
+}
+function streamWords(words, u, a, rate) { words.forEach((w, i) => (w.style.visibility = u >= a + i / rate ? "visible" : "hidden")); }
+function renderChat(R, u) {
+  const total = layoutBlocks(R.blocks, CHAT_TL, u, CHAT_GAP);
+  const viewH = CHAT_VIEW_H;
+  css(R.inner, { transform: `translateY(${-Math.max(0, total + 8 - viewH)}px)` });
+  css(R.ubub, { transformOrigin: "100% 100%" });
+  R.dots.forEach((d, i) => (d.style.opacity = 0.35 + 0.65 * Math.max(0, Math.sin(u * 9 - i * 0.9))));
+  streamWords(R.blocks.a1.words, u, 1.08, 26);
+  const a2w = R.blocks.a2.words, head = a2w.slice(0, 7), tail = a2w.slice(7);
+  streamWords(head, u, 3.02, 30);
+  R.blocks.a2.lis.forEach((li, i) => { const p = eOut(seg(u, 3.3 + i * 0.17, 3.55 + i * 0.17)); css(li, { opacity: p, transform: `translateX(${(1 - p) * 14}px)` }); });
+  streamWords(tail, u, 4.0, 34);
+  // the tool card runs, then reports
+  const running = u < 2.9;
+  const cmds = ["docker ps --format '{{.Names}} {{.Ports}}'", "cat /srv/proxy/conf.d/*.conf", "curl -sI https://music.example.com"];
+  R.tt.textContent = running ? "Running commands…" : "Ran 6 commands";
+  R.ts.textContent = running ? cmds[Math.min(2, Math.floor(Math.max(0, u - 1.95) / 0.32))] : "docker ps · cat · curl · ss -tlnp";
+  R.tstate.innerHTML = running
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" style="transform:rotate(${u * 520}deg)" fill="none" stroke="var(--muted)" stroke-width="3" stroke-linecap="round">${LU.loader}</svg>`
+    : `<span style="color:var(--tert)">${ic("chevR", 16, 2.6)}</span>`;
+  const pr = pressCurve(u, 5.25, 5.33);
+  css(R.alw, { transform: `scale(${1 - 0.05 * pr})`, filter: `brightness(${1 + 0.25 * pr})` });
+}
+
+// ---------------- watch ----------------
+function watchHTML() {
+  return `
+  <div class="gbtn l">${ic("chevL", 22, 2.6)}</div>
+  <div style="position:absolute;left:80px;right:80px;top:52px;text-align:center;z-index:21"><div style="font-size:17px;font-weight:600;line-height:22px">Watch</div><div class="wstat" style="font-size:11.5px;color:var(--accent2);line-height:15px">watching</div></div>
+  <div class="gbtn r">${ic("sliders", 19, 2.2)}</div>
+  <div class="chatview"><div class="chatin">
+    <div class="blk" data-b="yday"><div class="sysline" style="font-weight:600">Yesterday</div></div>
+    <div class="blk" data-b="week"><div style="display:flex;gap:8px;align-items:flex-start">${iconTile("eye", "#5E5CE6", 28, false)}<div style="flex:1;min-width:0">
+      <div class="wbub"><b>Your week:</b> 3 updates installed and all came back healthy. The disk grew by 4 GB, mostly Immich uploads.</div>
+      <div class="wtime">Sun 18:00</div></div><div style="width:20px"></div></div></div>
+    <div class="blk" data-b="day"><div class="sysline" style="font-weight:600">Today</div></div>
+    <div class="blk" data-b="quiet"><div class="sysline">Round at 06:00 — all quiet, nothing to report.</div></div>
+    <div class="blk" data-b="msg"><div style="display:flex;gap:8px;align-items:flex-start">${iconTile("eye", "#5E5CE6", 28, false)}<div style="flex:1;min-width:0">
+      <div class="wbub"><div class="bar"></div><div class="sev">${ic("alert", 13, 2.6)}Important</div><b>The nightly backup didn't run.</b> backup-runner stopped at 03:00: the USB drive at /mnt/backup was not mounted. Last good backup: yesterday, 03:00.<div style="font-size:15px;font-weight:600;color:var(--accent);margin-top:4px">Details</div></div>
+      <div class="acts"><div class="act0">${icFill("play", 12)}Mount &amp; retry</div><div>${ic("file", 13, 2.4)}Show logs</div><div>${ic("sparkles", 13, 2.4)}Ask</div></div>
+      <div class="wtime">07:12</div></div><div style="width:20px"></div></div></div>
+    <div class="blk" data-b="typing"><div style="display:flex;gap:8px"><div style="width:28px"></div><div class="wbub" style="display:flex;gap:5px;padding:14px 16px" class="dots"><i></i><i></i><i></i></div></div></div>
+    <div class="blk" data-b="ok"><div style="display:flex;gap:8px;align-items:flex-start"><div style="width:28px"></div><div style="flex:1;min-width:0"><div class="wbub"><span style="color:var(--accent2);font-weight:600">✓ Done.</span> /mnt/backup is mounted again and the backup is running — 2.1 GB so far.</div><div class="wtime">07:13</div></div><div style="width:20px"></div></div></div>
+  </div></div>
+  <div class="edge" style="height:120px"></div>
+  <div class="composer"><div class="plus">${ic("plus", 22, 2.4)}</div><div class="fld">Ask the watch</div><div class="send">${ic("up", 20, 2.6)}</div></div>`;
+}
+const WATCH_TL = { yday: [-1, 99], week: [-1, 99], day: [-1, 99], quiet: [-1, 99], msg: [-1, 99], typing: [1.25, 1.62], ok: [1.62, 99] };
+function makeWatch(root) {
+  const R = { root, view: $(".chatview", root), inner: $(".chatin", root), act: $(".act0", root), stat: $(".wstat", root) };
+  R.blocks = makeBlocks(root, ".chatin .blk");
+  R.dots = $$(".blk[data-b=typing] i", root);
+  R.dots.forEach((d) => css(d, { width: "8px", height: "8px", borderRadius: "4px", background: "var(--muted)", display: "block" }));
+  return R;
+}
+function renderWatch(R, u) {
+  // u: seconds since the page appeared
+  const total = layoutBlocks(R.blocks, WATCH_TL, u, 12);
+  css(R.inner, { transform: `translateY(${-Math.max(0, total + 8 - CHAT_VIEW_H)}px)` });
+  R.dots.forEach((d, i) => (d.style.opacity = 0.35 + 0.65 * Math.max(0, Math.sin(u * 9 - i * 0.9))));
+  const pr = pressCurve(u, 0.95, 1.03);
+  css(R.act, { transform: `scale(${1 - 0.06 * pr})`, background: pr > 0 ? "rgba(61,147,255,.3)" : "rgba(61,147,255,.14)" });
+  R.stat.textContent = u > 1.0 && u < 1.62 ? "writing…" : "watching";
+}
+
+// ---------------- health ----------------
+const HT = [
+  { n: "Security", s: "2 to look at", i: SVG.shieldFill(22, "#0A84FF"), w: 1 },
+  { n: "Stability", s: "OK", i: `<span style="color:#30D158">${ic("activity", 22, 2.4)}</span>` },
+  { n: "Storage", s: "OK", i: `<span style="color:#d1d1d6">${ic("drive", 22, 2.2)}</span>` },
+  { n: "Updates", s: "OK", i: `<span style="color:#FF9F0A">${ic("refresh", 21, 2.4)}</span>` },
+  { n: "Backups", s: "1 to look at", i: `<span style="color:#64D2FF">${ic("backup", 22, 2.2)}</span>`, w: 1, fix: 1 },
+  { n: "Assistant", s: "1 to look at", i: `<span style="color:#DA5BF0">${icFill("sparkles", 21)}</span>`, w: 1 },
+];
+const NEEDS = [
+  { t: "Elevated (root) privileges", s: "This action needs root/administrator privileges", chev: 1 },
+  { t: "SSH root login", s: "PermitRootLogin is not set (defaults to yes)", btn: "Copy fix" },
+  { t: "SSH password auth", s: "Password authentication enabled", btn: "Copy fix" },
+  { t: "Backups", s: "no backup in the last 24 hours", btn: "Fix it", fix: 1 },
+];
+function healthHTML() {
+  const tiles = HT.map((h, i) => `<div class="htile" style="left:${16 + (i % 3) * 123.5}px;top:${322 + Math.floor(i / 3) * 87}px"><div class="hi">${h.i}</div><div class="hb">${h.w ? SVG.warnFill(22) : SVG.okFill(22)}</div>${h.fix ? `<div class="hb hb2" style="opacity:0">${SVG.okFill(22)}</div>` : ""}<div class="hn">${h.n}</div><div class="hs">${h.s}</div></div>`).join("");
+  const rows = NEEDS.map((r) => `<div class="nrow"><div style="flex:none">${SVG.warnFill(26)}</div><div style="min-width:0;flex:1"><div class="nt">${r.t}</div><div class="ns">${r.s}</div></div>${r.btn ? `<div class="btn">${r.btn}</div>` : `<div class="chev">${ic("chevR", 16, 2.6)}</div>`}</div>`).join("");
+  return `
+  <div class="gbtn l">${ic("chevL", 22, 2.6)}</div>
+  <div class="gbtn r" style="color:var(--accent)">${ic("ellipsis", 22, 2.6)}</div>
+  <div class="lt">Health</div>
+  <div class="card score">
+    <div class="ringbox" style="flex:none"><svg width="78" height="78" viewBox="0 0 78 78"><circle cx="39" cy="39" r="35" fill="none" stroke-width="8" class="htrk"/><circle cx="39" cy="39" r="35" fill="none" stroke-width="8" stroke-linecap="round" class="hprg" stroke-dasharray="${2 * Math.PI * 35}"/></svg>
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="hval" style="font-size:25px;font-weight:700;line-height:28px;font-variant-numeric:tabular-nums">0</div><div style="font-size:11px;color:var(--muted)">of 100</div></div></div>
+    <div><div class="verdict">Healthy — 4 things to look at</div><div class="when">Checked just now</div><div class="again">Check again</div></div>
+  </div>
+  ${tiles}
+  <div style="position:absolute;left:20px;right:20px;top:500px;display:flex;justify-content:space-between;font-size:20px;font-weight:600;color:var(--muted)"><span>Needs you</span><span class="ncount">4</span></div>
+  <div class="card needs">${rows}</div>`;
+}
+function makeHealth(root) {
+  return { root, trk: $(".htrk", root), prg: $(".hprg", root), val: $(".hval", root), verdict: $(".verdict", root), tiles: $$(".htile", root), rows: $$(".nrow", root), count: $(".ncount", root), needs: $(".needs", root) };
+}
+function renderHealth(R, u) {
+  const c = 2 * Math.PI * 35;
+  const fill = eOut(seg(u, 0.25, 1.15)), rise = eIO(seg(u, 1.95, 2.6));
+  const score = 65 * fill + 21 * rise;
+  const tint = rise > 0.55 ? "#30D158" : "#FF9F0A";
+  R.trk.setAttribute("stroke", tint); R.trk.setAttribute("stroke-opacity", 0.18);
+  R.prg.setAttribute("stroke", tint);
+  R.prg.setAttribute("stroke-dashoffset", c * (1 - Math.max(0.02, score / 100)));
+  R.val.textContent = Math.round(score);
+  R.verdict.textContent = u > 2.25 ? "Healthy — 3 things to look at" : "Healthy — 4 things to look at";
+  R.count.textContent = u > 2.25 ? "3" : "4";
+  R.tiles.forEach((tl, i) => {
+    const p = eOut(seg(u, 0.2 + i * 0.06, 0.6 + i * 0.06));
+    css(tl, { opacity: p, transform: `scale(${0.9 + 0.1 * eBack(p)})` });
+    if (HT[i].fix) {
+      const k = seg(u, 2.2, 2.4);
+      $(".hb", tl).style.opacity = 1 - k; $(".hb2", tl).style.opacity = k;
+      $(".hs", tl).textContent = u > 2.3 ? "OK" : "1 to look at";
+    }
+  });
+  R.rows.forEach((r, i) => {
+    const p = eOut(seg(u, 0.45 + i * 0.08, 0.85 + i * 0.08));
+    let o = p, h = 57;
+    if (NEEDS[i].fix) {
+      const btn = $(".btn", r);
+      const pr = pressCurve(u, 1.35, 1.43);
+      const working = u > 1.43 && u < 1.95, done = u >= 1.95;
+      btn.innerHTML = working ? `<svg width="17" height="17" viewBox="0 0 24 24" style="transform:rotate(${u * 520}deg);margin:1px 12px" fill="none" stroke="var(--warn)" stroke-width="3" stroke-linecap="round">${LU.loader}</svg>`
+        : done ? `<span style="display:flex;gap:5px;align-items:center">${ic("check", 16, 3)}Fixed</span>` : "Fix it";
+      css(btn, { transform: `scale(${1 - 0.06 * pr})`, color: done ? "var(--accent2)" : "var(--warn)", background: done ? "rgba(48,209,88,.18)" : "rgba(255,159,10,.2)" });
+      const gone = eIO(seg(u, 2.25, 2.6));
+      o *= 1 - gone; h = 57 * (1 - gone);
+    }
+    css(r, { opacity: o, height: h + "px", transform: `translateY(${(1 - p) * 12}px)` });
+  });
+}
+
+// ======================================================================
+// assemble the screen
+// ======================================================================
+let D, DA, DB, AP, TL_, TM, CH, WA, HE, PAGES;
+const SB = document.createElement("div"), TB = document.createElement("div"), HOME = document.createElement("div"), OVER = document.createElement("div");
+function buildScreen() {
+  PAGES = {
+    dash: page("pg-dash", dashHTML()),
+    apps: page("pg-apps", appsHTML()),
+    tlist: page("pg-tlist", termListHTML()),
+    term: page("pg-term", termHTML()),
+    chat: page("pg-chat", chatHTML()),
+    watch: page("pg-watch", watchHTML()),
+    health: page("pg-health", healthHTML()),
+    themeA: page("pg-themeA", dashHTML() + statusBar() + tabBar(0) + `<div class="home"></div>`, "system"),
+    themeB: page("pg-themeB", dashHTML() + statusBar() + tabBar(0) + `<div class="home"></div>`, "ocean"),
+  };
+  SB.innerHTML = statusBar(); screen.appendChild(SB.firstChild);
+  TB.innerHTML = tabBar(0); screen.appendChild(TB.firstChild);
+  screen.insertAdjacentHTML("beforeend", `<div class="home" id="homeInd"></div>`);
+  screen.insertAdjacentHTML("beforeend", `<div class="banner" id="banner" style="display:none"><img src="${ICON_URL}"><div style="flex:1;min-width:0"><div class="bt">PocketADM<span>now</span></div><div class="bb" style="font-weight:600">Watch · The nightly backup didn't run</div><div class="bb">backup-runner stopped at 03:00 — /mnt/backup was not mounted.</div></div></div>`);
+  screen.insertAdjacentHTML("beforeend", `<div class="tap" id="tap1"></div><div class="tap" id="tap2"></div>`);
+  // measure blocks with every page laid out
+  for (const k in PAGES) PAGES[k].style.display = "block";
+  D = makeDash(PAGES.dash); DA = makeDash(PAGES.themeA); DB = makeDash(PAGES.themeB);
+  AP = makeApps(PAGES.apps); TM = makeTerm(PAGES.term); CH = makeChat(PAGES.chat); WA = makeWatch(PAGES.watch); HE = makeHealth(PAGES.health);
+  for (const k in PAGES) PAGES[k].style.display = "none";
+}
+
+// ======================================================================
+// timeline of the screen
+// ======================================================================
+// taps: [down, up, x, y]
+const TAPS = [
+  [6.16, 6.26, TAB_X[1] + 21, 799],
+  [7.6, 8.06, 103, 318],
+  [8.68, 8.76, 120, 417],
+  [9.16, 9.26, TAB_X[2] + 21, 799],
+  [9.86, 9.94, 200, 434],
+  [17.75, 17.83, 290, 0],   // y filled in from the layout
+  [19.42, 19.5, 196, 62],
+  [20.5, 20.58, 120, 0],    // y filled in from the layout
+  [22.85, 22.93, 334, 0],
+];
+const PILL = [[0, 0], [6.18, 1], [9.18, 2], [12.3, 3], [19.62, 4], [24.4, 0]];
+function pillAt(t) {
+  let x = TAB_X[0], st = 0;
+  for (let i = 1; i < PILL.length; i++) {
+    const [tt, idx] = PILL[i], from = TAB_X[PILL[i - 1][1]], to = TAB_X[idx];
+    if (t >= tt) { const p = spring(t - tt, 0.75, 16); x = lerp(from, to, p); st = Math.sin(Math.PI * clamp(p)) * (Math.abs(to - from) > 1 ? 1 : 0); }
+  }
+  return { x, st };
+}
+const THEME_SEQ = [["system", "ocean"], ["ocean", "aurora"], ["aurora", "forest"], ["forest", "sunset"], ["sunset", "rose"]];
+const TH0 = 24.72, THD = 0.29;
+function themeAt(t) {
+  if (t < TH0 || t > 27.2) return null;
+  const i = Math.min(THEME_SEQ.length - 1, Math.floor((t - TH0) / THD));
+  const k = eIO(seg(t, TH0 + i * THD, TH0 + i * THD + THD * 0.92));
+  return { from: THEME_SEQ[i][0], to: THEME_SEQ[i][1], k, i };
+}
+function pageStyle(el, o) {
+  el.style.display = o.opacity > 0.001 ? "block" : "none";
+  css(el, { opacity: o.opacity, transform: `translate(${o.x || 0}px, ${o.y || 0}px) scale(${o.s || 1})`, filter: o.dim ? `brightness(${1 - o.dim * 0.45})` : "none", zIndex: o.z || 1, clipPath: o.clip || "none" });
+}
+function renderScreen(t) {
+  for (const k in PAGES) PAGES[k].style.display = "none";
+  const xin = (B) => eOut(seg(t, B - 0.06, B + 0.26));
+  const push = (B) => eOut5(seg(t, B, B + 0.42));
+  // dashboard
+  if (t < 6.75) { renderDash(D, t - 2.5, 270 * eIO(seg(t, 4.55, 5.75))); pageStyle(PAGES.dash, { opacity: 1, z: 1 }); }
+  // apps
+  if (t > 6.3 && t < 9.75) { renderApps(AP, t - 6.5); pageStyle(PAGES.apps, { opacity: xin(6.42), y: (1 - xin(6.42)) * 12, z: 2 }); }
+  // terminal list, then the session pushed over it
+  const sp = push(9.98);
+  if (t > 9.3 && t < 10.6) pageStyle(PAGES.tlist, { opacity: xin(9.42), y: (1 - xin(9.42)) * 12, x: -sp * 110, dim: sp, z: 3 });
+  if (t > 9.95 && t < 12.75) { renderTerm(TM, t - TERM_START); pageStyle(PAGES.term, { opacity: 1, x: (1 - sp) * DW, z: 4 }); }
+  // chat
+  const wp = push(19.55);
+  if (t > 12.3 && t < 20.1) { renderChat(CH, t - 12.5); pageStyle(PAGES.chat, { opacity: xin(12.42), y: (1 - xin(12.42)) * 12, x: -wp * 110, dim: wp, z: 5 }); }
+  // watch
+  const hp = push(21.45);
+  if (t > 19.5 && t < 21.95) { renderWatch(WA, t - 19.55); pageStyle(PAGES.watch, { opacity: 1, x: (1 - wp) * DW - hp * 110, dim: hp, z: 6 }); }
+  // health
+  if (t > 21.4 && t < 24.8) { renderHealth(HE, t - 21.5); pageStyle(PAGES.health, { opacity: 1, x: (1 - hp) * DW, z: 7 }); }
+  // themes: the dashboard, re-coloured by circles that grow from a tap
+  if (t > 24.4) {
+    const th = themeAt(t);
+    applyTheme(PAGES.themeA, th ? th.from : "system");
+    renderDash(DA, 9, 0);
+    pageStyle(PAGES.themeA, { opacity: xin(24.5), y: (1 - xin(24.5)) * 12, z: 8 });
+    if (th && th.k > 0) {
+      applyTheme(PAGES.themeB, th.to);
+      renderDash(DB, 9, 0);
+      const origins = [[330, 120], [60, 300], [330, 600], [80, 760], [200, 420]];
+      const [ox, oy] = origins[th.i % origins.length];
+      pageStyle(PAGES.themeB, { opacity: 1, z: 9, clip: `circle(${th.k * 1000}px at ${ox}px ${oy}px)` });
+    }
+  }
+  // status bar, tab bar, home indicator
+  const sb = $("#screen > .sb"), tb = $("#screen > .tabbar"), home = $("#homeInd");
+  const inThemes = t > 24.75;
+  const tabVis = (1 - seg(t, 9.98, 10.18)) + seg(t, 12.35, 12.6);
+  css(tb, { opacity: inThemes ? 0 : clamp(tabVis), transform: `translateY(${(1 - clamp(tabVis)) * 30}px)` });
+  css(sb, { display: inThemes ? "none" : "block" });
+  css(home, { display: inThemes ? "none" : "block", opacity: 0.95 });
+  const pl = pillAt(t);
+  css($(".tabpill", tb), { left: pl.x - 38 - pl.st * 8 + "px", width: 76 + pl.st * 16 + "px" });
+  $$(".tab", tb).forEach((el, i) => el.classList.toggle("sel", Math.abs(TAB_X[i] - pl.x) < 33));
+  // notification banner over the chat
+  const bn = $("#banner");
+  const bIn = spring(t - 18.62, 0.7, 14), bOut = eOut(seg(t, 19.5, 19.8));
+  const bvis = t > 18.6 && t < 19.85;
+  show(bn, bvis);
+  if (bvis) css(bn, { display: "flex", transform: `translateY(${(1 - bIn) * -140}px) scale(${1 - 0.04 * pressCurve(t, 19.42, 19.5) - 0.1 * bOut})`, opacity: 1 - bOut });
+  // tap indicators
+  const taps = $$(".tap", screen);
+  let n = 0;
+  for (const [d, u, x, y0] of TAPS) {
+    if (t < d - 0.12 || t > u + 0.35) continue;
+    const y = y0 || tapY(d);
+    const pin = eOut(seg(t, d - 0.12, d)), pout = seg(t, u, u + 0.35);
+    const el = taps[n++ % 2];
+    css(el, { display: "block", left: x + "px", top: y + "px", opacity: pin * (1 - pout), transform: `scale(${(0.6 + 0.4 * pin) * (1 + 0.5 * pout)})` });
+  }
+  for (; n < 2; n++) taps[n].style.display = "none";
+}
+// the y of a tap on something that moves with a scrolled list
+function tapY(d) {
+  const rect = (el) => { const r = el.getBoundingClientRect(), s = screen.getBoundingClientRect(); return { y: (r.top - s.top) / curScale + (r.height / curScale) / 2 }; };
+  if (d === 17.75) return rect(CH.alw).y;
+  if (d === 20.5) return rect(WA.act).y;
+  if (d === 22.85) return rect($(".btn", HE.rows[3])).y;
+  return 400;
+}
+let curScale = 1;
+
+// ======================================================================
+// device placement
+// ======================================================================
+const devWrap = $("#devWrap"), device = $("#device"), devGlow = $("#devGlow");
+function renderDevice(t) {
+  const vis = t > 2.05 && t < 26.7;
+  show(devWrap, vis);
+  if (!vis) return;
+  const enter = spring(t - 2.2, 0.78, 7.5);
+  const ex = eIn(seg(t, 26.2, 26.66));
+  const breathe = 1 + 0.008 * Math.sin((t - 2.5) * 0.9);
+  const s = L.S * breathe * (1 - 0.12 * ex) * (0.86 + 0.14 * enter);
+  curScale = s;
+  const w = DW * s, h = DH * s;
+  const cx = L.devX + DW * L.S / 2, cy = L.devY + DH * L.S / 2;
+  const y = (1 - enter) * H * 0.75 + ex * 260;
+  css(devWrap, { left: cx - w / 2 + "px", top: cy - h / 2 + y + "px", width: w + "px", height: h + "px", opacity: clamp(enter * 3) * (1 - ex), transform: `perspective(2400px) rotateX(${(1 - enter) * 22}deg)`, filter: ex > 0 ? `blur(${ex * 10}px)` : "none" });
+  css(device, { transform: `scale(${s})` });
+  const th = themeAt(t);
+  const gc = th ? mix(th.i === 0 ? hex("1D62D8") : hex(THEMES[th.from].grad[1]), hex(THEMES[th.to].grad[1]), th.k) : hex("1D62D8");
+  css(devGlow, { boxShadow: `0 0 ${140 * s / L.S}px ${10 * s / L.S}px ${rgbs(gc, 0.38)}, 0 ${40 * s / L.S}px ${120 * s / L.S}px rgba(0,0,0,.9)`, borderRadius: 55 * s + "px" });
+  device.style.borderRadius = "55px";
+  renderScreen(t);
+}
+
+// ======================================================================
+// intro and outro
+// ======================================================================
+// the name, as the icon draws it: white, then the icon's blue
+const WORDMARK = [..."Pocket"].map((c) => `<span class="part">${c}</span>`).join("") + [..."ADM"].map((c) => `<span class="part" style="color:#5594FF">${c}</span>`).join("");
+function brandBlock(root, opts) {
+  root.innerHTML = `<div class="ring"></div><div class="ring"></div><div class="appicon"><img src="${ICON_URL}"><div class="shine"></div></div><div class="wm">${WORDMARK}</div>` + (opts.tag || "") + (opts.feats || "");
+  return { ring: $$(".ring", root), icon: $(".appicon", root), shine: $(".shine", root), wm: $(".wm", root), parts: $$(".wm .part", root) };
+}
+let IN, OUT;
+function buildIntroOutro() {
+  const P = PORTRAIT;
+  const geo = P ? { icon: 300, cx: W / 2, cy: 690, wmSize: 128, wmY: 880, tagY: 1070 } : { icon: 250, cx: W / 2, cy: 270, wmSize: 104, wmY: 430, tagY: 580 };
+  // intro: icon, wordmark, the slogan
+  const tagSize = P ? 78 : 70;
+  const tagHTML = `<div class="tagwrap" style="position:absolute;left:0;right:0;top:${geo.tagY}px;text-align:center">${TX.intro.map((l) => `<div class="hl" style="font-size:${tagSize}px;line-height:${tagSize * 1.02}px">${wordsHTML(l)}</div>`).join("")}</div>`;
+  const ir = $("#intro");
+  IN = brandBlock(ir, { tag: tagHTML });
+  IN.words = $$(".tagwrap .w:not(.sp)", ir);
+  fitGradients(ir);
+  // outro: icon, wordmark, line, features
+  const fs = P ? 30 : 28;
+  const featIcons = [ic("gauge", fs, 2.2), ic("package", fs, 2.2), ic("terminal", fs, 2.4), ic("sparkles", fs, 2.2), ic("eye", fs, 2.2), ic("shield", fs, 2.2)];
+  const feats = `<div class="feat" style="left:${P ? 60 : 160}px;right:${P ? 60 : 160}px;top:${geo.tagY + (P ? 90 : 80)}px">${TX.feats.map((f, i) => `<div style="font-size:${fs}px;padding:${fs * 0.45}px ${fs * 0.8}px">${featIcons[i]}${f}</div>`).join("")}</div>`;
+  const line = `<div class="oline sub" style="position:absolute;left:0;right:0;top:${geo.tagY}px;text-align:center;font-size:${P ? 36 : 34}px;color:#9DB8E0">${wordsHTML(TX.outro)}</div>`;
+  const or = $("#outro");
+  OUT = brandBlock(or, { tag: line, feats });
+  OUT.words = $$(".oline .w:not(.sp)", or);
+  OUT.feats = $$(".feat > div", or);
+  for (const B of [IN, OUT]) {
+    css(B.icon, { width: geo.icon + "px", height: geo.icon + "px", left: geo.cx - geo.icon / 2 + "px", top: geo.cy - geo.icon / 2 + "px", borderRadius: geo.icon * 0.2237 + "px", boxShadow: "0 30px 90px rgba(29,98,216,.45), 0 0 0 1px rgba(255,255,255,.08)" });
+    css(B.wm, { left: "0px", right: "0px", top: geo.wmY + "px", fontSize: geo.wmSize + "px", lineHeight: geo.wmSize * 1.1 + "px" });
+    B.ring.forEach((r) => css(r, { width: geo.icon + "px", height: geo.icon + "px", left: geo.cx - geo.icon / 2 + "px", top: geo.cy - geo.icon / 2 + "px" }));
+    B.geo = geo;
+  }
+}
+function renderBrand(B, t, t0, opt) {
+  const ip = spring(t - t0, 0.55, 10);
+  const op = clamp((t - t0) * 4);
+  css(B.icon, { opacity: op, transform: `scale(${0.35 + 0.65 * ip}) rotate(${(1 - ip) * -14}deg)`, filter: `blur(${clamp(1 - (t - t0) * 3) * 18}px)` });
+  css(B.shine, { left: lerp(-60, 160, eIO(seg(t, t0 + 0.4, t0 + 1.1))) + "%" });
+  B.ring.forEach((r, i) => { const p = seg(t, t0 + 0.12 + i * 0.16, t0 + 1.1 + i * 0.16); css(r, { opacity: (1 - p) * 0.7 * (p > 0 ? 1 : 0), transform: `scale(${1 + eOut(p) * 1.4})` }); });
+  B.parts.forEach((g, i) => { const p = eOut(seg(t, t0 + opt.wm + i * 0.06, t0 + opt.wm + 0.45 + i * 0.06)); g.style.opacity = p; g.style.transform = `translateY(${(1 - p) * 60}px)`; });
+}
+function renderIntro(t) {
+  const ir = $("#intro");
+  const vis = t < 2.75;
+  show(ir, vis); if (!vis) return;
+  renderBrand(IN, t, 0.12, { wm: 0.55 });
+  IN.words.forEach((w, i) => { const p = eOut(seg(t, 1.0 + i * 0.07, 1.5 + i * 0.07)); css(w, { opacity: p, transform: `translateY(${(1 - p) * 40}px)`, filter: `blur(${(1 - p) * 12}px)` }); });
+  const out = eIn(seg(t, 1.98, 2.45));
+  css(ir, { opacity: 1 - out, transform: `translateY(${-out * 160}px) scale(${1 - 0.08 * out})`, filter: out > 0 ? `blur(${out * 12}px)` : "none" });
+}
+function renderOutro(t) {
+  const or = $("#outro");
+  const vis = t > 26.45;
+  show(or, vis); if (!vis) return;
+  renderBrand(OUT, t, 26.6, { wm: 0.4 });
+  OUT.words.forEach((w, i) => { const p = eOut(seg(t, 27.25 + i * 0.05, 27.7 + i * 0.05)); css(w, { opacity: p, transform: `translateY(${(1 - p) * 24}px)` }); });
+  OUT.feats.forEach((f, i) => { const p = eOut(seg(t, 27.55 + i * 0.07, 28.0 + i * 0.07)); css(f, { opacity: p, transform: `translateY(${(1 - p) * 30}px) scale(${0.9 + 0.1 * eBack(p)})` }); });
+  // a second shine before the end
+  if (t > 28.3) css(OUT.shine, { left: lerp(-60, 160, eIO(seg(t, 28.35, 29.0))) + "%" });
+}
+
+// ======================================================================
+// frame
+// ======================================================================
+function renderFrame(t) {
+  renderBackground(t);
+  renderIntro(t);
+  renderOutro(t);
+  for (const k of ["dash", "apps", "term", "chat", "watch", "health", "themes"]) renderCaption(k, t, SC[k][0], k === "themes" ? SC.themes[1] - 0.12 : SC[k][1]);
+  // the theme name in the themes caption follows the circles
+  const th = themeAt(t), tn = $(".tname");
+  if (tn) { const key = th ? (th.k > 0.5 ? th.to : th.from) : "system"; tn.textContent = THEMES[key].name; tn.style.color = THEMES[key].light ? THEMES[key].grad[0] : THEMES[key].accent; }
+  renderDevice(t);
+  $("#fade").style.opacity = seg(t, 29.15, 29.5);
+}
+
+// ======================================================================
+// boot
+// ======================================================================
+async function boot() {
+  await Promise.all(Object.keys(BRAND).map(async (slug) => {
+    const r = await fetch(`/App/Resources/Assets.xcassets/Brands/brand-${slug}.imageset/brand-${slug}.svg`);
+    BR[slug] = "data:image/svg+xml;base64," + btoa(await r.text());
+  }));
+  await document.fonts.load('900 100px "PADisplay"'); await document.fonts.load('600 30px "PASemi"');
+  await document.fonts.load('400 17px "Inter"'); await document.fonts.load('600 17px "Inter"'); await document.fonts.load('700 34px "Inter"');
+  await document.fonts.load('400 12px "DejaVu Sans Mono"'); await document.fonts.load('700 12px "DejaVu Sans Mono"');
+  await document.fonts.ready;
+  for (const k of ["dash", "apps", "term", "chat", "watch", "health", "themes"]) buildCaption(k, TX[k][0], TX[k][1]);
+  const ts = $(".sub", CAPS.themes.el);
+  ts.insertAdjacentHTML("beforeend", `<span class="w tname">PocketADM</span>`);
+  CAPS.themes.subWords = $$(".w:not(.sp)", ts);
+  buildScreen();
+  buildIntroOutro();
+  await Promise.all($$("img").map((i) => (i.complete ? null : i.decode().catch(() => null))));
+  window.TIMELINE = { fps: FPS, duration: DURATION, scenes: SC, taps: TAPS.map((x) => x[0]), bpm: 120, gridOffset: 0.5,
+    keys: TERM.map((l, i) => (l.c ? { t0: TERM_T[i].t0 + TERM_START, t1: TERM_T[i].t1 + TERM_START, n: l.c.length } : null)).filter(Boolean),
+    themes: { t0: TH0, step: THD, n: THEME_SEQ.length },
+    banner: 18.62 };
+  window.renderFrame = renderFrame;
+  renderFrame(parseFloat(Q.get("t") || "0"));
+  window.READY = true;
+}
+boot();
+</script>
+</body>
+</html>

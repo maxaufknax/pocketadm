@@ -49,6 +49,20 @@ and the PNGs come back as build artifacts. The launch arguments
 `-PocketADMScreenshotRoute <route>` open any screen directly (routes: the More
 tab's `MoreRoute` cases, `detail` under containers, `session` under terminal).
 
+**App preview video.** `AppStore/preview/` makes the 29.5-second preview in
+both sizes the store takes (886 × 1920 and 1920 × 886), with English or German
+captions. `preview.html` draws the screens frame by frame after the SwiftUI
+views (dashboard, apps, terminal, assistant, watch, health, themes),
+`music.py` synthesises the soundtrack on the same timeline, and `render.mjs`
+photographs the page 30 times a second in Chromium and encodes App Store
+Connect's preview format with ffmpeg (H.264 High@4.0, 11 Mbit/s, AAC 256k
+stereo): `node render.mjs --lang de --orient landscape` writes
+`video/PocketADM-preview-de-1920x886.mp4`, and `--stills 4.5,15` writes single
+frames to `out/`. It is a redraw, not a recording, so a screen that changes in
+the app has to change there too. The release workflow does not upload it: add
+it per locale under *App Previews* and pick a poster frame from the dashboard
+(around 4.5 s).
+
 ## 1. Releasing a TestFlight preview (separate app record)
 
 For experiments that should not reach the App Store app's TestFlight: the
