@@ -15,7 +15,7 @@ from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
                servicegroups, sessions, skills, snapshots, sysinfo, terminal, termsessions,
                tls, updates)
-from . import (accounts, activity, channel, files, gameservers, inventory, memory, push,
+from . import (accounts, activity, alerts, channel, files, gameservers, inventory, memory, push,
                signin, suggestions, uploads, watch)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
@@ -550,6 +550,38 @@ async def metrics_context(t: float, window: int = 240):
                                        + f' — via {a.get("source", "ui")}'})
     entries.sort(key=lambda x: x["t"])
     return {"events": entries[:40], "window": window}
+
+
+# ---------------------------------------------------------- alerts
+# Prometheus Alertmanager cannot hold a session; it authorises with the
+# shared-secret X-Alert-Token instead. Each alert lands in the activity feed,
+# where warn/crit events also reach the phone through the watch module.
+
+@app.post("/api/alerts/webhook")
+async def alerts_webhook(request: Request):
+    # Alertmanager cannot send custom headers on a webhook, so the token rides
+    # in the standard Authorization header (Bearer); X-Alert-Token stays valid
+    # for other senders.
+    auth_header = request.headers.get("authorization", "")
+    provided = (request.headers.get("x-alert-token", "")
+                or (auth_header[7:] if auth_header.lower().startswith("bearer ") else ""))
+    if not alerts.verify(provided):
+        raise HTTPException(status_code=401, detail="invalid alert token")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON payload")
+    return alerts.ingest(payload)
+
+
+@app.get("/api/alerts/token", dependencies=[authed])
+def alerts_token():
+    return {"token": alerts.token()}
+
+
+@app.post("/api/alerts/token/rotate", dependencies=[authed])
+def alerts_token_rotate():
+    return {"token": alerts.rotate()}
 
 
 # ---------------------------------------------------------- fs browser
