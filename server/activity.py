@@ -42,6 +42,7 @@ CATEGORIES = {
     "network": "Network",
     "updates": "Updates & packages",
     "app": "PocketADM & AI",
+    "games": "Game servers",
 }
 
 

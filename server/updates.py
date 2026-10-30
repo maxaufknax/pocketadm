@@ -8,6 +8,7 @@ as a background job: pull with live progress, then recreate the containers.
 import asyncio
 import datetime
 import json
+import os
 import re
 import time
 
@@ -154,8 +155,13 @@ async def _registry_request(client: httpx.AsyncClient, method: str, url: str,
 
 
 async def remote_digest(client: httpx.AsyncClient, registry: str, repo: str, tag: str) -> str | None:
+    """The digest the registry would serve for the tag. "" when the registry
+    says it has no such public image (401/403/404 even with a pull token),
+    None when it could not be asked at all."""
     url = f"https://{registry}/v2/{repo}/manifests/{tag}"
     r = await _registry_request(client, "HEAD", url, ACCEPT, repo)
+    if r.status_code in (401, 403, 404):
+        return ""
     if r.status_code != 200:
         return None
     return r.headers.get("docker-content-digest")
@@ -185,16 +191,24 @@ def _looks_like_version(text: str) -> bool:
     return bool(re.match(r"^v?\d+(\.\d+)+([-.+][0-9A-Za-z.-]+)?$", (text or "").strip()))
 
 
+# Ubuntu stamps its own release ("24.04") into the OCI version label, and an
+# image built FROM it inherits that label unless it sets its own — Ollama then
+# reads as "version 24.04". Such a label says nothing about the app.
+_DISTRO_RELEASE = re.compile(r"^\d{2}\.(04|10)$")
+
+
 def image_version(image: str, labels: dict | None, env: list | None) -> str:
     """The app's own version, as precisely as the image tells it: its OCI
     version label, else the *_VERSION variable official images set
     (REDIS_VERSION, NGINX_VERSION, PG_VERSION …), else nothing."""
     labels = labels or {}
     label = (labels.get("org.opencontainers.image.version") or labels.get("version") or "").strip()
-    if _looks_like_version(label):
-        return label[:40]
     _, path, _ = parse_image_ref(image)
     name = path.split("/")[-1].lower()
+    if _DISTRO_RELEASE.match(label) and name != "ubuntu":
+        label = ""
+    if _looks_like_version(label):
+        return label[:40]
     wanted = set(_ENV_ALIASES.get(name, ())) | {re.sub(r"[^A-Z0-9]", "_", name.upper())}
     found: dict[str, str] = {}
     for item in env or []:
@@ -285,6 +299,60 @@ def _links_for(image: str) -> dict:
     return links
 
 
+# Official images (postgres, redis, nginx …) are rebuilt every week or two for
+# their base image, with the app's version unchanged. Offering each of those as
+# an update keeps the list from ever being empty, so a rebuild waits until the
+# installed image is this old, and is then offered as the routine refresh it is.
+REBUILD_AFTER_DAYS = 30
+SEEN_FILE = config.DATA_DIR / "updates_seen.json"
+
+
+def _hold_rebuild(entry: dict, running_behind: bool) -> None:
+    """A newer image with the same app version: a rebuild. It never carries the
+    "security" badge (the app did not change, so nothing says this update fixes
+    anything), and it is held back while the installed image is still young —
+    unless a newer image is already pulled and only the recreate is missing."""
+    entry["rebuild"] = True
+    entry["security"] = False
+    if not running_behind and (entry.get("age_days") or 0) < REBUILD_AFTER_DAYS:
+        entry["update_available"] = False
+        entry["rebuild_pending"] = True
+
+
+def _distinct_labels(results: list[dict]) -> None:
+    """Two images of the same software (redis:7-alpine and redis:alpine) would
+    show as two identical "Redis" rows; name them by the containers on them."""
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r["label"]] = counts.get(r["label"], 0) + 1
+    for r in results:
+        if counts[r["label"]] > 1 and r["used_by"]:
+            more = len(r["used_by"]) - 1
+            r["label"] = f"{r['label']} ({r['used_by'][0]}{f' +{more}' if more else ''})"
+
+
+def _note_pending_since(results: list[dict], now: float) -> None:
+    """Since when each update has been waiting — the image's age says how old
+    the installed image is, not how long its update has been around."""
+    try:
+        seen = json.loads(SEEN_FILE.read_text())
+    except (OSError, ValueError):
+        seen = {}
+    before = dict(seen)
+    for r in results:
+        if r.get("update_available"):
+            r["pending_since"] = seen.setdefault(r["image"], now)
+        elif not r.get("error"):
+            seen.pop(r["image"], None)
+    if seen != before:
+        try:
+            tmp = SEEN_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(seen))
+            tmp.replace(SEEN_FILE)
+        except OSError:
+            pass
+
+
 async def check_docker_updates(force: bool = False) -> list[dict]:
     now = time.time()
     if not force and _cache["result"] is not None and now - _cache["time"] < CACHE_TTL:
@@ -352,7 +420,12 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                     return
                 registry, repo, tag = parse_image_ref(image)
                 remote = await remote_digest(client, registry, repo, tag)
-                if remote is None:
+                if remote == "":
+                    # Docker's containerd image store gives locally built images
+                    # a digest too, so the missing digest above no longer marks
+                    # them — the registry not knowing the image does.
+                    entry["local_build"] = True
+                elif remote is None:
                     entry["error"] = "registry check failed"
                 else:
                     entry["current_digest"] = sorted(local_digests)[0][:19]
@@ -371,13 +444,18 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
                         latest = await remote_image_info(client, image)
                         entry["latest_version"] = latest.get("version", "")
                         entry["latest_created"] = latest.get("created", "")
+                        if entry["version"] and entry["latest_version"] == entry["version"]:
+                            _hold_rebuild(entry, running_behind)
             except Exception as e:
                 entry["error"] = str(e)[:200]
-            entry["priority"] = _classify_priority(meta, info_c["public"], entry["age_days"])
+            entry["priority"] = ("low" if entry.get("rebuild")
+                                 else _classify_priority(meta, info_c["public"], entry["age_days"]))
             results.append(entry)
 
         await asyncio.gather(*(check_one(img, inf) for img, inf in images.items()))
 
+    _distinct_labels(results)
+    _note_pending_since(results, now)
     prio_rank = {"high": 0, "medium": 1, "low": 2}
     results.sort(key=lambda x: (x["ignored"], not x["update_available"],
                                 prio_rank.get(x.get("priority", "low"), 2),
@@ -386,21 +464,78 @@ async def check_docker_updates(force: bool = False) -> list[dict]:
     return results
 
 
-async def check_apt_updates() -> dict:
-    """Host package updates — only meaningful when running natively on the host."""
+_apt_cache: dict = {"time": 0, "result": None}
+APT_TTL = 1800
+
+
+def parse_apt_list(text: str) -> list[dict]:
+    """`apt list --upgradable` → packages; one from a *-security pocket is a
+    security update."""
+    pkgs = []
+    for line in text.splitlines():
+        m = re.match(r"([^/\s]+)/(\S+)\s+(\S+)\s+\S+\s+\[upgradable from:\s*([^\]]+)\]", line)
+        if m:
+            pkgs.append({"package": m.group(1), "new": m.group(3), "current": m.group(4),
+                         "security": "-security" in m.group(2)})
+    return pkgs
+
+
+def _host_file(path: str) -> str:
+    """A small file of the host, through the /host mount ("" if unreadable)."""
+    from . import hostrun
     try:
-        proc = await asyncio.create_subprocess_shell(
-            "apt list --upgradable 2>/dev/null | tail -n +2",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(proc.communicate(), 30)
-        pkgs = []
-        for line in out.decode().splitlines():
-            m = re.match(r"([^/]+)/\S+\s+(\S+)\s+\S+\s+\[upgradable from:\s*([^\]]+)\]", line)
-            if m:
-                pkgs.append({"package": m.group(1), "new": m.group(2), "current": m.group(3)})
-        return {"available": True, "packages": pkgs}
+        with open(hostrun.HOST + path, errors="replace") as fh:
+            return fh.read(20000)
+    except OSError:
+        return ""
+
+
+def apt_automation() -> dict:
+    """What the host does about package updates on its own: unattended
+    security upgrades (and when they last ran) and a reboot it is waiting for."""
+    from . import hostrun
+    conf = "\n".join(_host_file(f"/etc/apt/apt.conf.d/{name}")
+                     for name in ("20auto-upgrades", "10periodic", "02periodic"))
+    auto = (bool(re.search(r'APT::Periodic::Unattended-Upgrade\s+"?[1-9]', conf))
+            and os.path.exists(hostrun.HOST + "/usr/bin/unattended-upgrade"))
+    try:
+        last = os.path.getmtime(hostrun.HOST + "/var/log/unattended-upgrades/unattended-upgrades.log")
+    except OSError:
+        last = None
+    reboot = os.path.exists(hostrun.HOST + "/run/reboot-required")
+    pkgs = _host_file("/run/reboot-required.pkgs").split() if reboot else []
+    return {"auto_security": auto, "last_auto_run": last if auto else None,
+            "reboot_required": reboot, "reboot_packages": sorted(set(pkgs))[:20]}
+
+
+async def check_apt_updates(force: bool = False) -> dict:
+    """Package updates of the host — not of this container, whose own apt knows
+    nothing about the host. In Docker, read with the host's apt through one
+    throwaway helper (cached for half an hour); natively, apt is the host's."""
+    from . import hostrun
+    now = time.time()
+    if not force and _apt_cache["result"] is not None and now - _apt_cache["time"] < APT_TTL:
+        return _apt_cache["result"]
+    on_host = hostrun.available()
+    try:
+        if on_host:
+            rc, out = await hostrun.run("apt list --upgradable 2>/dev/null", timeout=60)
+            if rc != 0:
+                raise RuntimeError(out[-200:])
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                "apt list --upgradable 2>/dev/null",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            raw, _ = await asyncio.wait_for(proc.communicate(), 30)
+            out = raw.decode(errors="replace")
     except Exception:
         return {"available": False, "packages": []}
+    pkgs = parse_apt_list(out)
+    result = {"available": True, "packages": pkgs,
+              "security": sum(1 for p in pkgs if p["security"]), "checked": now,
+              **(apt_automation() if on_host else {})}
+    _apt_cache.update(time=now, result=result)
+    return result
 
 
 def start_update_job(image: str, recreate: bool = True) -> jobs.Job:

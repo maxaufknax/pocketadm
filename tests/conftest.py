@@ -12,6 +12,13 @@ import tempfile
 _TMP = tempfile.mkdtemp(prefix="pocketadm-tests-")
 os.environ["HELMSMAN_DATA"] = _TMP
 os.environ.pop("ADMIN_PASSWORD", None)  # let tests drive the password explicitly
+# Provider keys from the developer's own environment (e.g. MISTRAL_API_KEY
+# in a local shell) would leak into the engine defaults and key handling:
+# the suite must run the same on a laptop as in CI.
+for _k in ("AI_API_KEY", "AI_PROVIDER", "AI_MODEL", "AI_BASE_URL",
+           "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+           "MISTRAL_API_KEY", "GEMINI_API_KEY"):
+    os.environ.pop(_k, None)
 
 import pytest
 

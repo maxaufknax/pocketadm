@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from . import accounts, activity, agents, ai, audit, channel, config, engines, push
+from . import accounts, activity, agents, ai, audit, channel, config, engines, probes, push
 
 STATE_FILE = config.DATA_DIR / "watch_state.json"
 
@@ -58,15 +58,18 @@ DEFAULTS = {
     "matrix_homeserver": "",
     "matrix_room": "",
     "matrix_token": "",          # secret: never sent back to a client
+    "sites": "",                 # public sites to check (probes.py); "" = the proxy's TLS sites
     "paused_until": 0,
     "mutes": [],                 # [{"topic", "until", "note"}]
 }
 IMPORTANCE = ("critical", "important", "info")
 STATUS_OF = {"critical": "crit", "important": "warn", "info": "info"}
 RANK = {"info": 0, "important": 1, "critical": 2}
-REPEAT_WINDOW = 12 * 3600
+REPEAT_WINDOW = 24 * 3600        # the same thing again only after a day, unless it got worse
+CRITICAL_REPEAT = 6 * 3600
 DEBOUNCE = 180                   # seconds of collecting related events before a look
 MAX_STEPS = 10
+MAX_LOOKS = 12                   # commands and file reads per run: one thing thoroughly
 
 LENSES = [
     "containers: crashes, restarts, unhealthy services and error bursts in their logs",
@@ -209,8 +212,57 @@ def muted(s: dict, topic: str, now: float | None = None) -> bool:
                for m in s.get("mutes") or [] if m.get("topic"))
 
 
+# Words that say how a thing is, not which thing it is: "backup-missing" and
+# "backup-failed" are one topic.
+_TOPIC_NOISE = {"pending", "missing", "fail", "failed", "failure", "failing", "down", "up", "back",
+                "inactive", "error", "errors", "issue", "problem", "warning", "alert", "still",
+                "again", "new", "fixed", "ok", "resolved", "expired", "expiring", "slow", "high",
+                "low", "full", "and", "or", "the", "of", "on", "for", "in", "at", "to", "is",
+                "not", "no", "now", "today"}
+# Things that are one subject however the model words them: two messages about
+# updates (images or packages) the same day are one too many.
+_TOPIC_FAMILIES = (
+    {"update", "upgrade", "patch", "apt", "package"},
+    {"cert", "certificate", "tls", "ssl", "letsencrypt", "acme", "renewal", "renew", "challenge"},
+    {"backup", "backups", "mirror", "snapshot"},
+    {"dns", "dyndns", "desec", "dyn"},
+)
+
+
+def _topic_words(topic: str) -> set[str]:
+    words = set()
+    for w in re.split(r"[^a-z0-9]+", (topic or "").lower()):
+        if not w or w in _TOPIC_NOISE or w.isdigit():
+            continue
+        words.add(w[:-1] if len(w) > 4 and w.endswith("s") else w)
+    return words
+
+
+def same_topic(a: str, b: str) -> bool:
+    """Whether two topic keys name the same thing. The model makes up a key per
+    message ("updates-pending", "docker-image-updates-pending"); compared
+    literally, the same news went out again and again under new names."""
+    a, b = (a or "").strip().lower(), (b or "").strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    wa, wb = _topic_words(a), _topic_words(b)
+    if not wa or not wb:
+        return False
+    if any(wa & family and wb & family for family in _TOPIC_FAMILIES):
+        return True
+    common = wa & wb
+    if not common:
+        return False
+    if min(len(wa), len(wb)) >= 2 and (wa <= wb or wb <= wa):
+        return True
+    return len(common) / len(wa | wb) >= 0.6
+
+
 def may_send(s: dict, state: dict, importance: str, topic: str,
-             now: float | None = None) -> tuple[bool, str]:
+             now: float | None = None, kind: str = "observe",
+             resolves: bool = False) -> tuple[bool, str]:
     """Whether a message may go out now, and why not."""
     now = now or time.time()
     if importance not in IMPORTANCE:
@@ -221,14 +273,21 @@ def may_send(s: dict, state: dict, importance: str, topic: str,
         return False, "muted topic"
     if importance != "critical" and in_quiet_hours(s, now):
         return False, "quiet hours"
+    week = [m for m in state.get("sent", [])
+            if now - m["t"] < 7 * 86400 and not m.get("resolves") and same_topic(m.get("topic"), topic)]
+    # an all-clear closes something the user was told about — it is never a repeat
+    if resolves and any(RANK.get(m.get("importance"), 0) >= RANK["important"] for m in week):
+        return True, ""
     limit = {"info": s["info_per_day"], "important": s["important_per_day"]}.get(importance)
     if limit is not None and sent_today(state, s, importance, now) >= limit:
         return False, "daily limit"
-    for m in reversed(state.get("sent", [])):
-        if now - m["t"] > REPEAT_WINDOW:
-            break
-        if topic and m.get("topic") == topic and RANK[importance] <= RANK.get(m.get("importance"), 0):
+    if week and RANK[importance] <= RANK.get(week[-1].get("importance"), 0):
+        if now - week[-1]["t"] < (CRITICAL_REPEAT if importance == "critical" else REPEAT_WINDOW):
             return False, "said that already"
+        # a state that stays the same is worth two mentions a week, not one a day;
+        # a new incident is news again
+        if kind == "observe" and importance != "critical" and len(week) >= 2:
+            return False, "reminded twice this week"
     return True, ""
 
 
@@ -305,12 +364,37 @@ the cause in a few words, then — only if needed — the one thing to do. Comma
 detail field — the user opens it when they want more. Never repeat the message there.
 - Concrete numbers, times and comparisons ("since 14:20", "three times the usual") instead of \
 vague words.
+- Times in the user's local time ({timezone}): "since 14:20", never "since 12:20 UTC".
 - Vary how you start and phrase things; do not repeat what the user already knows.
-- Honest: only facts from your tools and the context below. Mark guesses as guesses. Never invent \
-numbers.
+
+Facts:
+- Every number, time, version, package, CVE, domain and path you mention comes from your tools \
+or the context below, in this run. Never invent a CVE number, a release note or a version; if \
+nothing you saw says an update fixes a security issue, do not say it does.
+- Never say something was changed, fixed, restarted or installed unless a tool output in this \
+run shows it. You cannot change anything yourself.
+- Check before you call something broken: a service that ran and ended is not a failed service, \
+an error line in a log is not an outage while the site answers, a certificate renewal error is \
+not an expired certificate while the served certificate has days left.
+- Compare disk space in free GB: tools compute the percentage differently (df leaves out \
+reserved blocks), so 81 % in one place and 86 % in another can be the same disk.
+- Mark guesses as guesses. When unsure, look once more or stay silent.
+
+Normal on a Linux server, no message:
+- A systemd service started by a timer shows "inactive (dead)" between runs, with \
+"status=0/SUCCESS": it did its job and ended. That is how oneshot services look.
+- Official images (postgres, redis, nginx …) are rebuilt every week or two with the same app \
+version: routine, not a security update. "security-sensitive" in the update list means the \
+software matters for security, not that its update fixes anything.
+- With unattended upgrades on, Ubuntu installs security updates by itself every morning; pending \
+packages are then the next morning's routine, not a to-do.
+- Scanners probing /.env, /wp-login or /phpmyadmin are background noise unless one got a real \
+answer.
 
 You can only look, never change anything. If something needs doing, name the exact step or \
-command the user can run — or suggest asking PocketADM's assistant to do it.
+command the user can run — or suggest asking PocketADM's assistant to do it. Only suggest a \
+command you are sure fits this server: image updates are applied in the app under Updates (with \
+a snapshot to undo them), never with apt.
 """
 
 KIND_PROMPTS = {
@@ -323,6 +407,10 @@ developments (a trend with a forecast like "the disk is full in about six weeks"
 using far more resources than before); now and then something genuinely useful.
 Not worth a message: the normal state ("everything is fine"), things you already reported \
 without anything new, states the user told you are intentional, scanner noise that got nowhere.
+When something important you reported in the last days is resolved now, one short all-clear is \
+worth it: say what is fine again and since when, with resolves set to true and the topic key of \
+your earlier message. Only for a thing that is fully fine again — progress or news on it is no \
+all-clear, and an all-clear carries no other topic.
 
 The focus suggestion is there for variety — if something more important is going on elsewhere, \
 follow that. Rather one thing thoroughly than everything superficially. Most rounds end silent, \
@@ -348,7 +436,8 @@ well, say so in one or two sentences with one concrete detail that shows you loo
 DECISION_TEXT = """
 When you are done, end your reply with exactly one line of JSON and nothing after it:
 {"decision": "notify" or "silent", "importance": "critical" or "important" or "info", \
-"topic": "<short-topic-key like disk-root or nextcloud-down>", \
+"topic": "<short-topic-key like disk-root or nextcloud-down; the same key as an earlier message \
+about the same thing>", "resolves": true or false, \
 "title": "<at most 6 words>", "message": "<the message: one to three short sentences>", \
 "detail": "<optional background, or empty>", "remember": "<optional note for your future \
 self, or empty>"}
@@ -366,7 +455,11 @@ DECISION_TOOLS = [
                                                      "when the message says it all."},
          "importance": {"type": "string", "enum": list(IMPORTANCE)},
          "topic": {"type": "string", "description": "Short topic key, e.g. disk-root, backup, "
-                                                    "nextcloud-down"},
+                                                    "nextcloud-down. About something you wrote "
+                                                    "before: the same key as then."},
+         "resolves": {"type": "boolean", "description": "True only when the message is an "
+                                                        "all-clear: something you reported "
+                                                        "earlier is completely fine again."},
          "title": {"type": "string", "description": "At most 6 words."}},
          "required": ["text", "importance", "topic"]}},
     {"name": "stay_silent",
@@ -387,7 +480,8 @@ async def context_text(kind: str, incidents: list[dict]) -> str:
     """What the agent should not have to rediscover: a cheap picture of the
     server, what was already said, and what the user asked for."""
     from . import dockerapi, metrics, reports, sysinfo, updates
-    parts: list[str] = []
+    parts: list[str] = [_time_line()]
+    state = load_state()
     try:
         snap = await asyncio.to_thread(sysinfo.snapshot)
         parts.append(f"Now: CPU {snap['cpu_percent']}%, memory {snap['memory']['percent']}%, "
@@ -424,13 +518,23 @@ async def context_text(kind: str, incidents: list[dict]) -> str:
                      f"/{len(containers)} running" + (f"; not healthy: {', '.join(bad[:12])}" if bad else ""))
     except Exception:
         pass
+    parts.extend(probes.context_lines(state, _clock))
     try:
-        ups = [u for u in await updates.check_docker_updates()
-               if u["update_available"] and not u["ignored"]]
+        found = await updates.check_docker_updates()
+        ups = [u for u in found if u["update_available"] and not u["ignored"]]
         if ups:
-            parts.append("Pending image updates: " + ", ".join(
-                f"{u['label']} ({u.get('priority', 'low')}, {u.get('age_days') or '?'} days old)"
-                for u in ups[:15]))
+            parts.append("Image updates waiting (the app's Updates screen shows the same list): "
+                         + "; ".join(_update_line(u) for u in ups[:15])
+                         + ". \"security-sensitive\" describes the software, not the update.")
+        held = [u["label"] for u in found if u.get("rebuild_pending") and not u["ignored"]]
+        if held:
+            parts.append(f"Not offered yet: {len(held)} rebuilt images with an unchanged version "
+                         f"({', '.join(held[:8])}); the app offers them once the installed image "
+                         f"is {updates.REBUILD_AFTER_DAYS} days old.")
+    except Exception:
+        pass
+    try:
+        parts.append(_packages_line(await updates.check_apt_updates()))
     except Exception:
         pass
     try:
@@ -451,12 +555,12 @@ async def context_text(kind: str, incidents: list[dict]) -> str:
         parts.append("EVENTS TO INVESTIGATE:\n" + "\n".join(
             f"- {_clock(e.get('t') or time.time())} [{e.get('severity')}] {e.get('title')}"
             + (f" — {e.get('detail')}" if e.get('detail') else "") for e in incidents[-20:]))
-    state = load_state()
-    sent = state.get("sent", [])[-10:]
+    sent = [m for m in state.get("sent", []) if time.time() - m["t"] < 7 * 86400][-12:]
     if sent:
-        parts.append("What you already told the user recently (do not repeat without news):\n"
-                     + "\n".join(f"- {_ago(m['t'])}: [{m.get('importance')}] {m.get('topic')}: "
-                                 f"{m.get('text', '')[:160]}" for m in sent))
+        parts.append("What you told the user in the last 7 days. Do not repeat it without news; "
+                     "about the same thing, use the same topic key:\n"
+                     + "\n".join(f"- {_ago(m['t'])}: [{m.get('importance')}] topic "
+                                 f"{m.get('topic')}: {m.get('text', '')[:160]}" for m in sent))
     s = settings()
     mutes = [m for m in s.get("mutes") or [] if m.get("until", 0) > time.time()]
     if mutes:
@@ -473,6 +577,68 @@ async def context_text(kind: str, incidents: list[dict]) -> str:
     if s.get("knowledge"):
         parts.append("What the user wants you to know about this server:\n" + s["knowledge"])
     return "\n\n".join(parts)
+
+
+def _server_timezone() -> str:
+    from . import hostrun
+    for path in (hostrun.HOST + "/etc/timezone", "/etc/timezone"):
+        try:
+            with open(path) as fh:
+                name = fh.read().strip()
+            if name:
+                return name
+        except OSError:
+            continue
+    return time.tzname[0] or "UTC"
+
+
+def _time_line() -> str:
+    """The user's clock and the server's: logs speak UTC, the user does not."""
+    s = settings()
+    local = local_now(s)
+    offset = local.strftime("%z")
+    zone = (f"{s['timezone']}, UTC{offset[:3]}:{offset[3:]}" if s.get("timezone") and offset
+            else "the server's time zone")
+    return (f"It is {local.strftime('%A %d.%m. %H:%M')} for the user ({zone}). The server's clock "
+            f"and log files run on {_server_timezone()}; the output of run_command is already in "
+            f"the user's time.")
+
+
+def _update_line(u: dict) -> str:
+    version, new = u.get("version") or "", u.get("latest_version") or ""
+    change = (f"rebuilt image, same version {version}" if u.get("rebuild")
+              else f"{version} → {new}" if version and new and new != version
+              else f"newer build of the {u.get('tag') or 'latest'} tag")
+    bits = [change]
+    if u.get("security"):
+        bits.append("security-sensitive")
+    if u.get("pending_since"):
+        bits.append(f"waiting since {_day(u['pending_since'])}")
+    if u.get("used_by"):
+        bits.append("runs " + ", ".join(u["used_by"][:3]))
+    return f"{u['label']} ({'; '.join(bits)})"
+
+
+def _packages_line(apt: dict) -> str:
+    if not apt.get("available"):
+        return "Host packages: could not be read."
+    pkgs = apt.get("packages") or []
+    sec = [p["package"] for p in pkgs if p.get("security")]
+    line = f"Host packages (apt on the host): {len(pkgs)} upgradable"
+    if sec:
+        line += f", {len(sec)} of them security updates ({', '.join(sec[:6])})"
+    if apt.get("auto_security"):
+        line += ("; unattended upgrades are on and install security updates by themselves every "
+                 "morning" + (f", last run {_clock(apt['last_auto_run'])}"
+                              if apt.get("last_auto_run") else ""))
+    elif "auto_security" in apt:
+        line += "; unattended upgrades are off"
+    if apt.get("reboot_required"):
+        line += "; the host waits for a reboot" + (
+            f" ({', '.join(apt['reboot_packages'][:4])})" if apt.get("reboot_packages") else "")
+    elif "reboot_required" in apt:
+        line += "; no reboot pending"
+    return line + "."
 
 
 def _ago(t: float) -> str:
@@ -492,10 +658,15 @@ def _day(t: float) -> str:
     return local_now(settings(), t).strftime("%d.%m.")
 
 
-def system_prompt(kind: str, engine: bool) -> str:
+def _system_text() -> str:
     s = settings()
     language = LANGUAGES.get((s.get("lang") or "en")[:2].lower(), s.get("lang") or "English")
-    text = SYSTEM.format(language=f"Write in {language}") + "\n" + KIND_PROMPTS[kind]
+    return SYSTEM.format(language=f"Write in {language}",
+                         timezone=s.get("timezone") or "the server's time zone")
+
+
+def system_prompt(kind: str, engine: bool) -> str:
+    text = _system_text() + "\n" + KIND_PROMPTS[kind]
     if engine:
         text += "\n" + DECISION_TEXT
     else:
@@ -524,10 +695,31 @@ def parse_decision(text: str) -> dict:
     return {"decision": decision,
             "importance": importance if importance in IMPORTANCE else "info",
             "topic": str(data.get("topic") or "general")[:60],
+            "resolves": str(data.get("resolves", "")).lower() in ("true", "1", "yes"),
             "title": str(data.get("title") or "")[:80],
             "text": str(data.get("message") or "").strip(),
             "detail": str(data.get("detail") or "").strip(),
             "remember": str(data.get("remember") or "")[:300]}
+
+
+_CVE = re.compile(r"CVE-\d{4}-\d{4,7}", re.I)
+
+
+def unverified_claims(text: str, sources: str) -> list[str]:
+    """CVE numbers a message names that appear nowhere in what the watch was
+    shown or read in this run — made up, like the "CVE-2026-12345 (auth bypass)"
+    a small model once attached to a routine Synapse update."""
+    known = {c.upper() for c in _CVE.findall(sources or "")}
+    return sorted({c.upper() for c in _CVE.findall(text or "")} - known)
+
+
+def _in_local_time(name: str, args: dict) -> dict:
+    """A command the watch runs sees the user's time zone, so journalctl,
+    systemctl and date print the times the user lives in instead of UTC."""
+    tz = settings().get("timezone") or ""
+    if name == "run_command" and re.fullmatch(r"[A-Za-z][A-Za-z0-9_+\-/]{1,40}", tz):
+        return {**args, "command": f"export TZ={tz}; {args.get('command') or ''}"}
+    return args
 
 
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍⌀-⏿]")
@@ -549,19 +741,27 @@ def title_of(decision: dict) -> str:
     return (first[:77] + "…") if len(first) > 78 else first
 
 
-async def _run_api(route: dict, kind: str, prompt: str, trace: list) -> tuple[dict, float]:
+async def _run_api(route: dict, kind: str, prompt: str, trace: list,
+                   seen: list | None = None) -> tuple[dict, float]:
     """A run on an API provider or a local model: read-only tools plus the
-    decision tools, like Hermes."""
+    decision tools, like Hermes. Every tool output lands in `seen`, in full,
+    for checking the message against it."""
     cfg = ai._cfg_for(route["provider"], route["model"])
     messages: list[dict] = [{"role": "user", "content": prompt}]
-    usage = {"input": 0, "output": 0}
+    usage = {"input": 0, "output": 0, "cache_read": 0}
     decision: dict | None = None
-    tools = READ_TOOLS + DECISION_TOOLS
     sysprompt = system_prompt(kind, engine=False)
     final_text = ""
+    looks = 0
     for step in range(MAX_STEPS):
+        last = step == MAX_STEPS - 1
+        if last and messages[-1]["role"] == "tool":
+            # a careful model keeps looking; the round still has to end in a decision
+            messages.append({"role": "user", "content": "That is enough looking. Decide now: "
+                                                        "notify or stay_silent."})
         text_parts, calls, blocks = [], [], []
-        async for what, payload in ai.get_stream(cfg, messages, sysprompt, tools):
+        async for what, payload in ai.get_stream(cfg, messages, sysprompt,
+                                                 DECISION_TOOLS if last else READ_TOOLS + DECISION_TOOLS):
             if what == "text":
                 text_parts.append(payload)
             elif what == "tool_call":
@@ -571,6 +771,7 @@ async def _run_api(route: dict, kind: str, prompt: str, trace: list) -> tuple[di
             elif what == "usage":
                 usage["input"] += payload["input"]
                 usage["output"] += payload["output"]
+                usage["cache_read"] += payload.get("cache_read", 0)
         msg: dict = {"role": "assistant", "content": "".join(text_parts), "tool_calls": calls}
         if blocks:
             msg["thinking_blocks"] = blocks
@@ -589,6 +790,7 @@ async def _run_api(route: dict, kind: str, prompt: str, trace: list) -> tuple[di
                             "detail": str(args.get("detail", "")),
                             "importance": args.get("importance", "info"),
                             "topic": str(args.get("topic") or "general")[:60],
+                            "resolves": args.get("resolves") in (True, "true", "True"),
                             "title": str(args.get("title") or "")[:80]}
                 out = "sent"
             elif name == "stay_silent":
@@ -597,31 +799,41 @@ async def _run_api(route: dict, kind: str, prompt: str, trace: list) -> tuple[di
             elif name == "remember":
                 _remember(str(args.get("text", "")))
                 out = "noted"
+            elif looks >= MAX_LOOKS:
+                out = "[enough looking for this round: decide with what you have]"
             elif agents.sentinel_may_run(name, args):
+                looks += 1
                 t0 = time.time()
-                out = await ai.execute_tool(name, args, ai.DEFAULT_WORKDIR)
+                out = await ai.execute_tool(name, _in_local_time(name, args), ai.DEFAULT_WORKDIR)
                 trace.append({"tool": name, "detail": agents._args_summary(name, args),
                               "output": str(out)[:400], "ms": int((time.time() - t0) * 1000)})
+                if seen is not None:
+                    seen.append(str(out))
             else:
                 out = agents.SENTINEL_BLOCKED
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(out)})
         if decision:
             break
-    cost = ai.estimate_cost(cfg["provider"], cfg["model"], usage["input"], usage["output"]) or 0.0
-    ai._persist_usage(cfg, usage, cost)
+    cost = ai.estimate_cost(cfg["provider"], cfg["model"], usage["input"], usage["output"],
+                            usage["cache_read"]) or 0.0
+    ai._persist_usage(cfg, {"input": usage["input"] + usage["cache_read"],
+                            "output": usage["output"]}, cost)
     if not decision:
         decision = parse_decision(final_text) if final_text else {"decision": "silent",
                                                                   "reason": "no decision"}
     return decision, cost
 
 
-async def _run_engine(route: dict, kind: str, prompt: str, trace: list) -> tuple[dict, float]:
+async def _run_engine(route: dict, kind: str, prompt: str, trace: list,
+                      seen: list | None = None) -> tuple[dict, float]:
     """A run on a subscription: the CLI investigates in plan mode (it may look,
     never change) and ends with the decision as a line of JSON."""
     result = await engines.run_headless(
         route["provider"], system_prompt(kind, engine=True) + "\n\n" + prompt,
         model=route.get("model", ""), mode="plan", timeout=900)
     trace.extend(result.get("steps", [])[:30])
+    if seen is not None:
+        seen.extend(str(step.get("output", "")) for step in result.get("steps", []))
     decision = parse_decision(result.get("text", ""))
     if decision.get("remember"):
         _remember(decision["remember"])
@@ -689,7 +901,8 @@ async def deliver(decision: dict, kind: str, trace: list, state: dict, s: dict) 
                       steps=_steps_for_channel(trace))
     state.setdefault("sent", []).append({"t": time.time(), "importance": importance,
                                          "topic": topic, "text": text[:300], "id": notif["id"],
-                                         "message": msg["id"]})
+                                         "message": msg["id"],
+                                         "resolves": bool(decision.get("resolves"))})
     activity.push("app", "watch.message", "Watch: " + title, detail=text[:300],
                   severity={"critical": "crit", "important": "warn"}.get(importance, "info"),
                   source="watch")
@@ -759,6 +972,8 @@ async def run(kind: str = "observe", incidents: list[dict] | None = None,
         return record
     _running = True
     trace: list = []
+    seen: list = []
+    prompt = ""
     try:
         lens = LENSES[int(time.time() // 3600) % len(LENSES)]
         prompt = (f"{'Round' if kind == 'observe' else kind.capitalize()} at "
@@ -767,7 +982,7 @@ async def run(kind: str = "observe", incidents: list[dict] | None = None,
                   + "\n\nWhat PocketADM already knows:\n" + await context_text(kind, incidents or []))
         engine = route["provider"] in engines.ENGINES
         runner = _run_engine if engine else _run_api
-        decision, cost = await asyncio.wait_for(runner(route, kind, prompt, trace), 1200)
+        decision, cost = await asyncio.wait_for(runner(route, kind, prompt, trace, seen=seen), 1200)
     except Exception as e:  # noqa: BLE001 — recorded and shown on the watch screen
         record.update(decision="error", error=f"{type(e).__name__}: {str(e)[:300]}")
         state = load_state()
@@ -783,14 +998,26 @@ async def run(kind: str = "observe", incidents: list[dict] | None = None,
         decision["decision"] = "notify"
     if decision.get("decision") == "notify" and decision.get("text"):
         importance = decision.get("importance", "info")
-        allowed, why = (True, "") if kind == "test" else may_send(s, state, importance,
-                                                                  decision.get("topic", ""))
+        invented = unverified_claims(decision.get("text", "") + " " + decision.get("detail", ""),
+                                     prompt + "\n" + "\n".join(seen))
+        if invented:
+            allowed, why = False, "unverified " + ", ".join(invented[:3])
+        elif kind == "test":
+            allowed, why = True, ""
+        else:
+            allowed, why = may_send(s, state, importance, decision.get("topic", ""), kind=kind,
+                                    resolves=bool(decision.get("resolves")))
         if allowed:
             notif = await deliver(decision, kind, trace, state, s)
             record.update(decision="notify", importance=importance,
                           topic=decision.get("topic"), notification=notif["id"])
             audit.record("watch_message", target=decision.get("topic", ""), source="watch",
                          detail=title_of(decision), status=STATUS_OF.get(importance, "info"))
+            # an outage the user was told about gets its all-clear once the site answers
+            for event in incidents or []:
+                site = (state.get("sites") or {}).get(event.get("target") or "")
+                if event.get("kind") == "site.down" and site and site.get("down_since"):
+                    site["announced"] = True
         else:
             record.update(decision="held", reason=why, topic=decision.get("topic"),
                           importance=importance)
@@ -883,11 +1110,9 @@ def _conversation_text(limit: int = 16) -> str:
 
 async def _chat_api(route: dict, prompt: str, trace: list) -> tuple[str, float]:
     cfg = ai._cfg_for(route["provider"], route["model"])
-    s = settings()
-    language = LANGUAGES.get((s.get("lang") or "en")[:2].lower(), s.get("lang") or "English")
-    sysprompt = SYSTEM.format(language=f"Write in {language}") + "\n" + CHAT_PROMPT
+    sysprompt = _system_text() + "\n" + CHAT_PROMPT
     messages: list[dict] = [{"role": "user", "content": prompt}]
-    usage = {"input": 0, "output": 0}
+    usage = {"input": 0, "output": 0, "cache_read": 0}
     tools = READ_TOOLS + CHAT_TOOLS
     answer = ""
     for _ in range(MAX_STEPS):
@@ -902,6 +1127,7 @@ async def _chat_api(route: dict, prompt: str, trace: list) -> tuple[str, float]:
             elif what == "usage":
                 usage["input"] += payload["input"]
                 usage["output"] += payload["output"]
+                usage["cache_read"] += payload.get("cache_read", 0)
         msg: dict = {"role": "assistant", "content": "".join(text_parts), "tool_calls": calls}
         if blocks:
             msg["thinking_blocks"] = blocks
@@ -917,23 +1143,23 @@ async def _chat_api(route: dict, prompt: str, trace: list) -> tuple[str, float]:
                 trace.append({"tool": name, "detail": agents._args_summary(name, args), "output": out})
             elif agents.sentinel_may_run(name, args):
                 t0 = time.time()
-                out = await ai.execute_tool(name, args, ai.DEFAULT_WORKDIR)
+                out = await ai.execute_tool(name, _in_local_time(name, args), ai.DEFAULT_WORKDIR)
                 trace.append({"tool": name, "detail": agents._args_summary(name, args),
                               "output": str(out)[:400], "ms": int((time.time() - t0) * 1000)})
             else:
                 out = agents.SENTINEL_BLOCKED
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(out)})
-    cost = ai.estimate_cost(cfg["provider"], cfg["model"], usage["input"], usage["output"]) or 0.0
-    ai._persist_usage(cfg, usage, cost)
+    cost = ai.estimate_cost(cfg["provider"], cfg["model"], usage["input"], usage["output"],
+                            usage["cache_read"]) or 0.0
+    ai._persist_usage(cfg, {"input": usage["input"] + usage["cache_read"],
+                            "output": usage["output"]}, cost)
     return answer, cost
 
 
 async def _chat_engine(route: dict, prompt: str, trace: list) -> tuple[str, float]:
-    s = settings()
-    language = LANGUAGES.get((s.get("lang") or "en")[:2].lower(), s.get("lang") or "English")
     result = await engines.run_headless(
         route["provider"],
-        SYSTEM.format(language=f"Write in {language}") + "\n" + CHAT_PROMPT + "\n" + ENGINE_CHAT_TEXT
+        _system_text() + "\n" + CHAT_PROMPT + "\n" + ENGINE_CHAT_TEXT
         + "\n\n" + prompt, model=route.get("model", ""), mode="plan", timeout=600)
     trace.extend(result.get("steps", [])[:30])
     text = result.get("text", "")
@@ -1070,6 +1296,8 @@ async def tick(now: float | None = None) -> str | None:
         save_state(state)
     except Exception:
         pass
+    await _look_at_sites(state, now, s)
+    state = load_state()
     incidents = state.get("incidents") or []
     if incidents and now - state.get("first_incident_at", now) >= DEBOUNCE:
         state["incidents"], state["first_incident_at"] = [], 0
@@ -1102,6 +1330,64 @@ async def tick(now: float | None = None) -> str | None:
         await run("observe")
         return "observe"
     return None
+
+
+async def _look_at_sites(state: dict, now: float, s: dict) -> None:
+    """The site checks (probes.py), when they are due: record what changed, and
+    send the all-clear for an outage the user was told about."""
+    try:
+        looked = await probes.tick(state, now)
+    except Exception:
+        return
+    save_state(state)
+    # recorded only now: a warning goes to note_event, which writes the same file
+    for e in looked["events"]:
+        activity.push(e["category"], e["kind"], e["title"], detail=e.get("detail", ""),
+                      severity=e["severity"], target=e.get("target", ""), source="probe")
+    if looked["back"] and s.get("paused_until", 0) <= now:
+        state = load_state()
+        await deliver(all_clear(looked["back"], s), "resolved", [], state, s)
+        save_state(state)
+
+
+ALL_CLEAR = {
+    "de": {"one": "{sites} ist wieder erreichbar", "many": "{sites} sind wieder erreichbar",
+           "lasted": "der Ausfall dauerte {lasted} (seit {since} Uhr)", "and": "und",
+           "more": "{n} weitere", "title": "Wieder erreichbar",
+           "minutes": ("Minute", "Minuten"), "hours": ("Stunde", "Stunden")},
+    "en": {"one": "{sites} is reachable again", "many": "{sites} are reachable again",
+           "lasted": "it was down for {lasted} (since {since})", "and": "and",
+           "more": "{n} more", "title": "Reachable again",
+           "minutes": ("minute", "minutes"), "hours": ("hour", "hours")},
+}
+
+
+def _duration(seconds: float, words: dict) -> str:
+    minutes = max(1, round(seconds / 60))
+    hours, rest = divmod(minutes, 60)
+    if not hours:
+        return f"{minutes} {words['minutes'][minutes != 1]}"
+    return f"{hours} {words['hours'][hours != 1]}" + (
+        f" {rest} {words['minutes'][rest != 1]}" if rest else "")
+
+
+def all_clear(back: list[dict], s: dict) -> dict:
+    """The message that closes an outage: written here, not by the model — it
+    only has to say which sites answer again and how long they were gone."""
+    words = ALL_CLEAR.get((s.get("lang") or "en")[:2].lower(), ALL_CLEAR["en"])
+    hosts = [b["host"] for b in back]
+    if len(hosts) == 1:
+        names = hosts[0]
+    elif len(hosts) <= 3:
+        names = f"{', '.join(hosts[:-1])} {words['and']} {hosts[-1]}"
+    else:
+        names = f"{', '.join(hosts[:2])} {words['and']} {words['more'].format(n=len(hosts) - 2)}"
+    since = local_now(s, min(b["since"] for b in back)).strftime("%H:%M")
+    text = ((words["one"] if len(hosts) == 1 else words["many"]).format(sites=names) + " – "
+            + words["lasted"].format(lasted=_duration(max(b["lasted"] for b in back), words),
+                                     since=since) + ".")
+    return {"text": text, "title": words["title"], "importance": "info", "topic": "sites-back",
+            "resolves": True}
 
 
 async def _scheduler() -> None:

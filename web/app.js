@@ -842,15 +842,19 @@ function showView(name) {
   $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "view-" + name));
   // Settings has no tab of its own, so it leaves Home lit: it is a page you
   // pushed from there and will come back to, which is what the tab should say.
-  const tabFor = name === "settings" ? "home" : name;
+  const tabFor = (name === "settings" || name === "watch") ? "home" : name;
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === tabFor));
   // The topbar belongs to Home and Settings — the two views the push/pop moves
   // between, which must share chrome or the page jumps by the bar's height as it
   // slides. The working tabs drop it and get those pixels back; they carry their
   // own .view-head instead — see the backdrop rule in style.css.
-  const chrome = name === "home" || name === "settings";
+  const isSheet = name === "inventory" || name === "files";
+  const chrome = name === "home" || name === "settings" || name === "watch" || isSheet;
   document.body.classList.toggle("chrome-off", !chrome);
   document.body.classList.toggle("at-settings", name === "settings");
+  document.body.classList.toggle("at-watch", name === "watch");
+  document.body.classList.toggle("at-sheet", isSheet);
+  if (name !== "watch") clearTimeout(watchState.poll);
   if (name === "home") refreshLive();
   if (name === "settings") loadSettings();
   if (name === "terminal") initTerminal();
@@ -972,6 +976,14 @@ function renderGlance() {
       title: "Security checks: " + scoreLabel,
       sub: "What your background agents found",
       go: () => { showView("health"); selectHealthView("checks"); } }),
+    row({ icon: "map", tint: "tint-4",
+      title: "Server overview",
+      sub: "Domains, services, timers, cron and drives",
+      go: openInventory }),
+    row({ icon: "folder", tint: "tint-5",
+      title: "Files",
+      sub: "Browse, edit, upload and manage files",
+      go: openFiles }),
   );
   hydrateIcons(box);
 }
@@ -2829,6 +2841,7 @@ function handleChatEvent(ev) {
     const bubble = userBubble(ev.text, $$("#chat-log .msg.user").length);
     if (ev.queued) bubble.append(el("span", { class: "queued-tag" }, " · queued"));
     log.append(bubble);
+    if ((ev.attachments || []).length) log.append(sentAttachmentChips(ev.attachments));
     scrollChat(true);
     return;
   } else if (ev.type === "rewound") {
@@ -3171,6 +3184,18 @@ function renderContextChips() {
   });
 }
 
+/* chips under a sent message, naming the files that rode with it */
+function sentAttachmentChips(items) {
+  const row = el("div", { class: "sent-attach" });
+  for (const a of items) {
+    row.append(el("span", { class: "sent-chip" },
+      ic(a.kind === "image" ? "image" : "file-text"),
+      el("span", {}, a.name)));
+  }
+  hydrateIcons(row);
+  return row;
+}
+
 function attachContext(item) {
   const key = item.key || (item.kind + ":" + (item.path || item.id || item.label));
   if (state.chatContext.some((c) => c.key === key)) { toast("Already attached"); return; }
@@ -3240,11 +3265,68 @@ function openAttachMenu() {
       el("div", { class: "card-title" }, title), el("div", { class: "card-sub" }, sub)),
     svgIcon("chevron-right", "chev muted"));
   body.append(
+    item("image", "A photo or file", "Upload from this device for the agent to see", () => { closeModal(); pickChatUpload(); }),
     item("boxes", "A service", "Attach a container's status & ports", () => { closeModal(); openServicePicker(); }),
     item("package", "An app", "Attach an app from your server", () => { closeModal(); openAppPicker(); }),
     item("file-text", "A file or folder", "Browse and attach files", () => { closeModal(); openExplorer(); }),
     item("gauge", "Server overview", "CPU, memory, disk, uptime", () => { closeModal(); attachSystemContext(); }));
   openModal("Attach context", body);
+}
+
+/* Upload a photo or file from the phone. It is stored on the server where every
+   assistant can open it; images go to models that see them, others as the path
+   plus (for text) a preview. Shown as a chip, like other attached context. */
+let chatFileInput = null;
+function pickChatUpload() {
+  if (state.me?.demo) { toast("The demo is read-only"); return; }
+  if (!chatFileInput) {
+    chatFileInput = el("input", { type: "file", multiple: "true", style: "display:none" });
+    chatFileInput.addEventListener("change", async () => {
+      const files = [...chatFileInput.files];
+      chatFileInput.value = "";
+      for (const f of files.slice(0, 4)) await uploadChatFile(f);
+      showView("vibe");
+    });
+    document.body.append(chatFileInput);
+  }
+  chatFileInput.click();
+}
+
+async function uploadChatFile(file) {
+  toast("Uploading " + file.name + "…");
+  try {
+    const res = await fetch(apiBase() + "/api/chat/upload?name=" + encodeURIComponent(file.name), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + state.token,
+        "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    if (!res.ok) {
+      let msg = res.statusText; try { msg = (await res.json()).detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    const up = await res.json();
+    attachContext({
+      kind: up.kind === "image" ? "image" : up.kind,
+      key: "upload:" + up.path,
+      label: up.name,
+      icon: up.kind === "image" ? "image" : "file-text",
+      text: describeUpload(up),
+      imagePath: up.kind === "image" ? up.path : "",
+      upload: { name: up.name, kind: up.kind },
+    });
+  } catch (e) { toast("✕ " + e.message); }
+}
+
+function describeUpload(up) {
+  if (up.kind === "image") {
+    return `Picture from the user's device, stored on the server at ${up.path}.`;
+  }
+  if (up.kind === "text") {
+    return `File from the user's device, stored on the server at ${up.path}:\n\n\`\`\`\n${up.text || ""}\n\`\`\`` +
+      (up.truncated ? "\n[truncated]" : "");
+  }
+  return `File from the user's device (${up.media_type}, ${fmtBytes(up.size)}), stored on the server at ${up.path}.`;
 }
 
 async function openServicePicker() {
@@ -3320,12 +3402,15 @@ function submitChat() {
     return;
   }
   const context = buildContextPreamble();
+  // uploaded pictures go to vision models; every upload also rides as a named chip
+  const images = state.chatContext.filter((c) => c.imagePath).map((c) => c.imagePath);
+  const attachments = state.chatContext.filter((c) => c.upload).map((c) => c.upload);
   state.chatContext = [];
   renderContextChips();
   // the server echoes the message to every device; while it runs the message
   // is queued/steered. The run-status bar is the "working" indicator.
   setChatRunning(true);
-  sendChat({ type: "user", text, context });
+  sendChat({ type: "user", text, context, images, attachments });
 }
 
 /* ----- edit / retract sent messages (Claude-Code-style rewind) ----- */
@@ -5200,6 +5285,8 @@ async function loadSettings() {
     // agent instructions + memory
     api("/agent/instructions").then((r) => { $("#agent-instructions").value = r.instructions || ""; }).catch(() => {});
     api("/agent/memory").then((r) => { $("#agent-memory").value = r.memory; }).catch(() => {});
+    loadNotes();
+    loadAIAccounts();
     loadToolToggles();
     loadServerIdentity();
     loadUsers();
@@ -5467,7 +5554,168 @@ $("#agent-memory-save").addEventListener("click", async function () {
       method: "POST", body: JSON.stringify({ memory: $("#agent-memory").value }) });
     this.textContent = "✓ saved";
     setTimeout(() => (this.textContent = "Save memory"), 1200);
+    loadNotes();   // the raw edit reshapes the note list
   } catch (e) { alert(e.message); }
+});
+
+/* ---- agent notes: the memory as a list of facts (0.26) ---- */
+
+let notesData = { notes: [], topics: [], stats: {} };
+
+const NOTE_SOURCE_LABEL = { you: "you", assistant: "the agent", claude: "Claude Code",
+  codex: "Codex", vibe: "Vibe", watch: "the watch" };
+
+async function loadNotes() {
+  try {
+    notesData = await api("/agent/notes");
+    renderNotes();
+    renderNotesAdd();
+  } catch (e) {
+    const list = $("#notes-list");
+    if (list) list.replaceChildren(el("div", { class: "muted" }, "Couldn't load notes: " + e.message));
+  }
+}
+
+function renderNotes() {
+  const list = $("#notes-list");
+  if (!list) return;
+  const st = notesData.stats || {};
+  const stats = $("#notes-stats");
+  if (stats) {
+    stats.textContent = st.count
+      ? `${st.count} note${st.count === 1 ? "" : "s"}` +
+        (st.pinned ? ` · ${st.pinned} pinned` : "") +
+        (st.stale ? ` · ${st.stale} may be stale` : "")
+      : "";
+  }
+  $("#notes-undo")?.classList.toggle("hidden", !st.can_undo);
+
+  list.innerHTML = "";
+  if (!(notesData.notes || []).length) {
+    list.append(el("p", { class: "muted", style: "margin:6px 0" },
+      "No notes yet. The agent will add facts as it learns them — or write one above."));
+    return;
+  }
+  // group by topic, in the canonical topic order
+  const labelFor = Object.fromEntries((notesData.topics || []).map((t) => [t.id, t.label]));
+  const order = (notesData.topics || []).map((t) => t.id);
+  const byTopic = new Map();
+  for (const n of notesData.notes) {
+    const t = n.topic || "other";
+    if (!byTopic.has(t)) byTopic.set(t, []);
+    byTopic.get(t).push(n);
+  }
+  const topics = [...byTopic.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  for (const t of topics) {
+    list.append(el("div", { class: "notes-topic" }, labelFor[t] || t));
+    for (const n of byTopic.get(t)) list.append(noteCard(n));
+  }
+  hydrateIcons(list);
+}
+
+function noteCard(n) {
+  const card = el("div", { class: "note-card" + (n.pinned ? " pinned" : "") });
+  const body = el("div", { class: "note-body" });
+  body.append(el("div", { class: "note-text" }, n.subject ? el("b", {}, n.subject + ": ") : null, n.text));
+  body.append(el("div", { class: "note-meta" },
+    NOTE_SOURCE_LABEL[n.source] || n.source || "the agent",
+    " · ", timeAgo(n.updated)));
+  card.append(body);
+  const actions = el("div", { class: "note-actions" },
+    el("button", { class: "note-icon" + (n.pinned ? " on" : ""), title: n.pinned ? "unpin" : "pin",
+      onclick: () => setNotePinned(n, !n.pinned) }, ic("pin")),
+    el("button", { class: "note-icon", title: "edit", onclick: () => editNote(n) }, ic("pen-line")),
+    el("button", { class: "note-icon danger", title: "delete", onclick: () => deleteNote(n) }, ic("trash-2")));
+  card.append(actions);
+  return card;
+}
+
+function renderNotesAdd() {
+  const box = $("#notes-add");
+  if (!box) return;
+  box.innerHTML = "";
+  const ta = el("textarea", { rows: "2", placeholder: "Add a fact for the agent to remember…", spellcheck: "false" });
+  const topic = el("select", { class: "select mini" });
+  topic.append(el("option", { value: "" }, "auto topic"));
+  for (const t of notesData.topics || []) topic.append(el("option", { value: t.id }, t.label));
+  const status = el("span", { class: "muted", style: "font-size:12px" });
+  const addBtn = el("button", { class: "btn small primary", onclick: async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    status.textContent = "saving…";
+    try {
+      const r = await api("/agent/notes", { method: "POST",
+        body: JSON.stringify({ text, topic: topic.value || "" }) });
+      notesData = r;
+      ta.value = "";
+      status.textContent = r.result === "updated" ? "✓ refreshed an existing note" : "✓ added";
+      renderNotes(); renderNotesAdd();
+      setTimeout(() => (status.textContent = ""), 2000);
+    } catch (e) { status.textContent = "✕ " + e.message; }
+  } }, "Add note");
+  box.append(ta, el("div", { class: "notes-add-row" }, topic, addBtn, status));
+}
+
+async function setNotePinned(n, pinned) {
+  try {
+    notesData = await api(`/agent/notes/${n.id}`, { method: "PATCH",
+      body: JSON.stringify({ pinned }) });
+    renderNotes();
+  } catch (e) { toast(e.message); }
+}
+
+function editNote(n) {
+  const ta = el("textarea", { rows: "3", spellcheck: "false" }, n.subject ? `${n.subject}: ${n.text}` : n.text);
+  const topic = el("select", { class: "select wide" });
+  for (const t of notesData.topics || []) topic.append(el("option", { value: t.id }, t.label));
+  topic.value = n.topic || "other";
+  const status = el("p", { class: "muted" });
+  const body = el("div", { class: "form-card", style: "padding:0" },
+    el("label", {}, "Fact", ta),
+    el("label", {}, "Topic", topic),
+    el("div", { class: "card-actions", style: "margin-top:10px" },
+      el("button", { class: "btn primary", onclick: async () => {
+        status.textContent = "saving…";
+        try {
+          notesData = await api(`/agent/notes/${n.id}`, { method: "PATCH",
+            body: JSON.stringify({ text: ta.value.trim(), topic: topic.value }) });
+          closeModal(); renderNotes();
+        } catch (e) { status.textContent = "✕ " + e.message; }
+      } }, "Save"),
+      el("button", { class: "btn", onclick: closeModal }, "Cancel")),
+    status);
+  openModal("Edit note", body);
+}
+
+async function deleteNote(n) {
+  try {
+    notesData = await api(`/agent/notes/${n.id}`, { method: "DELETE" });
+    renderNotes();
+    toast("Note deleted");
+  } catch (e) { toast(e.message); }
+}
+
+$("#notes-tidy").addEventListener("click", async function () {
+  const btn = this;
+  btn.disabled = true;
+  const old = btn.innerHTML;
+  btn.textContent = "Tidying…";
+  try {
+    const r = await api("/agent/notes/tidy", { method: "POST" });
+    notesData = r;
+    renderNotes(); renderNotesAdd();
+    const t = r.tidy || {};
+    toast(t.before != null ? `Tidied: ${t.before} → ${t.after} notes` : "Tidied");
+  } catch (e) { toast(e.message); }
+  finally { btn.disabled = false; btn.innerHTML = old; hydrateIcons(btn); }
+});
+
+$("#notes-undo").addEventListener("click", async function () {
+  try {
+    notesData = await api("/agent/notes/undo", { method: "POST" });
+    renderNotes(); renderNotesAdd();
+    toast("Undone");
+  } catch (e) { toast(e.message); }
 });
 
 $("#servermap-on").addEventListener("change", async function () {
@@ -5544,6 +5792,180 @@ $("#ai-save").addEventListener("click", async () => {
     $("#vibe-no-ai")?.classList.toggle("hidden", state.aiConfigured);
   } catch (e) { $("#ai-status").textContent = "✕ " + e.message; }
 });
+
+/* ---- AI accounts: connect a subscription (Claude Code / Codex / Vibe) or
+   see which account powers what (0.26) ---- */
+
+async function loadAIAccounts() {
+  const box = $("#ai-accounts");
+  if (!box) return;
+  try {
+    const data = await api("/ai/accounts");
+    renderAIAccounts(box, data);
+  } catch (e) {
+    box.replaceChildren(el("div", { class: "muted" }, "Couldn't load accounts: " + e.message));
+  }
+}
+
+function renderAIAccounts(box, data) {
+  box.innerHTML = "";
+  for (const a of data.accounts || []) {
+    box.append(accountRow(a));
+  }
+  if (data.local) {
+    const l = data.local;
+    box.append(el("div", { class: "acct-row" },
+      iconTile("cpu", "local", "", ""),
+      el("div", { class: "acct-main" },
+        el("div", { class: "acct-name" }, "Local model",
+          l.running ? el("span", { class: "acct-badge ok" }, "connected") : null),
+        el("div", { class: "acct-sub" }, l.running
+          ? `Ollama · ${l.models} model${l.models === 1 ? "" : "s"}` + (l.used_for?.length ? ` · ${l.used_for.join(", ")}` : "")
+          : "not set up — see Local AI below"))));
+  }
+  hydrateIcons(box);
+}
+
+function accountRow(a) {
+  const badges = el("div", { class: "acct-badges" });
+  if (a.signed_in) badges.append(el("span", { class: "acct-badge ok" }, "subscription"));
+  if (a.key_set) badges.append(el("span", { class: "acct-badge" }, a.key_from_env ? "key (env)" : "API key"));
+  if (!a.connected) badges.append(el("span", { class: "acct-badge off" }, "not connected"));
+
+  const sub = a.connected && a.used_for?.length
+    ? "Powers: " + a.used_for.join(", ")
+    : a.can_subscribe ? a.subscription ? "Subscription: " + a.subscription : "" : "";
+
+  const actions = el("div", { class: "acct-actions" });
+  if (a.can_subscribe) {
+    if (a.signed_in) {
+      actions.append(el("button", { class: "btn small", onclick: () => signOutAccount(a) }, "Sign out"));
+    } else {
+      actions.append(el("button", { class: "btn small primary iconled", onclick: () => startSignIn(a) },
+        ic("log-in"), " Sign in"));
+    }
+  }
+
+  const row = el("div", { class: "acct-row" },
+    iconTile(null, a.name, "", a.brand),
+    el("div", { class: "acct-main" },
+      el("div", { class: "acct-name" }, a.name,
+        el("span", { class: "acct-vendor" }, a.vendor)),
+      badges,
+      sub ? el("div", { class: "acct-sub" }, sub) : null,
+      a.plan ? el("div", { class: "acct-sub" }, a.plan) : null),
+    actions);
+  return row;
+}
+
+async function signOutAccount(a) {
+  if (!confirm(`Sign out of ${a.name}? The subscription connection is removed from this server.`)) return;
+  try {
+    const data = await api(`/ai/accounts/${a.engine}/signout`, { method: "POST" });
+    renderAIAccounts($("#ai-accounts"), data);
+    toast(`Signed out of ${a.name}`);
+  } catch (e) { toast(e.message); }
+}
+
+/* The sign-in flow: start → (install CLI) → open the provider's page and paste
+   the code it shows → verify → done. Polled while the modal is open. */
+let signinPoll = null;
+
+async function startSignIn(a) {
+  const body = el("div", { class: "signin-body" }, el("div", { class: "thinking" }, "starting"));
+  openModal(`Sign in to ${a.name}`, body);
+  clearInterval(signinPoll);
+  let flow;
+  try {
+    ({ flow } = await api(`/ai/accounts/${a.engine}/signin`, { method: "POST" }));
+  } catch (e) {
+    body.replaceChildren(el("div", { class: "error" }, "✕ " + e.message));
+    return;
+  }
+  renderSignIn(body, flow, a);
+  signinPoll = setInterval(async () => {
+    if ($("#modal").classList.contains("hidden")) { clearInterval(signinPoll); return; }
+    try {
+      const r = await api(`/ai/signin/${flow.id}`);
+      flow = r.flow;
+      renderSignIn(body, flow, a);
+      if (flow.state === "done") {
+        clearInterval(signinPoll);
+        setTimeout(async () => { closeModal(); toast(`${a.name} connected`);
+          loadAIAccounts(); vibeControlsReady = false; }, 1200);
+      }
+    } catch (e) { clearInterval(signinPoll); }
+  }, 1800);
+  // stop polling when the modal closes
+  window.addEventListener("pocketadm-modal-closed", () => {
+    clearInterval(signinPoll);
+    if (flow && flow.state !== "done") api(`/ai/signin/${flow.id}`, { method: "DELETE" }).catch(() => {});
+  }, { once: true });
+}
+
+function renderSignIn(body, flow, a) {
+  // don't rebuild while the user is typing a code
+  if (flow.state === "waiting_code" && body.querySelector(".signin-code-input") === document.activeElement) return;
+  body.innerHTML = "";
+  if (flow.error) {
+    body.append(el("div", { class: "error", style: "margin-bottom:10px" }, flow.error));
+  }
+  if (flow.state === "installing") {
+    body.append(signinStep("download", `Installing ${flow.label}…`,
+      "One-time setup of the coding app this subscription signs in through."));
+  } else if (flow.state === "starting" || flow.state === "verifying") {
+    body.append(signinStep("loader", flow.state === "verifying" ? "Checking the code…" : "Starting…",
+      flow.message || ""));
+  } else if (flow.state === "waiting_browser") {
+    body.append(el("p", { class: "muted", style: "margin-bottom:10px" },
+      flow.message || "Open the sign-in page, approve the connection, then come back."));
+    if (flow.url) {
+      body.append(el("a", { class: "btn primary wide iconled", href: flow.url, target: "_blank", rel: "noopener" },
+        ic("external-link"), " Open sign-in page"));
+    }
+    if (flow.user_code) {
+      body.append(el("div", { class: "signin-code" },
+        el("span", { class: "muted" }, "Your code"),
+        el("code", {}, flow.user_code),
+        el("button", { class: "btn small", onclick: () => { navigator.clipboard?.writeText(flow.user_code); toast("Copied"); } }, "Copy")));
+    }
+    body.append(el("p", { class: "muted", style: "margin-top:10px;font-size:12px" }, "This updates by itself."));
+  } else if (flow.state === "waiting_code") {
+    body.append(el("p", { class: "muted", style: "margin-bottom:8px" },
+      flow.message || "Open the page, sign in, then paste the code it gives you here."));
+    if (flow.url) {
+      body.append(el("a", { class: "btn wide iconled", href: flow.url, target: "_blank", rel: "noopener",
+        style: "margin-bottom:10px" }, ic("external-link"), " Open sign-in page"));
+    }
+    const input = el("input", { class: "signin-code-input", type: "text", placeholder: "Paste code here",
+      spellcheck: "false", autocapitalize: "off" });
+    const status = el("p", { class: "muted" });
+    const submit = el("button", { class: "btn primary", onclick: async () => {
+      const code = input.value.trim();
+      if (!code) return;
+      status.textContent = "checking…";
+      try {
+        const r = await api(`/ai/signin/${flow.id}/code`, { method: "POST", body: JSON.stringify({ code }) });
+        Object.assign(flow, r.flow);
+        renderSignIn(body, flow, a);
+      } catch (e) { status.textContent = "✕ " + e.message; }
+    } }, "Submit code");
+    body.append(input, el("div", { class: "card-actions", style: "margin-top:8px" }, submit), status);
+    setTimeout(() => input.focus(), 50);
+  } else if (flow.state === "done") {
+    body.append(signinStep("check-circle-2", `${a.name} connected`, "You can close this."));
+  } else if (flow.state === "cancelled") {
+    body.append(el("p", { class: "muted" }, "Sign-in cancelled."));
+  }
+  hydrateIcons(body);
+}
+
+function signinStep(icon, title, text) {
+  return el("div", { class: "signin-step" },
+    el("span", { class: "signin-step-ico" + (icon === "loader" ? " spin" : "") }, ic(icon === "loader" ? "refresh-cw" : icon)),
+    el("div", {}, el("div", { class: "signin-step-title" }, title),
+      text ? el("div", { class: "muted", style: "font-size:12.5px" }, text) : null));
+}
 
 $("#workspaces-save").addEventListener("click", async function () {
   try {
@@ -6113,7 +6535,7 @@ async function refreshNotifs() {
   } catch { return { items: [], unseen: 0 }; }
 }
 
-$("#notif-btn").addEventListener("click", openNotifications);
+$("#notif-btn").addEventListener("click", openWatch);
 
 async function openNotifications() {
   const body = el("div", {});
@@ -6234,6 +6656,1084 @@ async function openReportDetail(n) {
     } }, ic("refresh-cw"), " Run again")));
 
   openModal("Report", body);
+  hydrateIcons(body);
+}
+
+/* ===================================================================
+   The watch's channel — the background watch as a conversation.
+
+   What the watch wrote on its own and what you asked it live in one
+   timeline, newest at the bottom, like a bot in a Matrix room. Reached
+   from the bell on Home; it is a pushed page that shares the topbar
+   chrome with Home, so the slide never jumps (same trick as Settings).
+   =================================================================== */
+
+const watchState = {
+  messages: [],
+  seen: new Set(),
+  status: null,
+  more: false,
+  replying: false,
+  loaded: false,
+  poll: null,
+  expanded: new Set(),   // ids whose "Details" are open — survive re-renders
+};
+
+const WSEV_RANK = { info: 0, important: 1, critical: 2 };
+
+/* push/pop mirror Settings: the page rides in over Home from the right and
+   leaves the same way. The pop reveals Home underneath first, then animates
+   the page out above it. */
+function pushWatch() {
+  const v = $("#view-watch");
+  v.classList.remove("pop-out", "dragging");
+  v.style.transform = "";
+  showView("watch");
+  v.classList.add("push-in");
+  hap("light");
+}
+function popWatch(fromDrag) {
+  const v = $("#view-watch");
+  if (v.classList.contains("pop-out")) return;
+  clearTimeout(watchState.poll);
+  v.classList.remove("push-in", "dragging");
+  $("#view-home").classList.remove("hidden");
+  v.style.transform = "";
+  v.classList.add("pop-out");
+  if (!fromDrag) hap("light");
+  const done = () => { v.classList.remove("pop-out"); showView("home"); };
+  v.addEventListener("animationend", done, { once: true });
+  setTimeout(() => { if (v.classList.contains("pop-out")) done(); }, 400);
+}
+$("#watch-back").addEventListener("click", () => popWatch());
+$("#watch-menu-btn").addEventListener("click", openWatchMenu);
+attachEdgeBackTo($("#view-watch"), () => popWatch(true));
+
+async function openWatch() {
+  pushWatch();
+  if (!watchState.loaded) {
+    $("#watch-messages").replaceChildren(el("div", { class: "thinking" }, "loading"));
+  }
+  await loadWatchChannel();
+  // opening the bell counts as seeing the findings — clear the badge
+  api("/notifications/seen", { method: "POST" }).then(() => {
+    $("#notif-badge")?.classList.add("hidden");
+    $("#home-badge")?.classList.add("hidden");
+  }).catch(() => {});
+}
+
+async function loadWatchChannel() {
+  try {
+    const page = await api("/watch/channel?limit=60");
+    watchState.messages = page.messages || [];
+    watchState.seen = new Set(watchState.messages.map((m) => m.id));
+    watchState.more = page.more;
+    watchState.replying = page.replying;
+    watchState.status = page.status;
+    watchState.loaded = true;
+    renderWatchAll();
+    scrollWatch(true);
+    markWatchRead();
+  } catch (e) {
+    $("#watch-messages").replaceChildren(el("div", { class: "error" }, "✕ " + e.message));
+  }
+  scheduleWatchPoll();
+}
+
+function scheduleWatchPoll() {
+  clearTimeout(watchState.poll);
+  if (state.view !== "watch") return;
+  const fast = watchState.replying || watchState.status?.running;
+  watchState.poll = setTimeout(fetchWatchNew, fast ? 2000 : 8000);
+}
+
+async function fetchWatchNew() {
+  if (state.view !== "watch") return;
+  const newest = watchState.messages.length
+    ? watchState.messages[watchState.messages.length - 1].t : 0;
+  try {
+    const page = await api(`/watch/channel?after=${newest}&limit=60`);
+    const fresh = (page.messages || []).filter((m) => !watchState.seen.has(m.id));
+    if (fresh.length) {
+      const atBottom = isWatchAtBottom();
+      fresh.forEach((m) => watchState.seen.add(m.id));
+      watchState.messages.push(...fresh);
+      renderWatchAll();
+      if (atBottom) scrollWatch(true);
+      markWatchRead();
+    }
+    watchState.replying = page.replying;
+    if (page.status) watchState.status = page.status;
+    renderWatchStatus();
+    renderWatchTyping();
+  } catch { /* transient — try again next tick */ }
+  scheduleWatchPoll();
+}
+
+function markWatchRead() {
+  const newest = watchState.messages.length
+    ? watchState.messages[watchState.messages.length - 1].t : 0;
+  if (newest) api("/watch/channel/read", { method: "POST", body: JSON.stringify({ t: newest }) }).catch(() => {});
+}
+
+function isWatchAtBottom() {
+  const log = $("#watch-log");
+  return log && log.scrollHeight - log.scrollTop - log.clientHeight < 140;
+}
+function scrollWatch(force) {
+  const log = $("#watch-log");
+  if (log && (force || isWatchAtBottom())) log.scrollTop = log.scrollHeight;
+}
+
+/* ----- rendering ----- */
+
+function renderWatchAll() {
+  renderWatchStatus();
+  renderWatchBanners();
+  renderWatchEarlier();
+  renderWatchMessages();
+  renderWatchTyping();
+}
+
+function renderWatchStatus() {
+  const sub = $("#watch-status");
+  if (!sub) return;
+  const s = watchState.status;
+  let text = "", cls = "";
+  if (watchState.replying) { text = "writing…"; cls = "live"; }
+  else if (s?.running) { text = "looking at the server…"; cls = "live"; }
+  else if (!s) { text = ""; }
+  else if (!s.enabled) { text = "off"; cls = "warn"; }
+  else if (s.route && s.route.usable === false) { text = "no AI connected"; cls = "warn"; }
+  else if (s.paused) { text = "paused"; cls = "warn"; }
+  else if (s.quiet_now) { text = "quiet hours · only critical"; }
+  else if (s.route?.label) { text = "on · " + s.route.label; }
+  else { text = "on"; }
+  sub.textContent = text;
+  sub.className = "tb-sub" + (cls ? " " + cls : "");
+}
+
+function renderWatchBanners() {
+  const box = $("#watch-banners");
+  if (!box) return;
+  box.innerHTML = "";
+  const s = watchState.status;
+  if (!s) return;
+  if (!s.enabled) {
+    box.append(watchBanner("eye", "Let the watch look after this server",
+      "An AI checks the server every few hours and right after anything breaks, and writes here only when it is worth knowing.",
+      "Turn it on", () => toggleWatchEnabled(true)));
+  } else if (s.route && s.route.usable === false) {
+    box.append(watchBanner("alert-triangle", "The watch has no AI",
+      "Choose which AI it runs on under AI providers.",
+      "Open settings", () => { popWatch(); setTimeout(() => { pushSettings(); selectSettingsGroup?.("ai"); }, 320); }));
+  }
+}
+
+function watchBanner(icon, title, text, action, onclick) {
+  return el("button", { class: "wchat-banner", onclick },
+    iconTile(icon, "watch", "", ""),
+    el("div", { class: "wb-body" },
+      el("div", { class: "wb-title" }, title),
+      el("div", { class: "wb-text" }, text),
+      el("div", { class: "wb-act" }, action)));
+}
+
+function renderWatchEarlier() {
+  const box = $("#watch-earlier");
+  if (!box) return;
+  box.classList.toggle("hidden", !watchState.more);
+  box.innerHTML = "";
+  if (watchState.more) {
+    box.append(el("button", { onclick: loadEarlierWatch }, "Earlier messages"));
+  }
+}
+
+async function loadEarlierWatch() {
+  const oldest = watchState.messages.length ? watchState.messages[0].t : 0;
+  if (!oldest) return;
+  try {
+    const page = await api(`/watch/channel?before=${oldest}&limit=60`);
+    const older = (page.messages || []).filter((m) => !watchState.seen.has(m.id));
+    older.forEach((m) => watchState.seen.add(m.id));
+    const log = $("#watch-log");
+    const prevH = log.scrollHeight, prevTop = log.scrollTop;
+    watchState.messages.unshift(...older);
+    watchState.more = page.more;
+    renderWatchAll();
+    log.scrollTop = prevTop + (log.scrollHeight - prevH);   // keep the view steady
+  } catch (e) { toast(e.message); }
+}
+
+function renderWatchMessages() {
+  const box = $("#watch-messages");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!watchState.messages.length) {
+    box.append(el("div", { class: "wempty" },
+      iconTile("eye", "watch", "lg", ""),
+      el("h3", {}, "Nothing to report"),
+      el("p", {}, "When something on the server is worth knowing, the watch writes here. You can also ask it anything.")));
+    return;
+  }
+  const msgs = watchState.messages;
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const prev = msgs[i - 1];
+    if (!prev || !sameDay(m.t, prev.t)) {
+      box.append(el("div", { class: "wchat-day" }, el("span", {}, dayLabel(m.t))));
+    }
+    const firstInGroup = !prev || prev.role !== m.role || (m.t - prev.t) > 300 || !sameDay(m.t, prev.t);
+    box.append(watchBubble(m, firstInGroup));
+  }
+  hydrateIcons(box);
+}
+
+function sameDay(a, b) {
+  const da = new Date(a * 1000), db = new Date(b * 1000);
+  return da.toDateString() === db.toDateString();
+}
+function dayLabel(t) {
+  const d = new Date(t * 1000), now = new Date();
+  const days = Math.round((now.setHours(0, 0, 0, 0) - new Date(t * 1000).setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "long" });
+}
+function clockOf(t) {
+  return new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function watchBubble(m, firstInGroup) {
+  if (m.role === "system") {
+    return el("div", { class: "msg note", style: "margin:8px auto" }, m.text);
+  }
+  const main = el("div", { class: "wmsg-main" });
+  if (m.role === "user") {
+    const row = el("div", { class: "wmsg user" + (firstInGroup ? " first" : " grouped") },
+      main);
+    main.append(el("div", { class: "wbubble" }, m.text),
+      el("div", { class: "wmeta" }, clockOf(m.t)));
+    return row;
+  }
+  // the watch's own message
+  const sev = m.importance === "critical" ? "crit" : m.importance === "important" ? "warn" : "";
+  const bubble = el("div", { class: "wbubble" + (sev ? " sev-" + sev : "") });
+  if (sev) {
+    bubble.append(el("div", { class: "wsev " + sev },
+      ic(sev === "crit" ? "siren" : "alert-triangle"),
+      sev === "crit" ? "Critical" : "Important"));
+  }
+  bubble.append(mdDiv(m.text, "wbubble-text"));
+  if (m.detail) {
+    const open = watchState.expanded.has(m.id);
+    if (open) bubble.append(mdDiv(m.detail, "wdetail"));
+    bubble.append(el("button", { class: "wdetail-toggle", onclick: () => {
+      if (watchState.expanded.has(m.id)) watchState.expanded.delete(m.id);
+      else watchState.expanded.add(m.id);
+      renderWatchMessages();
+    } }, open ? "Less" : "Details"));
+  }
+  main.append(bubble);
+
+  const acts = (m.actions || []).filter((a) => a && a.label);
+  if (acts.length) {
+    const row = el("div", { class: "wactions" });
+    for (const a of acts) {
+      row.append(el("button", { class: "wchip", onclick: () => runWatchAction(a, m) },
+        ic(watchActionIcon(a)), a.label));
+    }
+    main.append(row);
+  }
+
+  const meta = el("div", { class: "wmeta" }, clockOf(m.t));
+  if (m.feedback === "helpful") meta.append(el("span", { class: "wfb" }, ic("thumbs-up")));
+  else if (m.feedback === "not_helpful") meta.append(el("span", { class: "wfb" }, ic("thumbs-down")));
+  meta.append(el("button", { class: "wkebab", title: "more",
+    onclick: () => openWatchMessageMenu(m) }, ic("more-horizontal")));
+  main.append(meta);
+
+  return el("div", { class: "wmsg watch" + (firstInGroup ? " first" : " grouped") },
+    firstInGroup ? el("div", { class: "wmsg-ava" }, ic("eye")) : el("div", { class: "wmsg-ava spacer" }),
+    main);
+}
+
+function watchActionIcon(a) {
+  if (a.kind === "container") return "box";
+  if (a.kind === "assistant") return "sparkles";
+  if (a.kind === "open") return { updates: "refresh-cw", storage: "hard-drive",
+    checks: "shield-check", activity: "history", containers: "box" }[a.target] || "arrow-up-right";
+  return "arrow-up-right";
+}
+
+async function runWatchAction(a, m) {
+  if (a.kind === "assistant") {
+    openVibeWith(a.prompt || `The watch wrote: "${m.text}" — look into it and tell me what to do.`);
+  } else if (a.kind === "container") {
+    try {
+      if (!state.containers?.length) state.containers = await api("/containers");
+      const c = state.containers.find((x) => x.name === a.target);
+      if (c) showContainerDetail(c);
+      else toast(`${a.target} is not there any more`);
+    } catch (e) { toast(e.message); }
+  } else if (a.kind === "open") {
+    const t = a.target;
+    if (t === "updates" || t === "checks") { popWatch(); setTimeout(() => { showView("health"); selectHealthView(t === "checks" ? "checks" : "updates"); }, 320); }
+    else if (t === "containers") { popWatch(); setTimeout(() => showView("apps"), 320); }
+    else popWatch();
+  }
+}
+
+/* The per-message kebab and the topbar ⋯ both use one small action sheet. */
+function actionSheet(title, actions) {
+  const body = el("div", { class: "action-sheet" });
+  for (const a of actions) {
+    if (a.sep) { body.append(el("hr", { class: "sep" })); continue; }
+    body.append(el("button", { class: "btn wide iconled" + (a.danger ? " danger" : ""),
+      onclick: () => { closeModal(); a.onclick?.(); } }, a.icon ? ic(a.icon) : null, " " + a.label));
+  }
+  openModal(title, body);
+}
+
+function openWatchMessageMenu(m) {
+  const actions = [
+    { label: "Copy", icon: "clipboard", onclick: () => {
+      navigator.clipboard?.writeText(m.detail ? `${m.text}\n\n${m.detail}` : m.text);
+      toast("Copied");
+    } },
+  ];
+  if (m.kind !== "chat" && m.kind !== "system") {
+    actions.push({ label: "Helpful", icon: "thumbs-up", onclick: () => watchFeedback(m, true) });
+    actions.push({ label: "Not helpful", icon: "thumbs-down", onclick: () => watchFeedback(m, false) });
+    if (m.topic || m.title) {
+      actions.push({ label: "Quiet about this for a day", icon: "bell-off", onclick: () => muteWatchTopic(m, 24) });
+      actions.push({ label: "Quiet for a week", icon: "bell-off", onclick: () => muteWatchTopic(m, 24 * 7) });
+      actions.push({ label: "Never about this again", icon: "bell-off", onclick: () => muteWatchTopic(m, 24 * 365) });
+    }
+  }
+  actions.push({ label: "Ask the assistant", icon: "sparkles", onclick: () =>
+    openVibeWith(`The watch wrote: "${m.text}${m.detail ? " — " + m.detail : ""}" — look into it and tell me what to do.`) });
+  actions.push({ sep: true });
+  actions.push({ label: "Delete", icon: "trash-2", danger: true, onclick: () => deleteWatchMessage(m) });
+  actionSheet("Message", actions);
+}
+
+async function watchFeedback(m, helpful) {
+  try {
+    await api(`/watch/channel/${m.id}/feedback`, { method: "POST", body: JSON.stringify({ helpful }) });
+    m.feedback = helpful ? "helpful" : "not_helpful";
+    renderWatchMessages();
+    toast(helpful ? "Thanks — noted" : "Noted — it will write less like this");
+  } catch (e) { toast(e.message); }
+}
+
+async function muteWatchTopic(m, hours) {
+  const topic = m.topic || m.title;
+  if (!topic) return;
+  try {
+    await api("/watch/mute", { method: "POST", body: JSON.stringify({ topic, hours }) });
+    toast(hours >= 24 * 365 ? "Never about this again"
+      : hours >= 24 * 7 ? "Quiet about this for a week" : "Quiet about this for a day");
+  } catch (e) { toast(e.message); }
+}
+
+async function deleteWatchMessage(m) {
+  try {
+    await api(`/watch/channel/${m.id}`, { method: "DELETE" });
+    watchState.messages = watchState.messages.filter((x) => x.id !== m.id);
+    watchState.seen.delete(m.id);
+    renderWatchMessages();
+  } catch (e) { toast(e.message); }
+}
+
+/* topbar ⋯ : the few things you do to the watch itself */
+function openWatchMenu() {
+  const s = watchState.status;
+  const demo = state.me?.demo;
+  const actions = [];
+  if (s?.enabled && !demo) {
+    actions.push({ label: "Look at the server now", icon: "eye", onclick: lookWatchNow });
+    if (s.paused) actions.push({ label: "Resume", icon: "play", onclick: () => pauseWatch(0) });
+    else {
+      actions.push({ label: "Pause for an hour", icon: "pause", onclick: () => pauseWatch(60) });
+      actions.push({ label: "Pause for 8 hours", icon: "pause", onclick: () => pauseWatch(8 * 60) });
+      actions.push({ label: "Pause until tomorrow", icon: "pause", onclick: () => pauseWatch(24 * 60) });
+    }
+    actions.push({ sep: true });
+  }
+  actions.push({ label: "Watch settings", icon: "settings", onclick: openWatchSettings });
+  actions.push({ label: "Background agent findings", icon: "bell", onclick: () => { closeModal(); openNotifications(); } });
+  actionSheet("Watch", actions);
+}
+
+async function lookWatchNow() {
+  try {
+    await api("/watch/run", { method: "POST", body: JSON.stringify({ kind: "test" }) });
+    toast("Looking at the server — the answer appears here when it's done.");
+    watchState.status = { ...(watchState.status || {}), running: true };
+    renderWatchStatus();
+    scheduleWatchPoll();
+  } catch (e) { toast(e.message); }
+}
+
+async function pauseWatch(minutes) {
+  try {
+    await api("/watch/pause", { method: "POST", body: JSON.stringify({ minutes }) });
+    toast(minutes === 0 ? "The watch is back" : "Paused — critical messages still come through");
+    await loadWatchChannel();
+  } catch (e) { toast(e.message); }
+}
+
+async function toggleWatchEnabled(on) {
+  try {
+    await api("/watch", { method: "POST", body: JSON.stringify({ changes: { enabled: !!on } }) });
+    await loadWatchChannel();
+  } catch (e) { toast(e.message); }
+}
+
+/* A compact settings sheet for the watch — turn it on, how often it looks,
+   when it stays quiet, and where its messages go. */
+async function openWatchSettings() {
+  closeModal();
+  let st;
+  try { st = await api("/watch"); }
+  catch (e) { toast(e.message); return; }
+  const s = st.settings;
+  const body = el("div", { class: "form-card", style: "padding:0" });
+  const enabled = el("input", { type: "checkbox" }); enabled.checked = !!s.enabled;
+  const interval = el("select", { class: "select wide" });
+  for (const [v, l] of [[0, "only when something happens"], [60, "every hour"], [180, "every 3 hours"],
+                        [360, "every 6 hours"], [720, "every 12 hours"], [1440, "daily"]]) {
+    interval.append(el("option", { value: v }, l));
+  }
+  interval.value = String(s.interval_min ?? 180);
+  const pushMin = el("select", { class: "select wide" });
+  for (const [v, l] of [["critical", "only critical"], ["important", "important & critical"], ["info", "everything"]]) {
+    pushMin.append(el("option", { value: v }, l));
+  }
+  pushMin.value = s.push_min || "important";
+  const qStart = el("input", { type: "time" }); qStart.value = s.quiet_start || "23:00";
+  const qEnd = el("input", { type: "time" }); qEnd.value = s.quiet_end || "07:30";
+  const ntfy = el("input", { type: "text", placeholder: "https://ntfy.sh/your-topic", spellcheck: "false" });
+  ntfy.value = s.ntfy_url || "";
+
+  body.append(
+    el("label", { class: "switch-row" }, enabled,
+      el("span", {}, "Let the watch look after this server")),
+    el("hr", { class: "sep" }),
+    el("label", {}, "How often it looks", interval),
+    el("label", {}, "Quiet hours — only critical messages wake you",
+      el("div", { class: "field-row" }, qStart, el("span", { class: "muted" }, "to"), qEnd)),
+    el("hr", { class: "sep" }),
+    el("div", { class: "sec-title" }, "Push to your phone (ntfy / Matrix)"),
+    el("label", {}, "Send messages from", pushMin),
+    el("label", {}, "ntfy topic URL", ntfy),
+    el("div", { class: "card-actions", style: "margin-top:6px" },
+      el("button", { class: "btn small iconled", onclick: async (e) => {
+        e.target.disabled = true;
+        try { await api("/watch/test-delivery", { method: "POST" }); toast("Test sent"); }
+        catch (err) { toast(err.message); } finally { e.target.disabled = false; }
+      } }, ic("send"), " Send a test")),
+  );
+
+  const status = el("p", { class: "muted" });
+  const save = el("button", { class: "btn primary", onclick: async () => {
+    status.textContent = "saving…";
+    try {
+      await api("/watch", { method: "POST", body: JSON.stringify({ changes: {
+        enabled: enabled.checked,
+        interval_min: +interval.value,
+        push_min: pushMin.value,
+        quiet_start: qStart.value, quiet_end: qEnd.value,
+        ntfy_url: ntfy.value.trim(),
+      } }) });
+      status.textContent = "✓ saved";
+      closeModal();
+      loadWatchChannel();
+    } catch (e) { status.textContent = "✕ " + e.message; }
+  } }, "Save");
+  body.append(el("div", { class: "card-actions", style: "margin-top:12px" }, save), status);
+  openModal("Watch settings", body);
+  hydrateIcons(body);
+}
+
+function renderWatchTyping() {
+  const box = $("#watch-typing");
+  if (!box) return;
+  box.classList.toggle("hidden", !watchState.replying);
+  box.innerHTML = "";
+  if (watchState.replying) {
+    box.append(el("div", { class: "wtyping" },
+      el("div", { class: "wmsg-ava" }, ic("eye")),
+      el("div", { class: "wbubble" },
+        el("span", { class: "wdot" }), el("span", { class: "wdot" }), el("span", { class: "wdot" }))));
+    hydrateIcons(box);
+    scrollWatch();
+  }
+}
+
+/* composer */
+(function wireWatchComposer() {
+  const input = $("#watch-input");
+  const send = $("#watch-send");
+  if (!input || !send) return;
+  const fit = () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 132) + "px"; };
+  input.addEventListener("input", fit);
+  const doSend = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    if (state.me?.demo) { toast("The demo is read-only"); return; }
+    if (watchState.status && !watchState.status.enabled) { toast("Turn the watch on first"); return; }
+    input.value = ""; fit();
+    try {
+      const r = await api("/watch/chat", { method: "POST", body: JSON.stringify({ text }) });
+      if (r.message && !watchState.seen.has(r.message.id)) {
+        watchState.seen.add(r.message.id);
+        watchState.messages.push(r.message);
+      }
+      watchState.replying = !!r.replying;
+      renderWatchAll();
+      scrollWatch(true);
+      scheduleWatchPoll();
+    } catch (e) { toast(e.message); input.value = text; fit(); }
+  };
+  send.addEventListener("click", doSend);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !window.matchMedia("(pointer: coarse)").matches) {
+      e.preventDefault(); doSend();
+    }
+  });
+})();
+
+/* The left-edge back gesture, reused for any pushed page. */
+function attachEdgeBackTo(v, pop) {
+  if (!v) return;
+  const EDGE = 26, DECIDE = 10;
+  let x0 = 0, y0 = 0, tracking = false, decided = false, dragging = false;
+  v.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    if (t.clientX > EDGE) return;
+    x0 = t.clientX; y0 = t.clientY; tracking = true; decided = false; dragging = false;
+  }, { passive: true });
+  v.addEventListener("touchmove", (e) => {
+    if (!tracking) return;
+    const t = e.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+    if (!decided) {
+      if (Math.abs(dx) < DECIDE && Math.abs(dy) < DECIDE) return;
+      decided = true; dragging = Math.abs(dx) > Math.abs(dy);
+      if (!dragging) { tracking = false; return; }
+      v.classList.add("dragging"); v.classList.remove("push-in");
+      $("#view-home").classList.remove("hidden");
+    }
+    v.style.transform = `translateX(${Math.max(0, dx)}px)`;
+  }, { passive: true });
+  const end = () => {
+    if (!tracking) return;
+    tracking = false;
+    if (!dragging) return;
+    const dx = parseFloat((v.style.transform.match(/translateX\(([-\d.]+)px\)/) || [0, 0])[1]);
+    v.classList.remove("dragging"); v.style.transform = "";
+    if (dx > window.innerWidth / 3) pop();
+    else { v.classList.add("push-in"); $("#view-home").classList.add("hidden"); }
+  };
+  v.addEventListener("touchend", end, { passive: true });
+  v.addEventListener("touchcancel", end, { passive: true });
+}
+
+/* ===================================================================
+   Pushed detail sheets (Server overview, Files) — a reusable page that
+   slides in over Home with one shared topbar, titled per page.
+   =================================================================== */
+
+let currentSheet = "";
+
+function pushSheet(name, title, action) {
+  currentSheet = name;
+  $("#sheet-title").textContent = title;
+  const act = $("#sheet-action");
+  if (action) { act.classList.remove("hidden"); act.onclick = action; }
+  else act.classList.add("hidden");
+  const v = $("#view-" + name);
+  v.classList.remove("pop-out", "dragging");
+  v.style.transform = "";
+  showView(name);
+  v.classList.add("push-in");
+  hap("light");
+}
+function popSheet(name, fromDrag) {
+  const v = $("#view-" + name);
+  if (v.classList.contains("pop-out")) return;
+  v.classList.remove("push-in", "dragging");
+  $("#view-home").classList.remove("hidden");
+  v.style.transform = "";
+  v.classList.add("pop-out");
+  if (!fromDrag) hap("light");
+  const done = () => { v.classList.remove("pop-out"); showView("home"); };
+  v.addEventListener("animationend", done, { once: true });
+  setTimeout(() => { if (v.classList.contains("pop-out")) done(); }, 400);
+}
+$("#sheet-back").addEventListener("click", () => popSheet(currentSheet));
+attachEdgeBackTo($("#view-inventory"), () => popSheet("inventory", true));
+attachEdgeBackTo($("#view-files"), () => popSheet("files", true));
+
+/* ---------------- Server overview (inventory) ---------------- */
+
+async function openInventory() {
+  pushSheet("inventory", "Server overview", loadInventory);
+  loadInventory();
+}
+
+async function loadInventory() {
+  const box = $("#inventory-body");
+  box.innerHTML = "";
+  box.append(el("div", { class: "muted" }, "Loading…"));
+  try {
+    const d = await api("/inventory");
+    renderInventory(box, d);
+  } catch (e) {
+    box.replaceChildren(el("div", { class: "error" }, "✕ " + e.message));
+  }
+}
+
+const UNIT_DOT = { active: "ok", running: "ok", waiting: "ok", inactive: "", failed: "bad", dead: "" };
+
+function renderInventory(box, d) {
+  box.innerHTML = "";
+
+  // host summary
+  if (d.host) {
+    const h = d.host;
+    box.append(invSection("Host", null,
+      el("div", { class: "inv-host" },
+        invFact("Hostname", h.hostname),
+        invFact("OS", h.os),
+        invFact("Kernel", h.kernel),
+        invFact("Arch", h.arch),
+        invFact("CPU", h.cores ? h.cores + " cores" : ""),
+        invFact("Memory", h.memory ? fmtBytes(h.memory) : ""),
+        invFact("Uptime", h.uptime ? fmtUptime(h.uptime) : ""))));
+  }
+
+  // domains
+  if ((d.domains || []).length) {
+    const rows = d.domains.map((dm) => el("a", { class: "inv-row", href: (dm.tls ? "https://" : "http://") + dm.domain,
+      target: "_blank", rel: "noopener" },
+      el("span", { class: "tile-icon sm " + (dm.enabled ? "tint-1" : "tint-0") }, ic(dm.tls ? "lock" : "globe")),
+      el("div", { class: "inv-main" },
+        el("div", { class: "inv-title" }, dm.domain, dm.enabled ? null : el("span", { class: "chip" }, "disabled")),
+        el("div", { class: "inv-sub" }, "→ " + (dm.service || dm.host || dm.target || ""))),
+      el("span", { class: "inv-chev" }, ic("external-link"))));
+    box.append(invSection("Domains", d.domains.length, rows, d.domains[0]?.source));
+  }
+
+  // systemd services
+  if ((d.services || []).length) {
+    box.append(invSection("Services", d.services.length,
+      d.services.map((s) => unitRow(s))));
+  }
+
+  // timers
+  if ((d.timers || []).length) {
+    box.append(invSection("Timers", d.timers.length,
+      d.timers.map((t) => unitRow(t, true))));
+  }
+
+  // compose stacks
+  if ((d.stacks || []).length) {
+    box.append(invSection("Compose stacks", d.stacks.length,
+      d.stacks.map((st) => {
+        const run = (st.services || []).filter((s) => (s.state || "").includes("run")).length;
+        return el("button", { class: "inv-row", onclick: () => showView("apps") },
+          el("span", { class: "tile-icon sm tint-2" }, ic("layers")),
+          el("div", { class: "inv-main" },
+            el("div", { class: "inv-title" }, st.project),
+            el("div", { class: "inv-sub mono" }, st.dir)),
+          el("span", { class: "chip" }, `${run}/${(st.services || []).length}`));
+      })));
+  }
+
+  // cron
+  if ((d.cron || []).length) {
+    box.append(invSection("Cron jobs", d.cron.length,
+      d.cron.map((c) => el("div", { class: "inv-row" },
+        el("span", { class: "tile-icon sm tint-3" }, ic("clock")),
+        el("div", { class: "inv-main" },
+          el("div", { class: "inv-title mono" }, c.schedule),
+          el("div", { class: "inv-sub mono" }, c.command))))));
+  }
+
+  // drives
+  if ((d.drives || []).length) {
+    box.append(invSection("Drives", d.drives.length,
+      d.drives.map((dr) => {
+        const pct = dr.percent != null ? dr.percent : (dr.total ? Math.round(dr.used / dr.total * 100) : 0);
+        return el("div", { class: "inv-row" },
+          el("span", { class: "tile-icon sm " + (pct > 90 ? "tint-3" : "tint-1") }, ic("hard-drive")),
+          el("div", { class: "inv-main" },
+            el("div", { class: "inv-title" }, dr.mount, dr.model ? el("span", { class: "inv-sub", style: "font-weight:400" }, "  " + dr.model) : null),
+            el("div", { class: "inv-bar" }, el("div", { style: `width:${pct}%` + (pct > 90 ? ";background:var(--danger)" : "") })),
+            el("div", { class: "inv-sub" }, `${fmtBytes(dr.used)} of ${fmtBytes(dr.total)} · ${pct}%`)));
+      })));
+  }
+
+  hydrateIcons(box);
+}
+
+function invSection(title, count, rows, note) {
+  const head = el("div", { class: "section-head" },
+    el("h2", {}, title, count != null ? el("span", { class: "muted", style: "font-weight:400;font-size:13px" }, " " + count) : null));
+  if (note) head.append(el("span", { class: "muted", style: "font-size:12px" }, note));
+  return el("div", { class: "inv-block" }, head, el("div", { class: "inv-list" }, rows));
+}
+
+function invFact(label, value) {
+  if (!value) return null;
+  return el("div", { class: "inv-fact" },
+    el("span", { class: "inv-fact-l" }, label), el("span", { class: "inv-fact-v" }, value));
+}
+
+function unitRow(s, isTimer) {
+  const dot = UNIT_DOT[s.active] ?? (UNIT_DOT[s.sub] ?? "");
+  const sub = isTimer
+    ? (s.next_run ? "next " + shortTime(s.next_run) : s.triggers ? "→ " + s.triggers : s.sub || "")
+    : [s.active + (s.sub && s.sub !== s.active ? " (" + s.sub + ")" : ""),
+       s.enabled && s.enabled !== "static" ? s.enabled : null].filter(Boolean).join(" · ");
+  return el("button", { class: "inv-row", onclick: () => openUnitDetail(s.unit) },
+    el("span", { class: "unit-dot " + dot }),
+    el("div", { class: "inv-main" },
+      el("div", { class: "inv-title" }, s.unit,
+        s.result === "failed" ? el("span", { class: "chip crit" }, "failed") : null),
+      el("div", { class: "inv-sub" }, s.description || sub)),
+    el("span", { class: "inv-chev" }, ic("chevron-right")));
+}
+
+function shortTime(s) {
+  // the server sends e.g. "Sun 2026-10-11 02:33:51 UTC" — show the useful middle
+  const m = String(s).match(/(\w{3} )?(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+  return m ? m[2] : s;
+}
+
+async function openUnitDetail(unit) {
+  openModal(unit, el("div", { class: "thinking" }, "loading"));
+  let d;
+  try { d = await api(`/system/units/${encodeURIComponent(unit)}`); }
+  catch (e) { setModalBody(el("div", { class: "error" }, e.message)); return; }
+  renderUnitDetail(unit, d);
+}
+
+function renderUnitDetail(unit, d) {
+  const body = el("div", {});
+  const dot = UNIT_DOT[d.active] ?? "";
+  body.append(el("div", { class: "unit-head" },
+    el("span", { class: "unit-dot " + dot }),
+    el("div", { style: "min-width:0;flex:1" },
+      el("div", { class: "card-title" }, d.description || unit),
+      el("div", { class: "card-sub" }, `${d.active}${d.sub && d.sub !== d.active ? " (" + d.sub + ")" : ""} · ${d.enabled}`))));
+
+  const facts = el("div", { class: "unit-facts" });
+  for (const [l, v] of [["Next run", d.next_run && shortTime(d.next_run)], ["Last run", d.last_run && shortTime(d.last_run)],
+    ["Since", d.since && shortTime(d.since)], ["Triggers", d.triggers], ["Triggered by", d.triggered_by],
+    ["Result", d.result]]) {
+    if (v) facts.append(el("div", { class: "inv-fact" }, el("span", { class: "inv-fact-l" }, l), el("span", { class: "inv-fact-v" }, v)));
+  }
+  if (facts.children.length) body.append(facts);
+  if (d.path) body.append(el("div", { class: "inv-sub mono", style: "margin:6px 0" }, d.path));
+
+  // actions
+  const demo = state.me?.demo;
+  const running = ["active", "running", "waiting"].includes(d.active) || ["running", "waiting"].includes(d.sub);
+  const actions = el("div", { class: "card-actions", style: "margin:12px 0" });
+  const act = (label, name, cls) => el("button", { class: "btn small " + (cls || ""), disabled: demo,
+    onclick: () => runUnitAction(unit, name) }, label);
+  if (running) actions.append(act("Restart", "restart", "primary"), act("Stop", "stop", "danger"));
+  else actions.append(act("Start", "start", "primary"));
+  actions.append(d.enabled === "enabled" ? act("Disable", "disable") : act("Enable", "enable"));
+  body.append(actions);
+
+  body.append(el("div", { class: "rep-sec" }, "Recent log"));
+  body.append(el("pre", { class: "rep-out", style: "max-height:300px" }, (d.logs || "").trim() || "(no recent log)"));
+
+  openModal(unit, body);
+  hydrateIcons(body);
+}
+
+async function runUnitAction(unit, action) {
+  toast(`${action}…`);
+  try {
+    await api(`/system/units/${encodeURIComponent(unit)}/${action}`, { method: "POST" });
+    toast(`${unit}: ${action} done`);
+    openUnitDetail(unit);    // refresh
+    loadInventory();
+  } catch (e) { toast("✕ " + e.message); }
+}
+
+/* ---------------- Files: a full manager (0.25/0.26) ----------------
+   Browse the server's filesystem inside the agent's allowed roots, and
+   actually manage it: open & edit text, upload, make files and folders,
+   rename, change permissions, download, delete. The modal `openExplorer`
+   stays the lightweight "attach to chat" picker; this is the workbench. */
+
+const filesState = { path: "", data: null };
+
+function openFiles() {
+  pushSheet("files", "Files", () => loadFiles(filesState.path));
+  loadFiles(filesState.path || "");
+}
+
+async function loadFiles(path) {
+  const box = $("#files-body");
+  box.innerHTML = "<div class='muted'>Loading…</div>";
+  let r;
+  try { r = await api("/fs?files=1" + (path ? `&path=${encodeURIComponent(path)}` : "")); }
+  catch (e) { box.innerHTML = ""; box.append(el("div", { class: "error" }, "✕ " + e.message)); return; }
+  filesState.path = r.path || "";
+  filesState.data = r;
+  renderFiles(box, r);
+}
+
+function renderFiles(box, r) {
+  box.innerHTML = "";
+  box.append(filesCrumbs(r));
+
+  if (r.path) {
+    const bar = el("div", { class: "files-toolbar" });
+    bar.append(
+      fbtn("file-plus", "New file", () => newFilePrompt(r.path)),
+      fbtn("folder-plus", "New folder", () => newFolderPrompt(r.path)),
+      fbtn("upload", "Upload", () => uploadToFolder(r.path)),
+      fbtn("terminal", "Terminal", () => { popSheet("files"); setTimeout(() =>
+        openTerminalWithCommand("cd " + shellQuote(r.path)), 320); }),
+    );
+    box.append(bar);
+  }
+
+  const list = el("div", { class: "files-list" });
+  if (r.parent) {
+    list.append(el("button", { class: "file-row", onclick: () => loadFiles(r.parent) },
+      el("span", { class: "file-ico" }, ic("corner-left-up")), el("span", { class: "file-name" }, "..")));
+  }
+  for (const d of r.dirs) {
+    const name = r.path ? d.name : (d.path.replace(/^\/host/, "") || "/");
+    list.append(el("button", { class: "file-row", onclick: () => loadFiles(d.path) },
+      el("span", { class: "file-ico dir" }, ic("folder")),
+      el("span", { class: "file-name" }, name),
+      r.path ? el("button", { class: "file-kebab", onclick: (e) => { e.stopPropagation(); fileMenu(d, true); } }, ic("more-horizontal")) : null,
+      el("span", { class: "file-chev" }, ic("chevron-right"))));
+  }
+  for (const f of (r.file_entries || [])) {
+    list.append(el("button", { class: "file-row", onclick: () => openFileWorkbench(f) },
+      el("span", { class: "file-ico" }, ic(f.text ? "file-text" : "file")),
+      el("span", { class: "file-name" }, f.name),
+      el("span", { class: "file-size" }, fmtFsSize(f.size)),
+      el("button", { class: "file-kebab", onclick: (e) => { e.stopPropagation(); fileMenu(f, false); } }, ic("more-horizontal"))));
+  }
+  if (r.path && !r.dirs.length && !(r.file_entries || []).length) {
+    list.append(el("div", { class: "file-row muted" }, "empty folder"));
+  }
+  box.append(list);
+  if (r.path) {
+    box.append(el("div", { class: "muted", style: "margin:10px 2px;font-size:12px" },
+      `${r.dirs.length} folders · ${r.files} files` + (r.free != null ? ` · ${fmtBytes(r.free)} free` : "") +
+      (r.truncated ? " · list truncated" : "")));
+  }
+  hydrateIcons(box);
+}
+
+function fbtn(icon, label, onclick) {
+  return el("button", { class: "btn small iconled", onclick }, ic(icon), " " + label);
+}
+
+function filesCrumbs(r) {
+  const crumbs = el("div", { class: "ws-crumbs files-crumbs" });
+  crumbs.append(el("button", { class: "iconled", onclick: () => loadFiles("") }, ic("hard-drive"), " roots"));
+  const root = (r.roots || []).find((x) => r.path === x || r.path.startsWith(x + "/"));
+  if (root) {
+    crumbs.append(el("span", { class: "muted" }, "›"),
+      el("button", { onclick: () => loadFiles(root) }, root.replace(/^\/host/, "") || "/"));
+    const rel = r.path.slice(root.length).split("/").filter(Boolean);
+    let acc = root;
+    for (const seg of rel) {
+      acc += "/" + seg;
+      const target = acc;
+      crumbs.append(el("span", { class: "muted" }, "›"),
+        el("button", { onclick: () => loadFiles(target) }, seg));
+    }
+  }
+  return crumbs;
+}
+
+function fileMenu(entry, isDir) {
+  const name = entry.name;
+  const actions = [];
+  if (!isDir) {
+    actions.push({ label: "Download", icon: "download", onclick: () => downloadFile(entry.path) });
+    actions.push({ label: "Attach to chat", icon: "sparkles", onclick: () => {
+      attachFileContext(entry.path, entry.path.replace(/^\/host/, "")); popSheet("files"); showView("vibe"); } });
+  } else {
+    actions.push({ label: "Download as .zip", icon: "download", onclick: () => downloadArchive(entry.path) });
+  }
+  actions.push({ label: "Rename", icon: "pen-line", onclick: () => renamePrompt(entry, name) });
+  actions.push({ label: "Permissions", icon: "lock", onclick: () => chmodPrompt(entry, isDir) });
+  if (!isDir && /\.(zip|tar|tgz|tar\.gz|gz)$/i.test(name)) {
+    actions.push({ label: "Extract here", icon: "package-open", onclick: () => extractArchive(entry.path) });
+  }
+  actions.push({ sep: true });
+  actions.push({ label: "Delete", icon: "trash-2", danger: true, onclick: () => deletePath(entry) });
+  actionSheet(name, actions);
+}
+
+async function newFilePrompt(dir) {
+  const name = prompt("New file name:");
+  if (!name) return;
+  try {
+    await api("/fs/write", { method: "POST", body: JSON.stringify({
+      path: dir.replace(/\/$/, "") + "/" + name, content: "", create: true }) });
+    loadFiles(dir);
+  } catch (e) { toast("✕ " + e.message); }
+}
+async function newFolderPrompt(dir) {
+  const name = prompt("New folder name:");
+  if (!name) return;
+  try {
+    await api("/fs/mkdir", { method: "POST", body: JSON.stringify({ path: dir, name }) });
+    loadFiles(dir);
+  } catch (e) { toast("✕ " + e.message); }
+}
+async function renamePrompt(entry, old) {
+  const name = prompt("Rename to:", old);
+  if (!name || name === old) return;
+  try {
+    await api("/fs/rename", { method: "POST", body: JSON.stringify({ path: entry.path, name }) });
+    loadFiles(filesState.path);
+  } catch (e) { toast("✕ " + e.message); }
+}
+async function deletePath(entry) {
+  if (!confirm(`Delete “${entry.name}”? This cannot be undone.`)) return;
+  try {
+    await api("/fs/delete", { method: "POST", body: JSON.stringify({ paths: [entry.path] }) });
+    toast("Deleted");
+    loadFiles(filesState.path);
+  } catch (e) { toast("✕ " + e.message); }
+}
+function chmodPrompt(entry, isDir) {
+  const mode = prompt(`Permissions for “${entry.name}” (octal, e.g. 644 or 755):`,
+    isDir ? "755" : "644");
+  if (!mode) return;
+  const rec = isDir && confirm("Apply to everything inside this folder too?");
+  api("/fs/chmod", { method: "POST", body: JSON.stringify({ path: entry.path, mode, recursive: rec }) })
+    .then(() => { toast("Permissions changed"); loadFiles(filesState.path); })
+    .catch((e) => toast("✕ " + e.message));
+}
+async function extractArchive(path) {
+  toast("Extracting…");
+  try {
+    await api("/fs/extract", { method: "POST", body: JSON.stringify({ path }) });
+    toast("Extracted"); loadFiles(filesState.path);
+  } catch (e) { toast("✕ " + e.message); }
+}
+function downloadFile(path) {
+  downloadWithToken("/api/fs/raw?path=" + encodeURIComponent(path));
+}
+function downloadArchive(path) {
+  downloadWithToken("/api/fs/archive?path=" + encodeURIComponent(path));
+}
+async function downloadWithToken(urlPath) {
+  // the endpoints need the Authorization header, so fetch as a blob then save
+  toast("Preparing download…");
+  try {
+    const res = await fetch(apiBase() + urlPath, { headers: { Authorization: "Bearer " + state.token } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const nameM = cd.match(/filename="?([^"]+)"?/);
+    const a = el("a", { href: URL.createObjectURL(blob), download: nameM ? nameM[1] : "download" });
+    document.body.append(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } catch (e) { toast("✕ " + e.message); }
+}
+
+function uploadToFolder(dir) {
+  if (state.me?.demo) { toast("The demo is read-only"); return; }
+  const input = el("input", { type: "file", multiple: "true", style: "display:none" });
+  input.addEventListener("change", async () => {
+    for (const f of [...input.files]) {
+      toast("Uploading " + f.name + "…");
+      try {
+        const res = await fetch(apiBase() + "/api/fs/upload?path=" + encodeURIComponent(dir) +
+          "&name=" + encodeURIComponent(f.name), {
+          method: "POST",
+          headers: { Authorization: "Bearer " + state.token, "Content-Type": f.type || "application/octet-stream" },
+          body: f });
+        if (!res.ok) { let m = res.statusText; try { m = (await res.json()).detail || m; } catch {} throw new Error(m); }
+      } catch (e) { toast("✕ " + f.name + ": " + e.message); }
+    }
+    input.remove();
+    loadFiles(dir);
+  });
+  document.body.append(input);
+  input.click();
+}
+
+/* Open one file: view, and for text, edit & save (with a conflict guard and
+   one-step undo through the kept previous version). */
+async function openFileWorkbench(f) {
+  openModal(f.name, el("div", { class: "thinking" }, "loading"));
+  $("#modal").classList.add("modal-tall");
+  $("#modal-close").addEventListener("click", () => $("#modal").classList.remove("modal-tall"), { once: true });
+  let r;
+  try { r = await api("/fs/read?path=" + encodeURIComponent(f.path)); }
+  catch (e) { setModalBody(el("div", { class: "error" }, e.message)); return; }
+
+  const body = el("div", { class: "fileedit" });
+  const shown = f.path.replace(/^\/host/, "");
+  body.append(el("div", { class: "muted mono", style: "font-size:12px;margin-bottom:8px;word-break:break-all" }, shown));
+
+  if (r.binary) {
+    body.append(el("div", { class: "muted", style: "margin:12px 0" },
+      `Binary file · ${fmtFsSize(r.size)} — not editable here.`),
+      el("div", { class: "card-actions" },
+        el("button", { class: "btn small primary iconled", onclick: () => downloadFile(f.path) }, ic("download"), " Download")));
+    setModalBody(body); hydrateIcons(body); return;
+  }
+
+  const ta = el("textarea", { class: "fileedit-area", spellcheck: "false" }, r.content);
+  let lastModified = r.modified;
+  const status = el("span", { class: "muted", style: "font-size:12px" });
+  const save = el("button", { class: "btn small primary iconled", onclick: async () => {
+    status.textContent = "saving…";
+    try {
+      const w = await api("/fs/write", { method: "POST", body: JSON.stringify({
+        path: f.path, content: ta.value, expected_modified: lastModified }) });
+      lastModified = w.modified;
+      status.textContent = "✓ saved";
+      // offer an undo to the kept previous version
+      if (w.version) {
+        status.textContent = "";
+        status.append(el("span", {}, "✓ saved · "),
+          el("button", { class: "linkish", onclick: async () => {
+            try { await api("/fs/restore", { method: "POST", body: JSON.stringify({ version: w.version }) });
+              toast("Reverted"); openFileWorkbench(f); } catch (e) { toast(e.message); }
+          } }, "undo"));
+      }
+      setTimeout(() => { if (status.textContent === "✓ saved") status.textContent = ""; }, 4000);
+    } catch (e) {
+      status.textContent = "✕ " + (e.message.includes("changed") || e.message.includes("modified")
+        ? "file changed on disk — reopen to get the latest" : e.message);
+    }
+  } }, ic("save"), " Save");
+
+  const actions = el("div", { class: "card-actions", style: "margin-top:10px" },
+    save,
+    el("button", { class: "btn small iconled", onclick: () => downloadFile(f.path) }, ic("download"), " Download"),
+    el("button", { class: "btn small iconled", onclick: () => {
+      attachFileContext(f.path, shown); closeModal(); $("#modal").classList.remove("modal-tall"); showView("vibe"); } },
+      ic("sparkles"), " Attach"),
+    status);
+  body.append(ta, actions);
+  if (r.truncated) body.append(el("div", { class: "muted", style: "margin-top:6px" }, "… truncated (file larger than the preview cap)"));
+  setModalBody(body);
   hydrateIcons(body);
 }
 

@@ -143,7 +143,8 @@ def test_the_watch_cannot_change_the_server_from_the_channel(w, monkeypatch):
     ]))
     channel.add("user", "Restart nextcloud")
     asyncio.run(watch.answer())
-    assert ran == ["docker ps"]                       # the restart never ran
+    # the restart never ran; the look ran in the user's time zone
+    assert ran == ["export TZ=Europe/Berlin; docker ps"]
 
 
 def test_no_ai_says_so_in_the_channel(w, monkeypatch):

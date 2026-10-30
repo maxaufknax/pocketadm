@@ -3,6 +3,44 @@
 All notable changes to PocketADM. Versions are the app version reported at
 `/api/info` and shown in *Settings → About*.
 
+## v0.26.1 — A watch you can believe · an update list that settles down
+
+**The watch states facts, not guesses.** Every round now starts from what PocketADM already
+knows for sure: which public sites answer (checked every five minutes from the server through
+the internet, the way visitors reach them) and how long the certificates they actually serve
+still last, what each pending update really is (a new version, or the same version rebuilt),
+which host packages wait and whether unattended upgrades will install them anyway, and whether
+the host waits for a reboot. The prompt adds what is normal on a Linux server (a oneshot service
+that ran and ended, weekly rebuilds of official images, renewal errors for certificates no site
+serves) and asks for times in the user's own time zone; commands the watch runs print that time
+zone too. A message naming a CVE that appears nowhere in what the watch read is held back.
+
+**No more of the same message under a new name.** Topic keys are compared by meaning
+(`updates-pending` and `docker-image-updates-pending` are one topic; so are all certificate,
+backup and dynamic-DNS stories), a state that does not change is mentioned at most twice a week,
+and a round always ends in a decision — after twelve looks the watch has to make up its mind.
+
+**Outages are noticed, and so is their end.** A public site that fails twice in a row becomes a
+warning the watch investigates; when it answers again after an outage the user was told about,
+a short all-clear follows ("studgo.de is reachable again – it was down for 18 minutes"). The
+watch can also send an all-clear itself for something it reported (`resolves`). New setting
+`watch.sites` picks the sites; by default the reverse proxy's TLS sites are checked.
+
+**The update list settles down.** A rebuilt image with an unchanged version is offered once the
+installed image is 30 days old, never carries the security badge and ranks low; each update
+knows since when it waits (`pending_since`). Two images of the same software are named by their
+containers ("Redis (authentik-redis)"). Images built on the server are recognised again under
+Docker's containerd image store, where they carry a digest too (they showed "registry check
+failed"), and an inherited Ubuntu release label ("24.04") is no longer taken for the app's
+version. Host package updates come from the host's own apt (they came from the container's,
+which never had any), with the security updates among them, unattended upgrades and a pending
+reboot — which the health check now sees through `/run` (the `/var/run` link pointed into the
+container).
+
+**Fixes.** GLM and Magistral on Mistral's API stream typed chunks; the watch and the assistant
+read them instead of failing. Cached prompt tokens on OpenAI-compatible APIs are priced once,
+at the cache rate (they were counted at full price and again as cache reads).
+
 ## v0.26.0 — The server at a glance · an assistant that knows it · notes · attachments · themes
 
 **The server at a glance.** `GET /api/inventory` finds what an admin keeps in their head, on any

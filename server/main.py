@@ -15,8 +15,8 @@ from . import (agents, ai, appstore, audit, auth, backups, bootstrap, chats,
                localai, metrics, oidc, pairing, permissions, reports, servermap,
                servicegroups, sessions, skills, snapshots, sysinfo, terminal, termsessions,
                tls, updates)
-from . import (accounts, activity, channel, files, inventory, memory, push, signin,
-               suggestions, uploads, watch)
+from . import (accounts, activity, channel, files, gameservers, inventory, memory, push,
+               signin, suggestions, uploads, watch)
 
 app = FastAPI(title="Helmsman", docs_url=None, redoc_url=None)
 auth.bootstrap_password()
@@ -86,6 +86,7 @@ async def _startup():
         reports.start_scheduler()
         agents.start_scheduler()
         watch.start()
+        gameservers.start()
         asyncio.ensure_future(appstore.remote_refresher())
         asyncio.ensure_future(localai.reconnect_on_startup())
 
@@ -890,7 +891,7 @@ async def stream_job(job_id: str):
 @app.get("/api/updates", dependencies=[authed])
 async def get_updates(force: bool = False):
     docker_updates, apt = await asyncio.gather(
-        updates.check_docker_updates(force), updates.check_apt_updates())
+        updates.check_docker_updates(force), updates.check_apt_updates(force))
     return {"docker": docker_updates, "apt": apt}
 
 
@@ -1808,6 +1809,28 @@ async def watch_channel_delete(msg_id: str):
 
 
 # ------------------------------------------------------------------ push to phones
+
+# ------------------------------------------------------------------ game servers
+
+@app.get("/api/gameservers", dependencies=[authed])
+async def gameservers_index():
+    """Minecraft servers watched by a status ping: up/down, version, who is on."""
+    return gameservers.overview()
+
+
+class GameServersBody(BaseModel):
+    servers: list[dict]
+
+
+@app.put("/api/gameservers", dependencies=[authed])
+async def gameservers_set(body: GameServersBody):
+    try:
+        gameservers.set_servers(body.servers)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    gameservers.start()
+    return gameservers.overview()
+
 
 @app.get("/api/push", dependencies=[authed])
 async def push_status():

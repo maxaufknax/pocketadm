@@ -222,15 +222,25 @@ async def check_updates_pending() -> list[dict]:
     try:
         apt = await updates.check_apt_updates()
         if apt["available"]:
-            n = len(apt["packages"])
-            out.append(_check("apt", "Host packages", "📦",
-                              "ok" if n == 0 else "warn" if n < 20 else "crit",
-                              "up to date" if n == 0 else f"{n} upgradable packages"))
+            n, sec, auto = len(apt["packages"]), apt.get("security", 0), apt.get("auto_security")
+            # with unattended upgrades on, pending packages are tomorrow
+            # morning's routine, not a to-do
+            status = ("ok" if n == 0 else "crit" if n >= 20 and sec and not auto
+                      else "warn" if (sec and not auto) or n >= 20 else "info")
+            summary = "up to date" if n == 0 else \
+                f"{n} upgradable package{'s' if n != 1 else ''}" + (f", {sec} security" if sec else "") + \
+                (" — security updates install automatically every day" if auto else "")
+            out.append(_check("apt", "Host packages", "📦", status, summary))
     except Exception:
         pass
-    if Path(HOST + "/var/run/reboot-required").exists():
+    # /var/run is a symlink to /run on the host; through the /host mount it would
+    # resolve into this container's own /run, so ask /run directly
+    if Path(HOST + "/run/reboot-required").exists():
+        pkgs = sorted(set((Path(HOST + "/run/reboot-required.pkgs").read_text(errors="replace")
+                           if Path(HOST + "/run/reboot-required.pkgs").exists() else "").split()))
         out.append(_check("reboot", "Reboot required", "🔄", "warn",
-                          "the host wants a reboot (kernel/libc update)",
+                          "the host wants a reboot" + (f" ({', '.join(pkgs[:4])})" if pkgs
+                                                       else " (kernel/libc update)"),
                           recommendation="Schedule a reboot when convenient."))
     return out
 
@@ -319,8 +329,13 @@ def _backup_timers(host: str = HOST) -> list[dict]:
             last = stamp.stat().st_mtime if stamp.exists() else None
         except OSError:
             last = None
+        # An enabled timer is a symlink in timers.target.wants. When we read it
+        # through the /host mount its target is a host-absolute path that does not
+        # resolve inside this container, so .exists() would follow the dangling
+        # link and wrongly report disabled — test the link itself.
+        wants = units / "timers.target.wants" / timer.name
         out.append({"name": timer.name.removesuffix(".timer"),
-                    "enabled": (units / "timers.target.wants" / timer.name).exists(),
+                    "enabled": wants.is_symlink() or wants.exists(),
                     "last_run": last})
     return out
 

@@ -91,6 +91,26 @@
       <span class="tb-title">Settings</span>
       <span class="spacer"></span>
     </div>
+    <!-- The watch's own chrome: like a chat room's header — who it is, how it is
+         doing, and the few things you do to it. Shares the push/pop with Home so
+         the slide doesn't jump by the bar's height (same reason Settings does). -->
+    <div class="tb-side tb-watch">
+      <button id="watch-back" class="tb-back" title="back to Home"><span data-icon="chevron-left"></span> Home</button>
+      <div class="tb-watch-title">
+        <span class="tb-title">Watch</span>
+        <span id="watch-status" class="tb-sub"></span>
+      </div>
+      <span class="spacer"></span>
+      <button id="watch-menu-btn" class="iconbtn" title="watch actions"><span data-icon="more-horizontal"></span></button>
+    </div>
+    <!-- Generic chrome for pushed detail pages (Server overview, Files). One bar
+         reused for all of them, titled per page, sharing the Home push/pop. -->
+    <div class="tb-side tb-sheet">
+      <button id="sheet-back" class="tb-back" title="back to Home"><span data-icon="chevron-left"></span> Home</button>
+      <span class="tb-title" id="sheet-title">…</span>
+      <span class="spacer"></span>
+      <button id="sheet-action" class="iconbtn hidden" title="refresh"><span data-icon="refresh-cw"></span></button>
+    </div>
   </header>
 
   <main id="views">
@@ -365,16 +385,24 @@
 
       <div class="section-head"><h2>AI providers</h2></div>
       <div class="card form-card">
-        <p class="muted" style="margin-bottom:10px">Bring your own keys — they never leave this server.
-        Enter <code>-</code> to remove a stored key.</p>
-        <label>Anthropic API key <input type="password" id="key-anthropic" placeholder="sk-ant-… "></label>
-        <label>OpenRouter API key <input type="password" id="key-openrouter" placeholder="sk-or-…"></label>
-        <label>OpenAI API key <input type="password" id="key-openai" placeholder="sk-…"></label>
-        <label>Mistral API key <input type="password" id="key-mistral" placeholder="…"></label>
+        <p class="muted" style="margin-bottom:12px">Connect an AI with a subscription you already pay
+        for — through its coding app, signed in right here — or with an API key. Either way it powers
+        the assistant, the watch and the explainers.</p>
+        <div id="ai-accounts"><div class="muted">Loading accounts…</div></div>
+        <hr class="sep">
         <label>Default model
           <select id="ai-default-model" class="select wide"></select>
         </label>
-        <button id="ai-save" class="btn primary">Save</button>
+        <details class="adv-fold">
+          <summary>Advanced: enter API keys directly</summary>
+          <p class="muted" style="margin:8px 0">Bring your own keys — they never leave this server.
+          Enter <code>-</code> to remove a stored key.</p>
+          <label>Anthropic API key <input type="password" id="key-anthropic" placeholder="sk-ant-… "></label>
+          <label>OpenRouter API key <input type="password" id="key-openrouter" placeholder="sk-or-…"></label>
+          <label>OpenAI API key <input type="password" id="key-openai" placeholder="sk-…"></label>
+          <label>Mistral API key <input type="password" id="key-mistral" placeholder="…"></label>
+        </details>
+        <button id="ai-save" class="btn primary" style="margin-top:10px">Save</button>
         <p id="ai-status" class="muted"></p>
       </div>
 
@@ -418,10 +446,22 @@
         <textarea id="agent-instructions" rows="4" spellcheck="false" placeholder="e.g. Always explain in simple terms. Never restart containers without asking. Prefer German."></textarea>
         <button id="agent-instructions-save" class="btn" style="margin-top:8px">Save instructions</button>
         <hr class="sep">
-        <div class="sec-title iconled"><span data-icon="brain"></span> Memory <span class="muted" style="font-weight:400">· the agent writes this itself</span></div>
-        <p class="muted" style="margin:2px 0 8px">What the agent has learned about your server across chats. It updates this on its own — edit or clear it anytime.</p>
-        <textarea id="agent-memory" rows="6" spellcheck="false" placeholder="(empty — the agent will fill this as it works)"></textarea>
-        <button id="agent-memory-save" class="btn" style="margin-top:8px">Save memory</button>
+        <div class="sec-row">
+          <div class="sec-title iconled"><span data-icon="brain"></span> Memory <span class="muted" style="font-weight:400">· facts the agent keeps</span></div>
+          <div class="row-inline">
+            <button id="notes-undo" class="btn small hidden">Undo</button>
+            <button id="notes-tidy" class="btn small iconled"><span data-icon="sparkles"></span> Tidy up</button>
+          </div>
+        </div>
+        <p class="muted" style="margin:2px 0 8px">What the agent has learned about your server — one short fact per note. It writes these itself as it works; add, edit or remove any. <span id="notes-stats"></span></p>
+        <div id="notes-add" class="notes-add"></div>
+        <div id="notes-list"><div class="muted">Loading…</div></div>
+        <details class="adv-fold">
+          <summary>Advanced: edit as raw text</summary>
+          <p class="muted" style="margin:8px 0">The notes as one Markdown document. Saving here replaces all of them.</p>
+          <textarea id="agent-memory" rows="6" spellcheck="false" placeholder="(empty — the agent will fill this as it works)"></textarea>
+          <button id="agent-memory-save" class="btn" style="margin-top:8px">Save memory</button>
+        </details>
         <p id="agent-status" class="muted"></p>
       </div>
 
@@ -581,6 +621,38 @@
         <button id="logout" class="btn danger">Sign out</button>
       </div>
       <p class="muted center" style="margin-top:24px">PocketADM <span id="app-version"></span> · open source server command center</p>
+    </section>
+
+    <!-- Watch: the background watch as a conversation, not a list of reports —
+         what it found on its own and what you asked it, newest at the bottom,
+         like a bot in a Matrix room. Reached from the bell on Home; shares the
+         topbar chrome so the push/pop slides without a jump. -->
+    <section id="view-watch" class="view hidden">
+      <div id="watch-log" class="wchat-log">
+        <div id="watch-banners" class="wchat-banners"></div>
+        <div id="watch-earlier" class="wchat-earlier hidden"></div>
+        <div id="watch-messages"></div>
+        <div id="watch-typing" class="hidden"></div>
+      </div>
+      <div class="wchat-input-row">
+        <div class="composer">
+          <textarea id="watch-input" rows="1" placeholder="Message the watch" autocapitalize="sentences"></textarea>
+          <button id="watch-send" class="btn primary round send" title="send"><span data-icon="arrow-up"></span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Server overview: what an admin keeps in their head — the domains and what
+         each leads to, the systemd services and timers, cron, compose stacks and
+         the drives. Read-only map, with unit start/stop behind each service. -->
+    <section id="view-inventory" class="view hidden">
+      <div id="inventory-body"><div class="muted">Loading…</div></div>
+    </section>
+
+    <!-- Files: a manager for the server's filesystem (browse, open, edit, upload,
+         archive, delete), inside the agent's allowed folders. -->
+    <section id="view-files" class="view hidden">
+      <div id="files-body"><div class="muted">Loading…</div></div>
     </section>
   </main>
 

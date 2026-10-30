@@ -1099,9 +1099,12 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
                     continue
                 ev = json.loads(line[6:])
                 if ev.get("usage"):
-                    usage["input"] = ev["usage"].get("prompt_tokens", 0)
+                    cached = (ev["usage"].get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
+                    # prompt_tokens includes the cached ones; like Anthropic's
+                    # usage, "input" is only what was not read from the cache, so
+                    # estimate_cost does not price the cached part twice
+                    usage["input"] = max(0, ev["usage"].get("prompt_tokens", 0) - cached)
                     usage["output"] = ev["usage"].get("completion_tokens", 0)
-                    cached = (ev["usage"].get("prompt_tokens_details") or {}).get("cached_tokens", 0)
                     if cached:
                         usage["cache_read"] = cached
                 if not ev.get("choices"):
@@ -1111,8 +1114,22 @@ async def stream_openai(cfg: dict, messages: list, sysprompt: str,
                 reasoning = delta.get("reasoning") or delta.get("reasoning_content")
                 if reasoning:
                     yield ("thinking", reasoning)
-                if delta.get("content"):
-                    yield ("text", delta["content"])
+                content = delta.get("content")
+                if isinstance(content, list):
+                    # Mistral's reasoning models (Magistral, GLM on Mistral's API)
+                    # stream typed chunks: {"type": "thinking", "thinking": [...]}
+                    # and {"type": "text", "text": …}
+                    for chunk in content:
+                        if not isinstance(chunk, dict):
+                            continue
+                        if chunk.get("type") == "text" and chunk.get("text"):
+                            yield ("text", chunk["text"])
+                        elif chunk.get("type") == "thinking":
+                            for sub in chunk.get("thinking") or []:
+                                if isinstance(sub, dict) and sub.get("text"):
+                                    yield ("thinking", sub["text"])
+                elif content:
+                    yield ("text", content)
                 for tc in delta.get("tool_calls") or []:
                     slot = tool_calls.setdefault(tc["index"], {"id": "", "name": "", "args_raw": ""})
                     fn = tc.get("function") or {}
