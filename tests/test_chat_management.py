@@ -40,6 +40,20 @@ def test_search_finds_text_inside_messages(tmp_chats):
     assert [r["title"] for r in chats.list_chats("disk")] == ["Disk full"]
 
 
+def test_title_from_strips_markdown(tmp_chats):
+    """The first message may be markdown; a title shows plain words."""
+    t = chats.title_from("**Warum** ist die Platte voll? `docker df` sagt 90 %")
+    assert t == "Warum ist die Platte voll? docker df sagt 90 %"
+    assert chats.title_from("## Backup fehlgeschlagen\n\n- *lief um 3 Uhr*") \
+        == "Backup fehlgeschlagen lief um 3 Uhr"
+    assert chats.title_from("[Die Nextcloud](https://x.example) ist **langsam**") \
+        == "Die Nextcloud ist langsam"
+    assert chats.title_from("```bash\ndocker ps\n```") == "docker ps"
+    assert chats.title_from("") == chats.DEFAULT_TITLE
+    long = chats.title_from("*" + "x" * 80 + "*")
+    assert long.endswith("…") and "*" not in long
+
+
 def test_pin_and_rename_do_not_reorder_by_time(tmp_chats):
     a = _chat("first", "x")
     b = _chat("second", "y")

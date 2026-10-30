@@ -746,6 +746,12 @@ struct RoutePickerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toast($toast)
         .overlay { if saving { ProgressView() } }
+        .refreshable {
+            // Providers move models between tiers without the cached list
+            // following — a pull re-asks the server, caches and all.
+            guard let client = app.client else { return }
+            models = try? await client.aiModels(refresh: true)
+        }
         .task {
             guard let client = app.client else { return }
             async let models = client.aiModels()

@@ -83,6 +83,21 @@ class Session:
             self.provider, self.model = engines.installed_engines()[0], "default"
         self.workdir = config.get_default_workspace() or ai.DEFAULT_WORKDIR
         self.thinking = "off"   # "off" | "low" | "medium" | "high" (effort tier)
+        # What the user chose for this chat survives the session being reaped
+        # (leaving the app) and a server restart: without this, a reconnect
+        # reset mode/model/workdir to the server defaults every time.
+        stored_cfg = chat.get("agent_config") or {}
+        if isinstance(stored_cfg, dict):
+            if stored_cfg.get("mode") in ai.MODE_TOOLS:
+                self.mode = stored_cfg["mode"]
+            if stored_cfg.get("provider") in ai.CHAT_PROVIDERS \
+                    or engines.installed(str(stored_cfg.get("provider") or "")):
+                self.provider = stored_cfg["provider"]
+                self.model = str(stored_cfg.get("model") or "") or self.model
+            if stored_cfg.get("workdir"):
+                self.workdir = self._safe_workdir(stored_cfg["workdir"])
+            if "thinking" in stored_cfg:
+                self.thinking = ai.normalize_thinking(stored_cfg["thinking"])
 
         self.plan: list[dict] = chat.get("plan") or []   # visible to-do panel
 
@@ -176,6 +191,14 @@ class Session:
             tier = ai.normalize_thinking(msg["thinking"])
             if tier != self.thinking:
                 self.thinking, changed = tier, True
+        if changed:
+            # keep it with the chat: a reconnect (the app was closed for a
+            # moment) must not fall back to the server defaults
+            self.chat["agent_config"] = self.config_dict()
+            try:
+                chats.save(self.chat)
+            except Exception:
+                pass
         return changed
 
     def _safe_workdir(self, path: str) -> str:

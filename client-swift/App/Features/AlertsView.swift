@@ -248,7 +248,16 @@ struct AlertsView: View {
             // Opening the screen *is* reading them; marking seen here is what
             // clears the badge on the dashboard.
             try? await client.markNotificationsSeen()
-            app.clearAlertBadge()
+            // The badge counts the watch channel — the pushes came from it,
+            // and reading the alerts screen means those are seen as well.
+            // Without this, the badge kept counting messages the pushes had
+            // already shown, forever.
+            if app.supports("watch_channel") {
+                try? await client.markChannelRead()
+                await app.refreshAlerts()
+            } else {
+                app.clearAlertBadge()
+            }
         } catch {
             self.error = error.localizedDescription
             app.handle(error)

@@ -379,3 +379,59 @@ def test_every_flavour_of_signed_out_gets_the_sign_in_hint(message):
 
 def test_ordinary_failures_are_not_mistaken_for_a_login_problem():
     assert not engines._looks_logged_out("Error: max turns reached")
+
+
+# ------------------------------------------------- what the Vibe sign-in reaches
+
+class _FakeResponse:
+    def __init__(self, status):
+        self.status_code = status
+
+
+class _FakeHTTP:
+    """Stands in for httpx.AsyncClient: every POST returns one fixed status."""
+    status = 403
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, *args, **kwargs):
+        return _FakeResponse(type(self).status)
+
+
+def _vibe(monkeypatch, probe_status):
+    from server import engines, mistral_models, signin
+    monkeypatch.setattr(signin, "vibe_key", lambda: "login-key")
+    monkeypatch.setattr(config, "get_key", lambda p: "api-key" if p == "mistral" else "")
+
+    async def fake_fetch(key, force=False):
+        if key == "login-key":
+            return [{"id": "mistral-medium-latest", "name": "Mistral Medium",
+                     "hint": "", "aliases": []}]
+        return [{"id": "zai-glm-5-3", "name": "GLM 5.3", "hint": "", "aliases": []}]
+    monkeypatch.setattr(mistral_models, "fetch", fake_fetch)
+    _FakeHTTP.status = probe_status
+    monkeypatch.setattr(engines.httpx, "AsyncClient", _FakeHTTP)
+    engines._probe_cache.clear()
+    return asyncio.run(engines.vibe_models(force=True))
+
+
+def test_vibe_models_probe_promotes_what_the_login_really_reaches(clean_settings, monkeypatch):
+    """Providers move models between tiers without /v1/models following —
+    a one-token completion decides, not the list."""
+    rows = _vibe(monkeypatch, 200)
+    glm = next(r for r in rows if "GLM" in r["name"])
+    assert glm["id"] == "zai-glm-5-3" and glm["billing"] == "subscription"
+    assert not any(r["id"].startswith("key:") for r in rows)
+
+
+def test_vibe_models_keep_the_api_bucket_when_the_probe_is_refused(clean_settings, monkeypatch):
+    rows = _vibe(monkeypatch, 403)
+    glm = next(r for r in rows if "GLM" in r["name"])
+    assert glm["id"] == "key:zai-glm-5-3" and glm["billing"] == "api"

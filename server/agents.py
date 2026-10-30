@@ -206,7 +206,11 @@ def _mark_pushed(notif_id: str) -> None:
 def notifications(limit: int = 50) -> dict:
     items = _load_notifications()[:limit]
     seen = float(config.settings.get("notifications_seen", 0))
-    unseen = sum(1 for n in items if n["time"] > seen)
+    # Only what asks for attention counts as unread. The watch's round
+    # reports are snapshots of a moment ("network round clean") — they stay
+    # in the list to read, but a badge that counts them grows forever and
+    # trains its owner to ignore it.
+    unseen = sum(1 for n in items if n["time"] > seen and n.get("status") in ("warn", "crit"))
     return {"items": items, "unseen": unseen}
 
 

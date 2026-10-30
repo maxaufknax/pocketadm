@@ -89,6 +89,9 @@ struct ChatView: View {
                                   workspaces: app.me?.workspaces ?? []) { updated in
                     socket.apply(config: updated)
                 }
+                // the model list moves (new models, tiers change): re-ask on
+                // every open so the sheet never shows what was true hours ago
+                .task { models = try? await app.client?.aiModels() }
             }
             .sheet(isPresented: $showChats) {
                 ChatsListView(currentID: socket.chatID) { id in
@@ -573,12 +576,13 @@ struct ChatRow: View {
 
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
+                // No context menu here: it swallowed the long-press, so the
+                // whole message was the only thing you could copy. The text
+                // is selectable where it renders (MarkdownText enables it),
+                // which gives partial selection — and iOS's selection menu
+                // carries Copy and Share.
                 MarkdownText(text: item.text, font: .body)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contextMenu {
-                        Button { perform(.copy) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                        Button { perform(.share) } label: { Label("Share", systemImage: "square.and.arrow.up") }
-                    }
                 if !item.by.isEmpty {
                     Label(item.by, systemImage: "sparkles")
                         .font(.caption2)

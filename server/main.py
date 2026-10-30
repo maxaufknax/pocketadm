@@ -1153,10 +1153,11 @@ async def ai_set_route(body: RouteBody):
 
 
 @app.get("/api/ai/models", dependencies=[authed])
-async def ai_models():
+async def ai_models(refresh: bool = False):
     # API providers, then the coding-agent CLIs installed on this server
-    # (Claude Code, Codex), which run on their own login — see engines.py
-    return {"providers": await ai.list_models() + await engines.providers_live(),
+    # (Claude Code, Codex), which run on their own login — see engines.py.
+    # ?refresh=1 bypasses the model caches, for the pull-to-refresh in the apps.
+    return {"providers": await ai.list_models() + await engines.providers_live(force=refresh),
             "default": config.get_ai_default()}
 
 

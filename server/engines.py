@@ -39,10 +39,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import difflib
+import hashlib
 import json
 import os
 import secrets
 import time
+
+import httpx
 
 from . import audit, clis, cmdpolicy, config
 
@@ -164,27 +167,57 @@ def providers() -> list[dict]:
             for e in installed_engines()]
 
 
-async def providers_live() -> list[dict]:
+async def providers_live(force: bool = False) -> list[dict]:
     """providers(), with the models Mistral Vibe can really run on this
     server's accounts instead of just its default."""
     out = providers()
     for entry in out:
         if entry["provider"] == "mistral-vibe":
-            entry["models"] = await vibe_models()
+            entry["models"] = await vibe_models(force=force)
     return out
 
 
 # ------------------------------------------------------------------ Mistral Vibe models
 
-async def vibe_models() -> list[dict]:
+_PROBE_TTL = 6 * 3600       # what a subscription really reaches, re-asked rarely
+_probe_cache: dict[str, tuple[float, bool]] = {}
+
+
+async def _login_reaches(login_key: str, model_id: str, force: bool = False) -> bool:
+    """Whether the Vibe sign-in can really run one model. /v1/models lags
+    behind what an account is allowed to run (GLM moved in and out of Le Chat
+    tiers without the list following), so a one-token completion is the truth.
+    A failed probe costs one request; the answer is cached, 403 and all."""
+    fp = hashlib.sha256(login_key.encode()).hexdigest()[:12] + ":" + model_id
+    hit = _probe_cache.get(fp)
+    if hit and not force and time.time() - hit[0] < _PROBE_TTL:
+        return hit[1]
+    usable = False
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {login_key}"},
+                json={"model": model_id,
+                      "messages": [{"role": "user", "content": "hi"}],
+                      "max_tokens": 1})
+            usable = r.status_code == 200
+    except Exception:
+        usable = hit[1] if hit else False   # the network blinked: keep the last answer
+    _probe_cache[fp] = (time.time(), usable)
+    return usable
+
+
+async def vibe_models(force: bool = False) -> list[dict]:
     """What Vibe can run: its default, every model the Vibe sign-in reaches,
     and — billed per use — the models only the Mistral API key reaches (GLM,
     Large …). Ids: "default", "<model>" or "key:<model>"."""
     from . import mistral_models, signin
     login_key = signin.vibe_key()
     api_key = config.get_key("mistral")
-    login = await mistral_models.fetch(login_key) if login_key else []
-    via_key = await mistral_models.fetch(api_key) if api_key and api_key != login_key else []
+    login = await mistral_models.fetch(login_key, force) if login_key else []
+    via_key = await mistral_models.fetch(api_key, force) \
+        if api_key and api_key != login_key else []
     rows = [{"id": "default", "name": "Mistral Medium 3.5 (Vibe default)",
              "hint": "Vibe's own choice", "billing": "subscription"}]
     default_family = {"mistral-medium-latest", "mistral-vibe-cli-latest"}
@@ -195,6 +228,11 @@ async def vibe_models() -> list[dict]:
                      "billing": "subscription"})
     for m in via_key:
         if mistral_models.covers(login, m["id"]):
+            continue
+        # the model list may not know yet what the sign-in is allowed to run
+        if login_key and await _login_reaches(login_key, m["id"], force):
+            rows.append({"id": m["id"], "name": m["name"], "hint": m["hint"],
+                         "billing": "subscription"})
             continue
         rows.append({"id": "key:" + m["id"], "name": m["name"],
                      "hint": (m["hint"] + " · " if m["hint"] else "") + "API key, billed per use",

@@ -251,8 +251,12 @@ extension APIClient {
 
     // MARK: - AI configuration
 
-    func aiModels() async throws -> AIModels {
-        try await send(request("GET", "/api/ai/models"), as: AIModels.self)
+    /// `refresh` bypasses the server's model caches — for pull-to-refresh,
+    /// when a provider moved a model between tiers since the last look.
+    func aiModels(refresh: Bool = false) async throws -> AIModels {
+        try await send(request("GET", "/api/ai/models",
+                               query: refresh ? [URLQueryItem(name: "refresh", value: "1")] : []),
+                       as: AIModels.self)
     }
 
     func aiUsage() async throws -> AIUsage {

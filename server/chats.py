@@ -5,6 +5,7 @@ internal message history (so a conversation survives reloads/reconnects and
 can be resumed on any device) plus display metadata.
 """
 import json
+import re
 import secrets
 import time
 
@@ -184,8 +185,15 @@ def rename(chat_id: str, title: str) -> bool:
 
 
 def title_from(text: str) -> str:
-    """Derive a chat title from the first user message."""
-    t = " ".join(text.split())
+    """Derive a chat title from the first user message. The message may be
+    markdown the person typed — a title shows plain words, never the symbols."""
+    t = re.sub(r"```[^\n`]*\n?", " ", text)            # fenced code: keep the content
+    t = re.sub(r"`([^`]*)`", r"\1", t)                  # code spans
+    t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)      # links: label only
+    t = re.sub(r"^\s*#{1,6}\s+", "", t, flags=re.M)     # heading markers
+    t = re.sub(r"[*_]{1,3}", "", t)                     # bold / italic / underline
+    t = re.sub(r"^\s*[-*+>]\s+", "", t, flags=re.M)      # list and quote markers
+    t = " ".join(t.split())
     return (t[:56] + "…") if len(t) > 56 else (t or DEFAULT_TITLE)
 
 

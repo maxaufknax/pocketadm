@@ -460,3 +460,38 @@ def test_a_round_that_keeps_looking_still_ends_in_a_decision(w, monkeypatch):
     assert record["decision"] == "silent" and record["reason"] == "all fine"
     assert len(offered) == watch.MAX_STEPS and "run_command" not in offered[-1]
     assert len(executed) == watch.MAX_LOOKS
+
+
+def test_channel_seeding_counts_history_as_read(w, monkeypatch):
+    """First open of the watch channel: the notifications that existed before
+    it were already delivered — they must not arrive as one unread flood."""
+    from server import channel
+    monkeypatch.setattr(channel, "CHANNEL_FILE", w / "watch_channel.json")
+    agents.NOTIF_FILE.write_text(json.dumps([
+        {"id": "n1", "time": 100.0, "source": "watch", "status": "warn",
+         "title": "old one", "body": "yesterday's story"},
+        {"id": "n2", "time": 200.0, "source": "watch", "status": "warn",
+         "title": "another old one", "body": "the day before"},
+    ]))
+    data = channel._load()
+    assert len(data["messages"]) == 2
+    assert data["read"] >= 200.0                  # everything seeded counts as seen
+    assert channel.unread(data) == 0
+    channel.add("watch", "a fresh one")
+    assert channel.unread() == 1                 # only what arrives after stays unread
+
+
+def test_info_round_reports_do_not_count_as_unread(w, monkeypatch):
+    """A badge counts what needs attention, not every status snapshot the
+    watch filed — otherwise it grows forever and gets ignored."""
+    agents.NOTIF_FILE.write_text(json.dumps([
+        {"id": "a", "time": 100.0, "source": "watch", "status": "info",
+         "title": "Netz-Runde sauber", "body": ""},
+        {"id": "b", "time": 200.0, "source": "watch", "status": "warn",
+         "title": "DynDNS-Fix noetig", "body": ""},
+    ]))
+    config.settings["notifications_seen"] = 50.0
+    page = agents.notifications()
+    assert page["unseen"] == 1                    # the warning, not the report
+    agents.mark_seen()
+    assert agents.notifications()["unseen"] == 0

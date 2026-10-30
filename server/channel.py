@@ -55,7 +55,12 @@ def _load() -> dict:
         if isinstance(data, dict) and isinstance(data.get("messages"), list):
             return data
     except FileNotFoundError:
-        data = {"messages": _seed_from_notifications(), "read": 0}
+        seeded = _seed_from_notifications()
+        # The seeded messages were already delivered as notifications before
+        # this channel existed — they are history, not unread. Without this,
+        # a fresh channel starts with every past watch message unread.
+        newest = max((m["t"] for m in seeded), default=0.0)
+        data = {"messages": seeded, "read": max(newest, time.time() - 1)}
         _save(data)
         return data
     except (OSError, ValueError):
