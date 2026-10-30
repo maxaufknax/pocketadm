@@ -28,11 +28,14 @@ packages:
   # A real xterm-compatible emulator. The server speaks a PTY byte stream on
   # /ws/terminal, so anything less than a true emulator renders escape
   # sequences as garbage the moment a curses program or a colored prompt shows
-  # up. Pinned to a major range: 1.20.0 is what this was written against.
+  # up. Pinned to 1.20.0 exactly: the 1.99.x "preview before 2.0" releases
+  # (1.99.1, 1.99.2, late Oct 2026) do not compile under Xcode 26.3's Swift
+  # (PowerlineRenderer's `dropFirst()` + `dropFirst()`), and no Package.resolved
+  # is committed, so every CI build resolved the newest tag instead.
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     minVersion: 1.20.0
-    maxVersion: 2.0.0
+    maxVersion: 1.20.1
 
 settings:
   base:
