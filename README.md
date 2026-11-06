@@ -5,9 +5,10 @@
 Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and understanding of my whole server from my phone."*
 
 <p align="center">
-  <a href="client/screenshots/pocketadm-showcase.mp4" title="Watch the 30-second tour"><img src="client/screenshots/showcase-poster.png" alt="PocketADM in motion — a 30-second tour of the iPhone app" width="960" /></a>
+  <img src="client/screenshots/showcase.gif" alt="PocketADM in motion — a 30-second tour of the iPhone app" width="600" />
 </p>
-<p align="center"><em>The tour, in motion (tap to play)</em> — stills of every screen in <a href="client/screenshots/iphone-65/">client/screenshots</a></p>
+<p align="center"><em>A 30-second tour</em> — stills of every screen in <a href="client/screenshots/iphone-65/">client/screenshots</a> ·
+the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp4">showcase.mp4</a></p>
 
 ## Features
 
