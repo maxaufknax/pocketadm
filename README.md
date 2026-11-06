@@ -4,6 +4,11 @@
 
 Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and understanding of my whole server from my phone."*
 
+<p align="center">
+  <img src="client/screenshots/showcase.gif" alt="PocketADM on the iPhone: dashboard, Vibe Code chat, apps, health, terminal" width="300" />
+</p>
+<p align="center"><em>Home · Vibe Code · Apps · Health · Terminal</em> — the demo build, no real server data (<a href="client/screenshots/iphone-65/">full screenshots</a>)</p>
+
 ## Features
 
 - **Dashboard:** live CPU / RAM / disk / **internet latency & throughput** of the host's real
@@ -232,6 +237,16 @@ ADMIN_PASSWORD=dev .venv/bin/uvicorn server.main:app --reload --port 8090
 Running natively, the terminal and AI agent operate directly on the host and
 apt update checks work too.
 
+## Screenshots
+
+<p align="center">
+  <a href="client/screenshots/iphone-65/01-home.png"><img src="client/screenshots/iphone-65/01-home.png" width="172" alt="Dashboard" /></a>
+  <a href="client/screenshots/iphone-65/02-vibe.png"><img src="client/screenshots/iphone-65/02-vibe.png" width="172" alt="Vibe Code chat" /></a>
+  <a href="client/screenshots/iphone-65/03-apps.png"><img src="client/screenshots/iphone-65/03-apps.png" width="172" alt="Apps" /></a>
+  <a href="client/screenshots/iphone-65/04-health.png"><img src="client/screenshots/iphone-65/04-health.png" width="172" alt="Health" /></a>
+  <a href="client/screenshots/iphone-65/05-terminal.png"><img src="client/screenshots/iphone-65/05-terminal.png" width="172" alt="Terminal" /></a>
+</p>
+
 ## Architecture
 
 ```
@@ -266,6 +281,12 @@ that is the point of a server manager, the same trust level as Portainer. So:
 - **The web UI runs under a Content-Security-Policy** without inline script, and model output
   is rendered with everything escaped.
 - API keys never leave your server; Claude Code and Codex use their own logins on the server.
+- **No tracking.** No analytics, no telemetry SDK, no crash reporter, in the iPhone app or the
+  server: nothing about you or your server is sent anywhere except to the AI provider you
+  connect. Push notifications travel through a relay that knows an anonymous relay id and
+  Apple's device token — never which server a phone belongs to — and stores nothing about
+  a message (see `push-relay/`). The App Store listing answers the privacy survey with
+  *Data Not Collected*, and the code matches it.
 
 ## Roadmap
 
@@ -307,6 +328,13 @@ that is the point of a server manager, the same trust level as Portainer. So:
 Issues and PRs welcome. The stack is deliberately dependency-light: a single FastAPI app
 (`server/`) plus a vanilla-JS PWA (`web/`, xterm.js vendored) no build step, no framework.
 `docker compose up -d --build` and you're running the whole thing.
+
+## How it was built
+
+Pair programming between one human and AI agents, end to end: **Claude Code and Mistral
+Vibe wrote most of the code.** The human part was the product — what to build, how it
+should feel, when something was wrong — and every change was reviewed by human eyes
+before it landed. PocketADM was built the way it works.
 
 ## License
 

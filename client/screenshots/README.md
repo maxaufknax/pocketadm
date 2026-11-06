@@ -53,3 +53,26 @@ shipping either:
 - **Vibe** needs the demo's seeded chat, which only opens because boot falls
   back to the first non-empty conversation when there's no `localStorage` to
   resume from (a first-time visitor, which is what a capture run is).
+
+## showcase.gif — the README banner
+
+`showcase.gif` is the animated banner at the top of the repo README: the five
+`iphone-65` shots cross-fading, 300 px wide, ~8 s, built with ffmpeg
+(LD_LIBRARY_PATH may need clearing on machines with a bundled
+libstdc++, e.g. from editor extensions):
+
+    ffmpeg -y \
+      $(for f in iphone-65/0*.png; do echo -loop 1 -t 2 -i $f; done) \
+      -filter_complex "\
+[0:v]scale=300:-2:flags=lanczos,setsar=1[a];[1:v]scale=300:-2:flags=lanczos,setsar=1[b];\
+[2:v]scale=300:-2:flags=lanczos,setsar=1[c];[3:v]scale=300:-2:flags=lanczos,setsar=1[d];\
+[4:v]scale=300:-2:flags=lanczos,setsar=1[e];\
+[a][b]xfade=transition=fade:duration=0.6:offset=1.4[x1];\
+[x1][c]xfade=transition=fade:duration=0.6:offset=2.8[x2];\
+[x2][d]xfade=transition=fade:duration=0.6:offset=4.2[x3];\
+[x3][e]xfade=transition=fade:duration=0.6:offset=5.6,fps=10,split[s0][s1];\
+[s0]palettegen=stats_mode=single[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle[o]" \
+      -map "[o]" -loop 0 showcase.gif
+
+Regenerate together with the PNGs whenever the screens change; the crossfade
+offsets assume five inputs of 2 s each.
