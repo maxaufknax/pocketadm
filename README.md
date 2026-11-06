@@ -1,14 +1,13 @@
 # PocketADM
 
-**Your server, in your pocket.** An open-source, self-hosted command center for your server: a native iPhone app ([App Store](https://apps.apple.com/app/pocketadm/id6790731797)) and a web app, with an AI engineer built in — your own API key, a local model, or the Claude Code / Codex subscription you already have.
+**Your server, in your pocket.** An open-source, self-hosted command center for your server: a native iPhone app ([App Store](https://apps.apple.com/app/pocketadm/id6790731797)) and a web app, with an AI engineer built in - your own API key, a local model, or the Claude Code / Codex subscription you already have.
 
 Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and understanding of my whole server from my phone."*
 
 <p align="center">
-  <img src="client/screenshots/showcase.gif" alt="PocketADM in motion — a 30-second tour of the iPhone app" width="600" />
+  <img src="client/screenshots/showcase.gif" alt="PocketADM in motion - a 30-second tour of the iPhone app" width="600" />
 </p>
-<p align="center"><em>A 30-second tour</em> — stills of every screen in <a href="client/screenshots/iphone-65/">client/screenshots</a> ·
-the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp4">showcase.mp4</a></p>
+<p align="center">Stills of every screen in <a href="client/screenshots/iphone-65/">client/screenshots</a>. The same tour, in full quality, plays on <a href="https://pocketadm.com/#tour">pocketadm.com</a>.</p>
 
 ## Features
 
@@ -22,9 +21,9 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
   order; every container has live usage, a shell, its processes, recent events, health-check
   output, ports and networks, masked environment, restart policy and a live log tail.
 
-- **The watch:** an AI agent that keeps an eye on the server like a colleague — rounds every
+- **The watch:** an AI agent that keeps an eye on the server like a colleague - rounds every
   few hours, an investigation within minutes when something breaks (a crashed container, a
-  failed unit, a filling disk, the internet dropping), a weekly look back — and writes only
+  failed unit, a filling disk, the internet dropping), a weekly look back - and writes only
   when it is worth knowing: a short message with the details one tap away and the next step as
   a button. Its messages form a **conversation** in the app: ask it anything ("why is the disk
   so full?"), or tell it to be quiet about a topic or to pause, and it answers there. Quiet
@@ -32,29 +31,29 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
   only read. Messages arrive as **push notifications** on the iPhone, and optionally in ntfy
   and a Matrix room (Element).
 
-- **AI accounts:** connect your **Claude, ChatGPT or Mistral subscription from the phone** —
+- **AI accounts:** connect your **Claude, ChatGPT or Mistral subscription from the phone** -
   PocketADM drives the provider's own CLI sign-in (Claude Code's `setup-token`, Codex's device
-  login, Mistral Vibe's delegated sign-in) — or add API keys; then choose which AI runs the
+  login, Mistral Vibe's delegated sign-in) - or add API keys; then choose which AI runs the
   assistant, the watch and the explanations.
 
-- **Activity, live:** what happens on the server — Docker events, SSH logins and failed
+- **Activity, live:** what happens on the server - Docker events, SSH logins and failed
   attempts, sudo, apt, kernel out-of-memory kills, drives plugged in, systemd failures, internet
-  outages — and, as its own half, everything done in and through PocketADM.
+  outages - and, as its own half, everything done in and through PocketADM.
 
 - **Files like an editor's explorer:** opens on `/` (or the folders a server allows), folders
   unfold in place, every drive on top with how full it is. Text files open in an editor (the
   previous version is kept for an undo, and a file changed meanwhile is never overwritten),
   everything else in a preview; upload from Files or Photos, create, rename, move, copy, unpack,
-  download a folder as a zip, change permissions, delete — system folders and PocketADM's own
+  download a folder as a zip, change permissions, delete - system folders and PocketADM's own
   credentials stay protected.
 
 - **Update notes that say what changes:** the installed and the new version (read from the
-  image's labels or its own `*_VERSION` variables), only the upstream releases in between —
-  release candidates left out, a rebuild of the same version called one — and an AI summary of
+  image's labels or its own `*_VERSION` variables), only the upstream releases in between -
+  release candidates left out, a rebuild of the same version called one - and an AI summary of
   just those changes with the risk and a recommendation.
   
 - **Coding agents on your subscription:** run **Claude Code**, **Codex** or **Mistral Vibe**
-  from the Assistant / Vibe chat, signed in with your own Claude, ChatGPT or Mistral plan — no
+  from the Assistant / Vibe chat, signed in with your own Claude, ChatGPT or Mistral plan - no
   API key. The CLI does the work on your server; PocketADM streams it to every device, turns
   each of its permission questions into an approval tap on your phone, and applies its own
   rules on top (reads that stay on the box run, anything touching the internet asks). Connect
@@ -68,13 +67,13 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
   behaviour*). Attach pictures, files and server context to a message. Modes: Chat / Plan / Agent / Auto with
   per-action approval, extended-thinking streaming (💭), a stop button, a folder browser to pick
   the workspace, and collapsible tool/output cards. Any command the agent runs has an **“open in
-  terminal”** button so you can watch it yourself. Bring your own key — **Anthropic, OpenRouter,
+  terminal”** button so you can watch it yourself. Bring your own key - **Anthropic, OpenRouter,
   OpenAI:** or run a model **locally** (see below).
 
 - **Local AI:** run models *on your own hardware* via **Ollama**. PocketADM auto-detects a
   running Ollama (or connects to your existing container non-destructively / installs one in a
   tap), recommends models that fit your RAM, downloads them with live progress, and wires them
-  straight into the chat model picker. Private, free, offline — no cloud key required.
+  straight into the chat model picker. Private, free, offline - no cloud key required.
 
 - **Ask AI everywhere:** every update, health check, container, log view, metric and
   app-store error has a one-tap "Ask AI / Fix with AI" button that hands full context to the
@@ -84,7 +83,7 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
   with a mobile key bar (esc/tab/ctrl/arrows) and one-tap `docker exec` into any container.
 
 - **App Store:** 45+ curated apps with plain-language "what's in it for me" explanations,
-  one-tap installs as clean compose projects — and it **detects apps you already run**
+  one-tap installs as clean compose projects - and it **detects apps you already run**
   outside PocketADM (shown as *self-managed* instead of installable).
 
 - **Updates:** registry digest comparison (no pull needed) with priority classification,
@@ -97,9 +96,9 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
   a plain explanation and one-tap actions per finding, and findings you accept on purpose.
 
 - **Server settings:** rename your server, change the admin password, edit agent
-  memory & workspaces — plus a first-run onboarding wizard.
+  memory & workspaces - plus a first-run onboarding wizard.
 
-- **iPhone app:** native SwiftUI client in the App Store — pair by scanning the QR the
+- **iPhone app:** native SwiftUI client in the App Store - pair by scanning the QR the
   installer prints, real terminal emulator, live charts, approvals for the agent, single
   sign-on. The web app (PWA) keeps working in any browser, phone or desktop.
 
@@ -120,7 +119,7 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
 
 - **Integrations:** connect deSEC / IONOS / GoDaddy / Cloudflare or any generic API once;
   the agent gets an `integration_request` tool with server-side credential injection
-  ("add an A record for blog.example.com" just works — the AI never sees your token).
+  ("add an A record for blog.example.com" just works - the AI never sees your token).
 
 - **Snapshot before update:** before any image update, the running image is pinned as a
   restore point; if the new version misbehaves, **roll back in one tap** (Health → Updates →
@@ -137,7 +136,7 @@ the same tour in full quality: <a href="client/screenshots/pocketadm-showcase.mp
 - **Online app catalog:** the App Store is served from an online catalog, so new apps
   appear without updating PocketADM. Point it at your own JSON to add private apps.
 
-- **Demo mode** (`HELMSMAN_DEMO=1`) — a public, read-only playground with believable sample
+- **Demo mode** (`HELMSMAN_DEMO=1`) - a public, read-only playground with believable sample
   data and no host access, for showing the whole UI without a real server.
 
 ## Quick start
@@ -149,11 +148,11 @@ curl -fsSL https://raw.githubusercontent.com/maxaufknax/pocketadm/main/install.s
 ```
 
 It ends with a **QR code**. Open the [PocketADM app](https://apps.apple.com/app/pocketadm/id6790731797),
-tap *Scan pairing code*, done — signed in over HTTPS, without a domain:
+tap *Scan pairing code*, done - signed in over HTTPS, without a domain:
 
 - **No domain (default):** PocketADM serves HTTPS on port **8443** with its own certificate.
   The QR carries the fingerprint of that certificate's key, and the app trusts exactly that key
-  — the scan *is* the trust decision. A browser warns once about the certificate; the app does not.
+  - the scan *is* the trust decision. A browser warns once about the certificate; the app does not.
 - **`--domain pocketadm.example.com`:** Caddy gets a Let's Encrypt certificate (ports 80/443
   free, DNS pointing at the server). Everything trusts it.
 - **`--behind-proxy https://pocketadm.example.com`:** you run a reverse proxy already;
@@ -175,13 +174,13 @@ docker compose logs helmsman   # shows the generated admin password on first run
 ```
 
 Prefer a prebuilt image? CI publishes a **multi-arch image (amd64 + arm64)** to
-`ghcr.io/maxaufknax/pocketadm` — so it runs on a Raspberry Pi or ARM VPS unchanged. Point the
+`ghcr.io/maxaufknax/pocketadm` - so it runs on a Raspberry Pi or ARM VPS unchanged. Point the
 `image:` in `docker-compose.yml` at it and drop `build: .`.
 
 | Tag | What you get |
 | --- | --- |
 | `:latest` | the newest commit on `main` |
-| `:0.26.0` | that exact release (versioned tags exist from v0.23.0 on) — **pin this** if you want to choose when to move |
+| `:0.26.0` | that exact release (versioned tags exist from v0.23.0 on) - **pin this** if you want to choose when to move |
 | `:0.23` | the newest 0.23.x patch |
 
 Pinning a version is the honest default for a server tool: `:latest` means a `docker compose
@@ -267,15 +266,15 @@ apt update checks work too.
 
 **Security model:** single-admin password (scrypt-hashed), HMAC-signed expiring tokens,
 login rate-limiting, optional TOTP 2FA and optional single sign-on through an OpenID Connect
-provider (see above). The container has the Docker socket (= root-equivalent on the host) —
+provider (see above). The container has the Docker socket (= root-equivalent on the host) -
 that is the point of a server manager, the same trust level as Portainer. So:
 
 - **The agent asks before it acts.** In Agent mode only read-only commands run without a tap,
-  and "read-only" includes *stays on this server*: anything that talks to the internet — `curl`,
-  `wget`, `dig`, `ping` to a public host, `fetch_url` — asks first, because a URL or a DNS name
+  and "read-only" includes *stays on this server*: anything that talks to the internet - `curl`,
+  `wget`, `dig`, `ping` to a public host, `fetch_url` - asks first, because a URL or a DNS name
   can carry a secret as well as a POST body can. Plan/Chat cannot change anything; Auto runs
   everything, by your choice. PocketADM's own credentials are not readable by the agent.
-- **Sentinel loops only look** — enforced in code, not just in the prompt: read-only, local
+- **Sentinel loops only look** - enforced in code, not just in the prompt: read-only, local
   commands, no `fetch_url`.
 - **Credentials stay out of URLs and logs.** WebSockets connect with a single-use ticket that
   expires in 30 seconds; the 30-day token never appears in a proxy log.
@@ -285,36 +284,36 @@ that is the point of a server manager, the same trust level as Portainer. So:
 - **No tracking.** No analytics, no telemetry SDK, no crash reporter, in the iPhone app or the
   server: nothing about you or your server is sent anywhere except to the AI provider you
   connect. Push notifications travel through a relay that knows an anonymous relay id and
-  Apple's device token — never which server a phone belongs to — and stores nothing about
+  Apple's device token - never which server a phone belongs to - and stores nothing about
   a message (see `push-relay/`). The App Store listing answers the privacy survey with
   *Data Not Collected*, and the code matches it.
 
 ## Roadmap
 
-- [x] Background loops (Sentinel: security/update/health watchers + ntfy push) — v0.4
-- [x] DNS/API integrations with server-side credential injection — v0.4
-- [x] Persistent multi-chat conversations — v0.4
-- [x] Security hardening: TOTP 2FA, token revocation, append-only audit log — v0.5
-- [x] Snapshot-before-update + one-tap rollback — v0.7
-- [x] Multi-server support + QR device pairing — v0.7
-- [x] CI multi-arch image (amd64 + arm64) + read-only demo mode — v0.7
+- [x] Background loops (Sentinel: security/update/health watchers + ntfy push) - v0.4
+- [x] DNS/API integrations with server-side credential injection - v0.4
+- [x] Persistent multi-chat conversations - v0.4
+- [x] Security hardening: TOTP 2FA, token revocation, append-only audit log - v0.5
+- [x] Snapshot-before-update + one-tap rollback - v0.7
+- [x] Multi-server support + QR device pairing - v0.7
+- [x] CI multi-arch image (amd64 + arm64) + read-only demo mode - v0.7
 - [x] **Device-independent live sessions** so agent runs server-side, streams to every device,
-  survives disconnects, steering + queue, chat handoff — **v0.8**
-- [x] **Local AI** — run models on your own hardware via Ollama, RAM-aware recommendations — **v0.8**
-- [x] **Service detection** spot new containers the agent brings up and help finish setup — **v0.8**
-- [x] **Single sign-on** via OpenID Connect (Authentik, Authelia, Keycloak …) next to password + 2FA — **v0.22**
-- [x] **Native iPhone app** (SwiftUI) in the App Store, pairing by QR with a pinned certificate — **2.0 / v0.23**
-- [x] **HTTPS from the first minute**: installer with own certificate or Let's Encrypt + pairing QR — **v0.23**
-- [x] **Claude Code & Codex as agent engines** on your own subscription — **v0.23**
+  survives disconnects, steering + queue, chat handoff - **v0.8**
+- [x] **Local AI** - run models on your own hardware via Ollama, RAM-aware recommendations - **v0.8**
+- [x] **Service detection** spot new containers the agent brings up and help finish setup - **v0.8**
+- [x] **Single sign-on** via OpenID Connect (Authentik, Authelia, Keycloak …) next to password + 2FA - **v0.22**
+- [x] **Native iPhone app** (SwiftUI) in the App Store, pairing by QR with a pinned certificate - **2.0 / v0.23**
+- [x] **HTTPS from the first minute**: installer with own certificate or Let's Encrypt + pairing QR - **v0.23**
+- [x] **Claude Code & Codex as agent engines** on your own subscription - **v0.23**
 - [x] Agent skills (self-created runbooks à la hermes-agent/agentskills.io)
 - [x] **The watch** (an agent that writes only when it is worth knowing), **AI accounts**
   (subscriptions connected from the phone), **Mistral Vibe** engine, apps view, live activity,
-  drives — **2.0 / v0.24**
+  drives - **2.0 / v0.24**
 - [x] **The watch as a conversation**, push notifications through a relay that never sees
-  which server a phone belongs to, files you can manage, reconnecting chats — **2.0 / v0.25**
-- [x] **The server at a glance** (domains, systemd services and timers, cron, drives — found on
+  which server a phone belongs to, files you can manage, reconnecting chats - **2.0 / v0.25**
+- [x] **The server at a glance** (domains, systemd services and timers, cron, drives - found on
   any server), an assistant that reads PocketADM's own records, notes instead of a memory text,
-  attachments in the chat, themes — **2.0 / v0.26**
+  attachments in the chat, themes - **2.0 / v0.26**
 - [ ] Domain / reverse-proxy automation: choose "reachable at sub.domain.tld" at install
   time, PocketADM wires up the proxy + DNS (script first, AI agent as fallback)
 - [ ] Backups: scheduled, verifiable snapshots of volumes + configs (biggest gap)
@@ -322,7 +321,7 @@ that is the point of a server manager, the same trust level as Portainer. So:
 - [ ] Scheduled update auto-apply + notification digest
 - [ ] SSH-only bootstrap: enter host + domain + API keys in the app, PocketADM installs
   itself on the server over SSH (Termius-style onboarding)
-- [ ] Premium hosted AI option (no own API key needed) — the open-source core stays free
+- [ ] Premium hosted AI option (no own API key needed) - the open-source core stays free
 
 ## Contributing
 
@@ -333,8 +332,8 @@ Issues and PRs welcome. The stack is deliberately dependency-light: a single Fas
 ## How it was built
 
 Pair programming between one human and AI agents, end to end: **Claude Code and Mistral
-Vibe wrote most of the code.** The human part was the product — what to build, how it
-should feel, when something was wrong — and every change was reviewed by human eyes
+Vibe wrote most of the code.** The human part was the product - what to build, how it
+should feel, when something was wrong - and every change was reviewed by human eyes
 before it landed. PocketADM was built the way it works.
 
 ## License

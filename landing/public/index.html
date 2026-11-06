@@ -356,6 +356,13 @@ footer{border-top:1px solid var(--border);padding:40px 0 60px;color:var(--muted)
 @media(prefers-reduced-motion:reduce){.hero-in{animation:none;opacity:1}.tilt{transition:none}}
 @media(prefers-reduced-motion:reduce){.reveal{transition:none}.aurora::after{animation:none}}
 
+/* Tour video (showcase.mp4, same folder) */
+.vidframe{max-width:900px;margin:28px auto 0;border-radius:var(--radius);overflow:hidden;
+  border:1px solid var(--border);background:var(--bg2);box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.vidframe video{display:block;width:100%;height:auto;background:#000}
+.vidhint{padding:10px 14px;text-align:center;color:var(--muted);font-size:12.5px}
+
+
 /* Einheitliche Inline-Icons (ersetzen die bisherigen Emojis) */
 svg.ic{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-0.125em;flex:none}
 .feat .fico svg.ic{width:24px;height:24px}
@@ -527,6 +534,22 @@ svg.ic{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:2;stroke-
       </div>
       </div>
       <p class="stage-hint" style="color:var(--muted);font-size:12.5px">It's interactive — tap the tabs, tilt with your cursor.</p>
+    </div>
+  </div>
+</section>
+
+<!-- TOUR -->
+<section id="tour">
+  <div class="wrap">
+    <div class="eyebrow reveal">The tour</div>
+    <h2 class="h2 reveal">Watch it work</h2>
+    <p class="lead reveal">A real screen recording from the iPhone app: the dashboard, the apps view, a true
+      terminal, updates and Vibe Code working on the server. Half a minute, plays right here.</p>
+    <div class="vidframe reveal">
+      <video controls playsinline preload="metadata" poster="/showcase-poster.jpg">
+        <source src="/showcase.mp4" type="video/mp4">
+      </video>
+      <div class="vidhint">30-second screen recording · plays in place · no audio</div>
     </div>
   </div>
 </section>

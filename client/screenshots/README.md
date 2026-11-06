@@ -54,27 +54,26 @@ shipping either:
   back to the first non-empty conversation when there's no `localStorage` to
   resume from (a first-time visitor, which is what a capture run is).
 
-## showcase.gif / pocketadm-showcase.mp4 — the README banner
+## showcase.gif: the README banner, and where the tour video lives
 
-The landscape screen recording at the top of the repo README (29.5 s, 1920x886).
-GitHub never plays a repo-hosted video inline in a README, so the hero is an
-autoplaying GIF cut from the video; `pocketadm-showcase.mp4` is the full-quality
-original for humans and the upgrade path: drag it into any issue comment once and
-paste the `user-attachments.githubusercontent.com` URL it produces into the
-README, and the hero becomes a real inline video player.
+The README banner is `showcase.gif`, an autoplaying cut (600 px, 10 fps) of the
+landscape tour recording (29.5 s, 1920x886). GitHub never plays a repo-hosted
+video inline in a README, so the hero is the GIF; the real video plays on the
+website instead: `landing/public/showcase.mp4`, embedded in the *Watch it work*
+section at <https://pocketadm.com/#tour>.
 
-Kept under 10 MB — the attachment-CDN limit, for the day of that swap — by
-re-encoding the 29 MB source take from the phone's screen recording
-(`26-10-10 01-06-52 1920.mp4`, landscape) without audio:
+The video is the 29 MB source take from the phone's screen recording
+(`26-10-10 01-06-52 1920.mp4`), re-encoded without audio to 8.6 MB so it loads
+fast without losing sharpness:
 
     ffmpeg -y -i source.mp4 -an -c:v libx264 -pass 1 -b:v 2300k \
       -preset medium -movflags +faststart -pix_fmt yuv420p -f mp4 /dev/null
     ffmpeg -y -i source.mp4 -an -c:v libx264 -pass 2 -b:v 2300k \
-      -preset medium -movflags +faststart -pix_fmt yuv420p pocketadm-showcase.mp4
+      -preset medium -movflags +faststart -pix_fmt yuv420p landing/public/showcase.mp4
 
-The GIF from it (600 px wide, 10 fps, ~8 MB):
+The GIF from it:
 
-    ffmpeg -y -i pocketadm-showcase.mp4 \
+    ffmpeg -y -i landing/public/showcase.mp4 \
       -vf "fps=10,scale=600:-2:flags=lanczos,split[a][b];\
 [a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
       -loop 0 showcase.gif
