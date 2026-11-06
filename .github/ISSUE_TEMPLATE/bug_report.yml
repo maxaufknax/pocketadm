@@ -1,0 +1,55 @@
+name: Bug report
+description: Something broken or wrong on your server
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for writing it down. The version line under *Settings - About*
+        (or what `/api/info` answers) saves everyone a round of guessing.
+  - type: input
+    id: version
+    attributes:
+      label: PocketADM version
+      placeholder: "0.26.1 (server) / 2.0 (iPhone app)"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - iPhone app (native, App Store)
+        - Web app / PWA in a browser
+        - The server itself (loop, watch, background job)
+        - Install (install.sh / docker / compose)
+      multiple: true
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: The steps in order, short is fine. If the AI agent is involved, include what it asked for and what you approved.
+      placeholder: |
+        1. Opened ...
+        2. Tapped ...
+        3. It said ...
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Server context
+      description: Not required, but often the missing half: install shape (own IP / domain / behind a proxy), ARM or x86, demo password vs real server, and anything unusual about the host.
+      placeholder: "Raspberry Pi 5, Ubuntu 24.04, behind Caddy, real server"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or errors
+      description: "docker compose logs helmsman --tail 200", a browser console excerpt, or anything red. Strip hostnames, tokens and passwords first.
+      render: shell
+    validations:
+      required: false

@@ -1,5 +1,13 @@
 # PocketADM
 
+<p align="center">
+  <a href="https://github.com/maxaufknax/pocketadm/releases"><img src="https://img.shields.io/github/v/release/maxaufknax/pocketadm?label=release" alt="latest release" /></a>
+  <a href="https://github.com/maxaufknax/pocketadm/pkgs/container/pocketadm"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fmaxaufknax%2Fpocketadm-2496ed" alt="ghcr.io/maxaufknax/pocketadm" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3da35b" alt="MIT" /></a>
+  <a href="https://demo.pocketadm.com"><img src="https://img.shields.io/badge/try%20it-live%20demo-8a5cf6" alt="live demo" /></a>
+  <a href="https://apps.apple.com/app/pocketadm/id6790731797"><img src="https://img.shields.io/badge/App%20Store-2.0-%23000" alt="App Store 2.0" /></a>
+</p>
+
 **Your server, in your pocket.** An open-source, self-hosted command center for your server: a native iPhone app ([App Store](https://apps.apple.com/app/pocketadm/id6790731797)) and a web app, with an AI engineer built in - your own API key, a local model, or the Claude Code / Codex subscription you already have.
 
 Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and understanding of my whole server from my phone."*
@@ -8,6 +16,8 @@ Born from a simple pain point: *"I can only work on my server via VS Code + SSH 
   <img src="client/screenshots/showcase.gif" alt="PocketADM in motion - a 30-second tour of the iPhone app" width="600" />
 </p>
 <p align="center">Stills of every screen in <a href="client/screenshots/iphone-65/">client/screenshots</a>. The same tour, in full quality, plays on <a href="https://pocketadm.com/#tour">pocketadm.com</a>.</p>
+
+**Browse:** [Features](#features) · [Quick start](#quick-start) · [Configuration](#configuration-all-optional) · [Screenshots](#screenshots) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Contributing](#contributing) · [License](#license)
 
 ## Features
 
@@ -325,7 +335,10 @@ that is the point of a server manager, the same trust level as Portainer. So:
 
 ## Contributing
 
-Issues and PRs welcome. The stack is deliberately dependency-light: a single FastAPI app
+Issues and PRs welcome. How to run the whole thing without Docker and what a
+PR should tell us is in [CONTRIBUTING.md](CONTRIBUTING.md); anything about
+trust, tokens and reporting a security problem is in [SECURITY.md](SECURITY.md).
+The stack is deliberately dependency-light: a single FastAPI app
 (`server/`) plus a vanilla-JS PWA (`web/`, xterm.js vendored) no build step, no framework.
 `docker compose up -d --build` and you're running the whole thing.
 

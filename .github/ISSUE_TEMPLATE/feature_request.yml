@@ -1,0 +1,37 @@
+name: Feature request
+description: Something PocketADM should do, or do differently
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to get done?
+      description: The situation first, not the solution: what is on your server, what you reach for, and where it hurts.
+      placeholder: "Every time a certificate runs out I only find out when ..."
+    validations:
+      required: true
+  - type: textarea
+    id: wish
+    attributes:
+      label: How should it work?
+      description: If you already see the screen, the command or the setting, describe it. Rough ideas are fine too.
+      placeholder: "A row in Health that shows the days left, with a Fix with AI button"
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of PocketADM is it about?
+      options:
+        - Dashboard and metrics
+        - Apps / containers
+        - Terminal and files
+        - Vibe Code (the AI agent)
+        - The watch (background rounds)
+        - Updates and health checks
+        - Pairing / login / security
+        - The iPhone app generally
+        - Install / self-hosting
+      multiple: true
+    validations:
+      required: false
