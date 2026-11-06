@@ -54,25 +54,25 @@ shipping either:
   back to the first non-empty conversation when there's no `localStorage` to
   resume from (a first-time visitor, which is what a capture run is).
 
-## showcase.gif — the README banner
+## pocketadm-showcase.mp4 + showcase-poster.png — the README banner
 
-`showcase.gif` is the animated banner at the top of the repo README: the five
-`iphone-65` shots cross-fading, 300 px wide, ~8 s, built with ffmpeg
-(LD_LIBRARY_PATH may need clearing on machines with a bundled
-libstdc++, e.g. from editor extensions):
+The landscape screen recording at the top of the repo README (29.5 s, 1920x886).
+GitHub never plays a repo-hosted video inline in a README, so the README links
+the mp4 behind `showcase-poster.png`, a frame with a play overlay — the click
+lands on the blob page, which plays it. (True inline autoplay is only possible
+through GitHub's own attachment CDN: drag the mp4 into any issue comment and
+paste the `user-attachments.githubusercontent.com` URL it produces into the
+README instead of the `<img>`.)
 
-    ffmpeg -y \
-      $(for f in iphone-65/0*.png; do echo -loop 1 -t 2 -i $f; done) \
-      -filter_complex "\
-[0:v]scale=300:-2:flags=lanczos,setsar=1[a];[1:v]scale=300:-2:flags=lanczos,setsar=1[b];\
-[2:v]scale=300:-2:flags=lanczos,setsar=1[c];[3:v]scale=300:-2:flags=lanczos,setsar=1[d];\
-[4:v]scale=300:-2:flags=lanczos,setsar=1[e];\
-[a][b]xfade=transition=fade:duration=0.6:offset=1.4[x1];\
-[x1][c]xfade=transition=fade:duration=0.6:offset=2.8[x2];\
-[x2][d]xfade=transition=fade:duration=0.6:offset=4.2[x3];\
-[x3][e]xfade=transition=fade:duration=0.6:offset=5.6,fps=10,split[s0][s1];\
-[s0]palettegen=stats_mode=single[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle[o]" \
-      -map "[o]" -loop 0 showcase.gif
+Kept under 10 MB — the attachment-CDN limit, for the day of that swap — by
+re-encoding without audio, the source being a 29 MB H.264+AAC take from the
+Phone's screen recording (`26-10-10 01-06-52 1920.mp4`, landscape oriented):
 
-Regenerate together with the PNGs whenever the screens change; the crossfade
-offsets assume five inputs of 2 s each.
+    ffmpeg -y -i source.mp4 -an -c:v libx264 -pass 1 -b:v 2300k \
+      -preset medium -movflags +faststart -pix_fmt yuv420p -f mp4 /dev/null
+    ffmpeg -y -i source.mp4 -an -c:v libx264 -pass 2 -b:v 2300k \
+      -preset medium -movflags +faststart -pix_fmt yuv420p pocketadm-showcase.mp4
+
+Poster: a frame at 2 s (`ffmpeg -ss 2 -i … -frames:v 1`) with a play circle
+drawn on top (Pillow); regenerate both together when a new recording replaces
+the video.

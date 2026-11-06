@@ -5,9 +5,9 @@
 Born from a simple pain point: *"I can only work on my server via VS Code + SSH from my desk. I want Claude-Code-style vibe coding, monitoring, one-click app installs and understanding of my whole server from my phone."*
 
 <p align="center">
-  <img src="client/screenshots/showcase.gif" alt="PocketADM on the iPhone: dashboard, Vibe Code chat, apps, health, terminal" width="300" />
+  <a href="client/screenshots/pocketadm-showcase.mp4" title="Watch the 30-second tour"><img src="client/screenshots/showcase-poster.png" alt="PocketADM in motion — a 30-second tour of the iPhone app" width="960" /></a>
 </p>
-<p align="center"><em>Home · Vibe Code · Apps · Health · Terminal</em> — the demo build, no real server data (<a href="client/screenshots/iphone-65/">full screenshots</a>)</p>
+<p align="center"><em>The tour, in motion (tap to play)</em> — stills of every screen in <a href="client/screenshots/iphone-65/">client/screenshots</a></p>
 
 ## Features
 
